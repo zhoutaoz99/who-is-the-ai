@@ -54,6 +54,7 @@ type RoomTimers = {
 export class GameService {
   private readonly rooms = new Map<string, Room>();
   private readonly timers = new Map<string, RoomTimers>();
+  private readonly aiSpeaking = new Map<string, boolean>();
   private server?: Server;
 
   constructor(private readonly aiService: AiService) {}
@@ -500,6 +501,11 @@ export class GameService {
         return;
       }
 
+      // Prevent concurrent AI speech for the same room
+      if (this.aiSpeaking.get(room.id)) {
+        return;
+      }
+
       const aiPlayers = room.players.filter(
         (player) => player.type === "ai" && player.status === "alive",
       );
@@ -512,12 +518,17 @@ export class GameService {
       }
 
       const aiPlayer = this.randomItem(candidates);
-      const context = this.buildGameContext(room, aiPlayer);
-      const action = await this.aiService.generateSpeech(context);
+      this.aiSpeaking.set(room.id, true);
+      try {
+        const context = this.buildGameContext(room, aiPlayer);
+        const action = await this.aiService.generateSpeech(context);
 
-      if (action.type === "speak") {
-        this.addMessage(room, aiPlayer, action.content);
-        this.broadcastRoom(room);
+        if (action.type === "speak") {
+          this.addMessage(room, aiPlayer, action.content);
+          this.broadcastRoom(room);
+        }
+      } finally {
+        this.aiSpeaking.set(room.id, false);
       }
     }, 6_000);
   }
@@ -922,6 +933,7 @@ export class GameService {
     }
 
     this.timers.set(roomId, {});
+    this.aiSpeaking.delete(roomId);
   }
 
   private randomItem<T>(items: T[]): T {

@@ -49,7 +49,7 @@ export class AiService {
       model: process.env.AI_MODEL ?? "gpt-4o-mini",
       temperature: Number(process.env.AI_TEMPERATURE) || 0.7,
       reasoningEffort: process.env.AI_REASONING_EFFORT ?? "high",
-      timeoutMs: Number(process.env.AI_TIMEOUT_MS) || 5000,
+      timeoutMs: Number(process.env.AI_TIMEOUT_MS) || 15000,
     };
 
     if (this.config.apiKey) {
