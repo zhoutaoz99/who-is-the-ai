@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useGameClient } from "../../lib/game-client";
 import { humanCount, statusLabel } from "../../lib/game-utils";
 
@@ -10,6 +9,7 @@ export default function WaitingRoomPage() {
   const params = useParams<{ roomId: string }>();
   const router = useRouter();
   const roomId = params.roomId.toUpperCase();
+  const reconnectAttempted = useRef(false);
   const {
     connected,
     pending,
@@ -19,6 +19,8 @@ export default function WaitingRoomPage() {
     getRoom,
     getPlayerId,
     joinRoom,
+    leaveRoom,
+    reconnectRoom,
     startGame,
   } = useGameClient();
 
@@ -26,6 +28,9 @@ export default function WaitingRoomPage() {
   const playerId = getPlayerId(roomId);
   const isOwner = Boolean(room && playerId && room.ownerPlayerId === playerId);
   const isJoined = Boolean(playerId);
+  const isDisconnected = Boolean(
+    playerId && room?.players.find((p) => p.id === playerId && !p.connected),
+  );
 
   useEffect(() => {
     if (room?.status === "playing") {
@@ -33,11 +38,43 @@ export default function WaitingRoomPage() {
     }
   }, [room?.id, room?.status, router]);
 
+  // Auto-reconnect on page load/refresh
+  useEffect(() => {
+    if (!connected || reconnectAttempted.current) {
+      return;
+    }
+
+    const storedPlayerId = getPlayerId(roomId);
+    if (!storedPlayerId) {
+      return;
+    }
+
+    const currentRoom = getRoom(roomId);
+    if (!currentRoom) {
+      return;
+    }
+
+    const playerInRoom = currentRoom.players.find((p) => p.id === storedPlayerId);
+    if (!playerInRoom || playerInRoom.connected) {
+      return;
+    }
+
+    reconnectAttempted.current = true;
+    reconnectRoom(roomId);
+  }, [connected, roomId, getPlayerId, getRoom, reconnectRoom]);
+
   async function handleJoinRoom() {
     const result = await joinRoom(roomId);
     if (result.ok && result.room?.status === "playing") {
       router.replace(`/game/${result.room.id}`);
     }
+  }
+
+  async function handleLeaveRoom() {
+    if (isJoined) {
+      await leaveRoom(roomId);
+    }
+    router.push("/");
   }
 
   async function handleStartGame() {
@@ -81,9 +118,9 @@ export default function WaitingRoomPage() {
             加入房间
           </button>
           {error && <p className="error">{error}</p>}
-          <Link className="text-link" href="/">
+          <button className="secondary" onClick={() => router.push("/")}>
             返回大厅
-          </Link>
+          </button>
         </section>
       ) : (
         <section className="waiting-layout">
@@ -119,7 +156,11 @@ export default function WaitingRoomPage() {
               </div>
             </div>
 
-            {!isJoined && (
+            {isDisconnected && (
+              <p className="muted-text">正在重新连接...</p>
+            )}
+
+            {!isJoined && !isDisconnected && (
               <>
                 <label className="field">
                   <span>昵称</span>
@@ -144,9 +185,9 @@ export default function WaitingRoomPage() {
 
             {isJoined && !isOwner && <p className="muted-text">等待房主开始游戏</p>}
             {error && <p className="error">{error}</p>}
-            <Link className="text-link" href="/">
+            <button className="secondary" disabled={pending} onClick={handleLeaveRoom}>
               返回大厅
-            </Link>
+            </button>
           </div>
 
           <div className="panel waiting-card">

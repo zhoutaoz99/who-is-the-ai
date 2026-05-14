@@ -30,6 +30,8 @@ type GameClientContextValue = {
   refreshRooms: () => Promise<{ ok: boolean; error?: string }>;
   createRoom: () => Promise<ActionResult>;
   joinRoom: (roomId?: string) => Promise<ActionResult>;
+  leaveRoom: (roomId: string) => Promise<ActionResult>;
+  reconnectRoom: (roomId: string) => Promise<ActionResult>;
   startGame: (roomId: string) => Promise<ActionResult>;
   sendChat: (roomId: string, content: string) => Promise<ActionResult>;
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
@@ -112,6 +114,15 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       [roomId]: playerId,
     }));
     window.localStorage.setItem(`${PLAYER_ID_PREFIX}${roomId}`, playerId);
+  }, []);
+
+  const forgetPlayer = useCallback((roomId: string) => {
+    setPlayerIds((current) => {
+      const next = { ...current };
+      delete next[roomId];
+      return next;
+    });
+    window.localStorage.removeItem(`${PLAYER_ID_PREFIX}${roomId}`);
   }, []);
 
   const emitAction = useCallback(
@@ -269,6 +280,26 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           playerName: normalizedName,
         });
       },
+      leaveRoom: async (roomId: string) => {
+        const result = await emitAction("room.leave", {
+          roomId: roomId.toUpperCase(),
+          playerId: playerIds[roomId.toUpperCase()],
+        });
+        if (result.ok) {
+          forgetPlayer(roomId.toUpperCase());
+        }
+        return result;
+      },
+      reconnectRoom: async (roomId: string) => {
+        const storedPlayerId = playerIds[roomId.toUpperCase()];
+        if (!storedPlayerId) {
+          return { ok: false, error: "未找到玩家信息" };
+        }
+        return emitAction("room.reconnect", {
+          roomId: roomId.toUpperCase(),
+          playerId: storedPlayerId,
+        });
+      },
       startGame: (roomId: string) =>
         emitAction("game.start", {
           roomId,
@@ -290,6 +321,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     discussionMinutes,
     emitAction,
     error,
+    forgetPlayer,
     pending,
     playerIds,
     playerName,

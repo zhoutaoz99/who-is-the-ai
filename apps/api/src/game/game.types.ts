@@ -123,6 +123,16 @@ export interface CastVotePayload {
   targetPlayerId?: string;
 }
 
+export interface LeaveRoomPayload {
+  roomId?: string;
+  playerId?: string;
+}
+
+export interface ReconnectPayload {
+  roomId?: string;
+  playerId?: string;
+}
+
 export interface ActionResult {
   ok: boolean;
   error?: string;

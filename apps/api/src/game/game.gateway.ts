@@ -13,6 +13,8 @@ import {
   CastVotePayload,
   CreateRoomPayload,
   JoinRoomPayload,
+  LeaveRoomPayload,
+  ReconnectPayload,
   SendChatPayload,
   StartGamePayload,
 } from "./game.types";
@@ -76,6 +78,32 @@ export class GameGateway
     @MessageBody() payload: JoinRoomPayload,
   ) {
     const result = this.gameService.joinRoom(client.id, payload ?? {});
+    if (result.room) {
+      client.join(result.room.id);
+      this.server.to(result.room.id).emit("room.updated", result.room);
+    }
+    return result;
+  }
+
+  @SubscribeMessage("room.leave")
+  handleLeaveRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: LeaveRoomPayload,
+  ) {
+    const result = this.gameService.leaveRoom(client.id, payload ?? {});
+    if (result.room) {
+      client.leave(result.room.id);
+      this.server.to(result.room.id).emit("room.updated", result.room);
+    }
+    return result;
+  }
+
+  @SubscribeMessage("room.reconnect")
+  handleReconnect(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: ReconnectPayload,
+  ) {
+    const result = this.gameService.reconnect(client.id, payload ?? {});
     if (result.room) {
       client.join(result.room.id);
       this.server.to(result.room.id).emit("room.updated", result.room);

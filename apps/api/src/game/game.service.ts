@@ -8,9 +8,11 @@ import {
   CreateRoomPayload,
   GamePhase,
   JoinRoomPayload,
+  LeaveRoomPayload,
   Player,
   PlayerType,
   PublicVoteResult,
+  ReconnectPayload,
   Room,
   RoomSnapshot,
   SendChatPayload,
@@ -125,6 +127,82 @@ export class GameService {
     };
   }
 
+  leaveRoom(socketId: string, payload: LeaveRoomPayload): ActionResult {
+    const roomId = this.normalizeRoomId(payload.roomId);
+    const room = this.rooms.get(roomId);
+
+    if (!room) {
+      return this.fail("房间不存在");
+    }
+
+    const player = room.players.find(
+      (candidate) => candidate.id === payload.playerId && candidate.type === "human",
+    );
+    if (!player) {
+      return this.fail("你不在该房间中");
+    }
+
+    if (room.status !== "waiting") {
+      return this.fail("游戏进行中，无法离开");
+    }
+
+    room.players = room.players.filter((candidate) => candidate.id !== player.id);
+    if (room.ownerPlayerId === player.id) {
+      const nextHuman = room.players.find((candidate) => candidate.type === "human");
+      if (nextHuman) {
+        room.ownerPlayerId = nextHuman.id;
+      }
+    }
+
+    if (this.countHumans(room) === 0) {
+      this.clearTimers(room.id);
+      this.rooms.delete(room.id);
+      return { ok: true };
+    }
+
+    this.touch(room);
+    return {
+      ok: true,
+      room: this.toSnapshot(room),
+    };
+  }
+
+  reconnect(socketId: string, payload: ReconnectPayload): ActionResult {
+    const roomId = this.normalizeRoomId(payload.roomId);
+    const room = this.rooms.get(roomId);
+
+    if (!room) {
+      return this.fail("房间不存在");
+    }
+
+    const player = room.players.find(
+      (candidate) => candidate.id === payload.playerId && candidate.type === "human",
+    );
+    if (!player) {
+      return this.fail("玩家不存在于该房间");
+    }
+
+    // Cancel pending disconnect removal
+    const timerKey = `${room.id}:${player.id}`;
+    const existingTimer = this.disconnectTimers.get(timerKey);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.disconnectTimers.delete(timerKey);
+    }
+
+    player.socketId = socketId;
+    player.connected = true;
+    this.touch(room);
+
+    return {
+      ok: true,
+      room: this.toSnapshot(room),
+      playerId: player.id,
+    };
+  }
+
+  private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
+
   disconnect(socketId: string): RoomSnapshot[] {
     const updatedRooms: RoomSnapshot[] = [];
 
@@ -137,21 +215,57 @@ export class GameService {
       player.connected = false;
       player.socketId = undefined;
 
-      if (room.status === "waiting") {
-        room.players = room.players.filter((candidate) => candidate.id !== player.id);
-        if (room.ownerPlayerId === player.id) {
-          const nextHuman = room.players.find((candidate) => candidate.type === "human");
-          if (nextHuman) {
-            room.ownerPlayerId = nextHuman.id;
-          }
-        }
-      }
-
-      if (room.status === "waiting" && this.countHumans(room) === 0) {
-        this.clearTimers(room.id);
-        this.rooms.delete(room.id);
+      if (room.status === "playing" || room.status === "finished") {
+        this.touch(room);
+        updatedRooms.push(this.toSnapshot(room));
         continue;
       }
+
+      // Waiting room: schedule removal after 30s if player doesn't reconnect
+      const timerKey = `${room.id}:${player.id}`;
+      const existingTimer = this.disconnectTimers.get(timerKey);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      this.disconnectTimers.set(
+        timerKey,
+        setTimeout(() => {
+          this.disconnectTimers.delete(timerKey);
+          const currentRoom = this.rooms.get(room.id);
+          if (!currentRoom || currentRoom.status !== "waiting") {
+            return;
+          }
+
+          const stillDisconnected = currentRoom.players.find(
+            (candidate) => candidate.id === player.id && !candidate.connected,
+          );
+          if (!stillDisconnected) {
+            return;
+          }
+
+          currentRoom.players = currentRoom.players.filter(
+            (candidate) => candidate.id !== player.id,
+          );
+          if (currentRoom.ownerPlayerId === player.id) {
+            const nextHuman = currentRoom.players.find(
+              (candidate) => candidate.type === "human",
+            );
+            if (nextHuman) {
+              currentRoom.ownerPlayerId = nextHuman.id;
+            }
+          }
+
+          if (this.countHumans(currentRoom) === 0) {
+            this.clearTimers(currentRoom.id);
+            this.rooms.delete(currentRoom.id);
+            this.server?.to(room.id).emit("room.updated", this.toSnapshot(currentRoom));
+          } else {
+            this.touch(currentRoom);
+            this.server?.to(room.id).emit("room.updated", this.toSnapshot(currentRoom));
+          }
+        }, 30_000),
+      );
 
       this.touch(room);
       updatedRooms.push(this.toSnapshot(room));

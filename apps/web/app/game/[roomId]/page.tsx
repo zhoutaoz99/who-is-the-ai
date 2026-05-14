@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useGameClient } from "../../lib/game-client";
@@ -35,12 +34,14 @@ export default function GamePage() {
   const router = useRouter();
   const roomId = params.roomId.toUpperCase();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const reconnectAttempted = useRef(false);
   const {
     connected,
     pending,
     error,
     getRoom,
     getPlayerId,
+    reconnectRoom,
     sendChat,
     castVote,
   } = useGameClient();
@@ -52,6 +53,31 @@ export default function GamePage() {
 
   const room = getRoom(roomId);
   const playerId = getPlayerId(roomId);
+
+  // Auto-reconnect on page load/refresh
+  useEffect(() => {
+    if (!connected || reconnectAttempted.current) {
+      return;
+    }
+
+    const storedPlayerId = getPlayerId(roomId);
+    if (!storedPlayerId) {
+      return;
+    }
+
+    const currentRoom = getRoom(roomId);
+    if (!currentRoom) {
+      return;
+    }
+
+    const playerInRoom = currentRoom.players.find((p) => p.id === storedPlayerId);
+    if (!playerInRoom || playerInRoom.connected) {
+      return;
+    }
+
+    reconnectAttempted.current = true;
+    reconnectRoom(roomId);
+  }, [connected, roomId, getPlayerId, getRoom, reconnectRoom]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -89,7 +115,9 @@ export default function GamePage() {
           <p className="eyebrow">Game</p>
           <h1>正在连接对局</h1>
           <p>如果长时间没有进入，请从大厅重新加入房间。</p>
-          <Link href="/">返回大厅</Link>
+          <button className="secondary" onClick={() => router.push("/")}>
+            返回大厅
+          </button>
         </section>
       </main>
     );
@@ -184,7 +212,9 @@ export default function GamePage() {
               ? `真人玩家平分 ${room.config.rewardPool} 积分。`
               : "4 轮结束后仍有 AI 模拟玩家在场，本局挑战失败。"}
           </p>
-          <Link href="/">返回大厅</Link>
+          <button className="secondary" onClick={() => router.push("/")}>
+            返回大厅
+          </button>
         </section>
       )}
 
