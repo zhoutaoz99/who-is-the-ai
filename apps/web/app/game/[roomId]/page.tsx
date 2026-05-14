@@ -294,11 +294,6 @@ export default function GamePage() {
               onChange={(event) => setChatDraft(event.target.value)}
             />
             <button disabled={!canSpeak || pending || !chatDraft.trim()}>发送</button>
-            {canSpeakBase && speakCooldownRemainingMs > 0 && (
-              <span className="cooldown-line">
-                发言冷却：{formatCooldownSeconds(speakCooldownRemainingMs)} 秒
-              </span>
-            )}
           </form>
         </section>
 

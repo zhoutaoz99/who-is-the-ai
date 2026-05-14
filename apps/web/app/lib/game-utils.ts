@@ -23,6 +23,17 @@ export function statusLabel(status: RoomStatus) {
   }
 }
 
+export function winnerLabel(winner: "human" | "ai" | null) {
+  switch (winner) {
+    case "human":
+      return "真人获胜";
+    case "ai":
+      return "AI 获胜";
+    default:
+      return "";
+  }
+}
+
 export function phaseLabel(phase: GamePhase) {
   switch (phase) {
     case "waiting":

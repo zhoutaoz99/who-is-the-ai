@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useGameClient } from "./lib/game-client";
-import { humanCount, statusLabel } from "./lib/game-utils";
+import { humanCount, statusLabel, winnerLabel } from "./lib/game-utils";
 
 export default function Home() {
   const router = useRouter();
@@ -117,20 +117,31 @@ export default function Home() {
             <p className="muted-text">暂无可加入房间</p>
           ) : (
             <div className="room-list no-border">
-              {rooms.map((room) => (
-                <button
-                  className="room-row"
-                  key={room.id}
-                  disabled={room.status !== "waiting" || pending}
-                  onClick={() => handleJoinRoom(room.id)}
-                >
-                  <span>{room.id}</span>
-                  <small>
-                    {statusLabel(room.status)} · {humanCount(room)}/
-                    {room.config.maxHumanPlayers} 真人
-                  </small>
-                </button>
-              ))}
+              {[...rooms]
+                .sort((a, b) => {
+                  if (a.status === "finished" && b.status !== "finished") return 1;
+                  if (a.status !== "finished" && b.status === "finished") return -1;
+                  return 0;
+                })
+                .map((room) => (
+                  <button
+                    className="room-row"
+                    key={room.id}
+                    disabled={room.status !== "waiting" || pending}
+                    onClick={() => handleJoinRoom(room.id)}
+                  >
+                    <span>{room.id}</span>
+                    <small>
+                      {statusLabel(room.status)}
+                      {room.status === "finished" && room.winner && (
+                        <> · {winnerLabel(room.winner)}</>
+                      )}
+                      {room.status !== "finished" && (
+                        <> · {humanCount(room)}/{room.config.maxHumanPlayers} 真人</>
+                      )}
+                    </small>
+                  </button>
+                ))}
             </div>
           )}
         </section>
