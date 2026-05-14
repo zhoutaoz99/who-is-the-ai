@@ -48,6 +48,7 @@ export class AiService {
       apiKey: process.env.AI_API_KEY ?? "",
       model: process.env.AI_MODEL ?? "gpt-4o-mini",
       temperature: Number(process.env.AI_TEMPERATURE) || 0.7,
+      reasoningEffort: process.env.AI_REASONING_EFFORT ?? "high",
       timeoutMs: Number(process.env.AI_TIMEOUT_MS) || 5000,
     };
 
@@ -57,14 +58,14 @@ export class AiService {
       );
     } else {
       this.logger.warn(
-        "AI_API_KEY not set, AI will use fallback templates",
+        "AI_API_KEY not set, AI will skip speaking",
       );
     }
   }
 
   async generateSpeech(context: GameContext): Promise<AiSpeechAction> {
     if (!this.config.apiKey) {
-      return this.fallbackSpeech();
+      return { type: "skip" };
     }
 
     try {
@@ -75,7 +76,7 @@ export class AiService {
       this.logger.warn(
         `Speech generation failed: ${error instanceof Error ? error.message : error}`,
       );
-      return this.fallbackSpeech();
+      return { type: "skip" };
     }
   }
 
@@ -225,6 +226,8 @@ export class AiService {
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
+          thinking: { type: "enabled" },
+          reasoning_effort: this.config.reasoningEffort,
         }),
         signal: controller.signal,
       });
@@ -252,7 +255,7 @@ export class AiService {
   ): AiSpeechAction {
     const parsed = this.extractJson(raw);
     if (!parsed) {
-      return this.fallbackSpeech();
+      return { type: "skip" };
     }
 
     if (parsed.type === "skip") {
@@ -266,7 +269,7 @@ export class AiService {
       }
     }
 
-    return this.fallbackSpeech();
+    return { type: "skip" };
   }
 
   private parseVoteResult(
@@ -325,18 +328,5 @@ export class AiService {
     }
 
     return null;
-  }
-
-  private fallbackSpeech(): AiSpeechAction {
-    const templates = [
-      "我先看发言节奏，目前更怀疑一直跟票但不给理由的人。",
-      "这轮信息还不够，建议别急着集火，先看谁在回避具体问题。",
-      "我觉得刚才那段解释有点绕，像是在补逻辑，后面投票要重点看。",
-      "如果是真人，应该更愿意说清楚判断来源。沉默太久的人风险更高。",
-      "现在不要只看谁说得多，AI 也可能主动带节奏，关键看前后是否一致。",
-      "我暂时不站死边，先把可疑点记下来，投票前再看谁的反应最不自然。",
-    ];
-    const content = templates[Math.floor(Math.random() * templates.length)];
-    return { type: "speak", content };
   }
 }

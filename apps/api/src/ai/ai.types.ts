@@ -3,6 +3,7 @@ export interface AiConfig {
   apiKey: string;
   model: string;
   temperature: number;
+  reasoningEffort: string;
   timeoutMs: number;
 }
 
