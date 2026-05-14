@@ -565,13 +565,15 @@ export class GameService {
   private buildGameContext(room: Room, aiPlayer: Player): GameContext {
     const alivePlayers = room.players
       .filter((p) => p.status === "alive")
-      .map((p) => ({ id: p.id, name: p.name, seatNo: p.seatNo }));
+      .map((p) => ({ id: p.id, seatNo: p.seatNo }));
+
+    const seatMap = new Map(room.players.map((p) => [p.id, p.seatNo]));
 
     const recentMessages = room.messages
       .filter((m) => m.roundNo === room.currentRound)
       .slice(-20)
       .map((m) => ({
-        playerName: m.playerName,
+        playerName: m.playerId === aiPlayer.id ? "你" : `${seatMap.get(m.playerId) ?? "?"}号位`,
         content: m.content,
         isSelf: m.playerId === aiPlayer.id,
       }));
@@ -596,6 +598,7 @@ export class GameService {
       roundNo: room.currentRound,
       phase: room.phase,
       remainingTimeMs: remainingMs,
+      myName: aiPlayer.name,
       alivePlayers,
       recentMessages,
       myLastSpeech: myLastMessage?.content ?? null,

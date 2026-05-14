@@ -26,7 +26,8 @@ export interface GameContext {
   roundNo: number;
   phase: string;
   remainingTimeMs: number;
-  alivePlayers: Array<{ id: string; name: string; seatNo: number }>;
+  myName: string;
+  alivePlayers: Array<{ id: string; seatNo: number }>;
   recentMessages: ChatMessageInput[];
   myLastSpeech: string | null;
   currentVoteCounts: Record<string, number>;
