@@ -1,3 +1,9 @@
+import { config } from "dotenv";
+
+// Load .env from project root (CWD may be apps/api/ when running via nest CLI)
+config();
+config({ path: "../../.env" });
+
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 

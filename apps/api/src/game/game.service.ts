@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
+import { AiService } from "../ai/ai.service";
+import { GameContext } from "../ai/ai.types";
 import {
   ActionResult,
   CastVotePayload,
@@ -42,15 +44,6 @@ const AI_NAMES = [
   "江野",
 ];
 
-const AI_SPEECH_TEMPLATES = [
-  "我先看发言节奏，目前更怀疑一直跟票但不给理由的人。",
-  "这轮信息还不够，建议别急着集火，先看谁在回避具体问题。",
-  "我觉得刚才那段解释有点绕，像是在补逻辑，后面投票要重点看。",
-  "如果是真人，应该更愿意说清楚判断来源。沉默太久的人风险更高。",
-  "现在不要只看谁说得多，AI 也可能主动带节奏，关键看前后是否一致。",
-  "我暂时不站死边，先把可疑点记下来，投票前再看谁的反应最不自然。",
-];
-
 type RoomTimers = {
   phase?: NodeJS.Timeout;
   tick?: NodeJS.Timeout;
@@ -62,6 +55,8 @@ export class GameService {
   private readonly rooms = new Map<string, Room>();
   private readonly timers = new Map<string, RoomTimers>();
   private server?: Server;
+
+  constructor(private readonly aiService: AiService) {}
 
   bindServer(server: Server) {
     this.server = server;
@@ -500,7 +495,7 @@ export class GameService {
   }
 
   private startAiSpeech(room: Room) {
-    this.getTimers(room.id).aiSpeech = setInterval(() => {
+    this.getTimers(room.id).aiSpeech = setInterval(async () => {
       if (room.phase !== "discussion") {
         return;
       }
@@ -517,9 +512,13 @@ export class GameService {
       }
 
       const aiPlayer = this.randomItem(candidates);
-      const content = this.randomItem(AI_SPEECH_TEMPLATES);
-      this.addMessage(room, aiPlayer, content);
-      this.broadcastRoom(room);
+      const context = this.buildGameContext(room, aiPlayer);
+      const action = await this.aiService.generateSpeech(context);
+
+      if (action.type === "speak") {
+        this.addMessage(room, aiPlayer, action.content);
+        this.broadcastRoom(room);
+      }
     }, 6_000);
   }
 
@@ -529,20 +528,27 @@ export class GameService {
     );
 
     aiPlayers.forEach((aiPlayer, index) => {
-      setTimeout(() => {
+      setTimeout(async () => {
         if (room.phase !== "voting") {
           return;
         }
 
-        const target = this.chooseAiVoteTarget(room, aiPlayer);
-        if (target) {
-          this.castVoteForPlayer(room, aiPlayer, target.id);
+        const context = this.buildGameContext(room, aiPlayer);
+        const voteAction = await this.aiService.generateVote(context, aiPlayer.id);
+
+        if (voteAction) {
+          this.castVoteForPlayer(room, aiPlayer, voteAction.targetPlayerId);
+        } else {
+          const target = this.chooseFallbackVoteTarget(room, aiPlayer);
+          if (target) {
+            this.castVoteForPlayer(room, aiPlayer, target.id);
+          }
         }
       }, 1_500 + index * 1_200);
     });
   }
 
-  private chooseAiVoteTarget(room: Room, aiPlayer: Player): Player | null {
+  private chooseFallbackVoteTarget(room: Room, aiPlayer: Player): Player | null {
     const aliveHumans = room.players.filter(
       (player) => player.type === "human" && player.status === "alive",
     );
@@ -554,6 +560,47 @@ export class GameService {
       (player) => player.id !== aiPlayer.id && player.status === "alive",
     );
     return fallbackTargets.length > 0 ? this.randomItem(fallbackTargets) : null;
+  }
+
+  private buildGameContext(room: Room, aiPlayer: Player): GameContext {
+    const alivePlayers = room.players
+      .filter((p) => p.status === "alive")
+      .map((p) => ({ id: p.id, name: p.name, seatNo: p.seatNo }));
+
+    const recentMessages = room.messages
+      .filter((m) => m.roundNo === room.currentRound)
+      .slice(-20)
+      .map((m) => ({
+        playerName: m.playerName,
+        content: m.content,
+        isSelf: m.playerId === aiPlayer.id,
+      }));
+
+    const myLastMessage = [...room.messages]
+      .reverse()
+      .find((m) => m.playerId === aiPlayer.id);
+
+    const remainingMs = room.phaseEndsAt
+      ? Math.max(0, new Date(room.phaseEndsAt).getTime() - Date.now())
+      : 0;
+
+    const currentVoteCounts: Record<string, number> = {};
+    for (const vote of room.votes) {
+      if (vote.roundNo === room.currentRound) {
+        currentVoteCounts[vote.targetPlayerId] =
+          (currentVoteCounts[vote.targetPlayerId] ?? 0) + 1;
+      }
+    }
+
+    return {
+      roundNo: room.currentRound,
+      phase: room.phase,
+      remainingTimeMs: remainingMs,
+      alivePlayers,
+      recentMessages,
+      myLastSpeech: myLastMessage?.content ?? null,
+      currentVoteCounts,
+    };
   }
 
   private castVoteForPlayer(
