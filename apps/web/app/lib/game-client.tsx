@@ -58,8 +58,27 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
 
   const upsertRoom = useCallback((snapshot: RoomSnapshot) => {
     setRooms((current) => {
+      const existing = current.find((room) => room.id === snapshot.id);
       const next = current.filter((room) => room.id !== snapshot.id);
-      return [snapshot, ...next].slice(0, 12);
+
+      if (!existing) {
+        return [snapshot, ...next].slice(0, 12);
+      }
+
+      const snapshotIds = new Set(snapshot.messages.map((m) => m.id));
+      const preservedMessages = existing.messages.filter(
+        (m) => !snapshotIds.has(m.id),
+      );
+      const mergedMessages =
+        preservedMessages.length > 0
+          ? [...preservedMessages, ...snapshot.messages].sort(
+              (a, b) =>
+                new Date(a.createdAt).getTime() -
+                new Date(b.createdAt).getTime(),
+            )
+          : snapshot.messages;
+
+      return [{ ...snapshot, messages: mergedMessages }, ...next].slice(0, 12);
     });
   }, []);
 

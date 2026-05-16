@@ -249,15 +249,29 @@ export class GameService {
 
   async disconnect(socketId: string): Promise<RoomSnapshot[]> {
     const updatedRooms: RoomSnapshot[] = [];
+    const candidateRooms = await this.roomRepository.list(200);
 
-    for (const room of await this.roomRepository.list(200)) {
-      const player = room.players.find((candidate) => candidate.socketId === socketId);
+    for (const candidate of candidateRooms) {
+      const player = candidate.players.find(
+        (candidate) => candidate.socketId === socketId,
+      );
       if (!player) {
         continue;
       }
 
-      player.connected = false;
-      player.socketId = undefined;
+      // Reload the room fresh to avoid overwriting concurrent changes (e.g. new messages)
+      const room = await this.roomRepository.findById(candidate.id);
+      if (!room) {
+        continue;
+      }
+
+      const freshPlayer = room.players.find((p) => p.id === player.id);
+      if (!freshPlayer) {
+        continue;
+      }
+
+      freshPlayer.connected = false;
+      freshPlayer.socketId = undefined;
 
       if (room.status === "playing" || room.status === "finished") {
         this.touch(room);
@@ -267,7 +281,7 @@ export class GameService {
       }
 
       // Waiting room: schedule removal after 30s if player doesn't reconnect
-      const timerKey = `${room.id}:${player.id}`;
+      const timerKey = `${room.id}:${freshPlayer.id}`;
       const existingTimer = this.disconnectTimers.get(timerKey);
       if (existingTimer) {
         clearTimeout(existingTimer);
@@ -276,7 +290,7 @@ export class GameService {
       this.disconnectTimers.set(
         timerKey,
         setTimeout(() => {
-          void this.removeDisconnectedPlayerAfterGrace(room.id, player.id);
+          void this.removeDisconnectedPlayerAfterGrace(room.id, freshPlayer.id);
         }, 30_000),
       );
 
