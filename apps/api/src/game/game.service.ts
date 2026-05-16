@@ -673,9 +673,32 @@ export class GameService {
         );
 
         if (action.type === "speak") {
-          this.addMessage(room, aiPlayer, action.content);
-          await this.roomRepository.save(room);
-          this.broadcastRoom(room);
+          const saved = await this.applyWithLock(room.id, (latest) => {
+            if (
+              latest.status !== "playing" ||
+              latest.phase !== "discussion" ||
+              latest.currentRound !== room.currentRound
+            ) {
+              return false;
+            }
+
+            const freshAiPlayer = latest.players.find(
+              (player) =>
+                player.id === aiPlayer.id &&
+                player.type === "ai" &&
+                player.status === "alive",
+            );
+            if (!freshAiPlayer) {
+              return false;
+            }
+
+            this.addMessage(latest, freshAiPlayer, action.content, false);
+            return true;
+          });
+
+          if (saved) {
+            this.broadcastRoom(saved);
+          }
         }
       } finally {
         this.aiSpeaking.set(room.id, false);
@@ -878,7 +901,12 @@ export class GameService {
     };
   }
 
-  private addMessage(room: Room, player: Player, content: string) {
+  private addMessage(
+    room: Room,
+    player: Player,
+    content: string,
+    emitChatMessage = true,
+  ) {
     const message: ChatMessage = {
       id: randomUUID(),
       roundNo: room.currentRound,
@@ -892,7 +920,9 @@ export class GameService {
     player.lastSpokeAt = Date.now();
     room.messages.push(message);
     this.touch(room);
-    this.server?.to(room.id).emit("chat.message", this.publicMessage(message, room));
+    if (emitChatMessage) {
+      this.server?.to(room.id).emit("chat.message", this.publicMessage(message, room));
+    }
   }
 
   private validateCanSpeak(room: Room, player: Player): string | null {

@@ -79,3 +79,10 @@ export type ServerReadyPayload = {
   socketId: string;
   rooms: RoomSnapshot[];
 };
+
+export type RoundTickPayload = {
+  roomId: string;
+  roundNo: number;
+  phase: GamePhase;
+  remainingMs: number;
+};

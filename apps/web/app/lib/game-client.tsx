@@ -12,7 +12,13 @@ import {
 } from "react";
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "./auth-client";
-import { ActionResult, RoomSnapshot, ServerReadyPayload } from "./game-types";
+import {
+  ActionResult,
+  GamePhase,
+  RoomSnapshot,
+  RoundTickPayload,
+  ServerReadyPayload,
+} from "./game-types";
 
 type GameClientContextValue = {
   connected: boolean;
@@ -41,6 +47,13 @@ type GameClientContextValue = {
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 const PLAYER_NAME_KEY = "ai-werewolf-name";
 const PLAYER_ID_PREFIX = "ai-werewolf-player-";
+const PHASE_ORDER: Record<GamePhase, number> = {
+  waiting: 0,
+  discussion: 1,
+  voting: 2,
+  resolving: 3,
+  game_over: 4,
+};
 
 const GameClientContext = createContext<GameClientContextValue | null>(null);
 
@@ -80,6 +93,37 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
 
       return [{ ...snapshot, messages: mergedMessages }, ...next].slice(0, 12);
     });
+  }, []);
+
+  const applyRoundTick = useCallback((payload: RoundTickPayload) => {
+    setRooms((current) =>
+      current.map((room) => {
+        if (room.id !== payload.roomId || room.status !== "playing") {
+          return room;
+        }
+
+        if (payload.roundNo < room.currentRound) {
+          return room;
+        }
+
+        if (
+          payload.roundNo === room.currentRound &&
+          PHASE_ORDER[payload.phase] < PHASE_ORDER[room.phase]
+        ) {
+          return room;
+        }
+
+        return {
+          ...room,
+          currentRound: payload.roundNo,
+          phase: payload.phase,
+          phaseEndsAt:
+            payload.remainingMs > 0
+              ? new Date(Date.now() + payload.remainingMs).toISOString()
+              : room.phaseEndsAt,
+        };
+      }),
+    );
   }, []);
 
   useEffect(() => {
@@ -122,12 +166,13 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("vote.started", syncRoom);
     socket.on("vote.updated", syncRoom);
     socket.on("game.ended", syncRoom);
+    socket.on("round.tick", applyRoundTick);
 
     return () => {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [upsertRoom]);
+  }, [applyRoundTick, upsertRoom]);
 
   const rememberPlayer = useCallback((roomId: string, playerId: string) => {
     setPlayerIds((current) => ({
