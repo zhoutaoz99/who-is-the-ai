@@ -83,12 +83,11 @@ export class GameService {
       1,
       account?.id,
     );
-    const aiPlayers = this.createAiPlayers(2);
     const room: Room = {
       id: this.createRoomId(),
       status: "waiting",
       ownerPlayerId: host.id,
-      players: [host, ...aiPlayers],
+      players: [host],
       discussionDurationMs: this.normalizeDiscussionDuration(payload),
       currentRound: 0,
       phase: "waiting",
@@ -372,6 +371,14 @@ export class GameService {
       player.lastSpokeAt = 0;
       player.eliminatedRound = undefined;
     }
+
+    const aiPlayers = this.createAiPlayers(room.players.length + 1);
+    room.players.push(...aiPlayers);
+
+    room.players.sort(() => Math.random() - 0.5);
+    room.players.forEach((player, index) => {
+      player.seatNo = index + 1;
+    });
 
     await this.startDiscussion(room);
     this.server?.to(room.id).emit("game.started", this.toSnapshot(room));
@@ -877,6 +884,7 @@ export class GameService {
 
   private toSnapshot(room: Room): RoomSnapshot {
     const revealTypes = room.status === "finished";
+    const hideAi = room.status === "waiting";
     return {
       id: room.id,
       status: room.status,
@@ -884,6 +892,7 @@ export class GameService {
       players: room.players
         .slice()
         .sort((a, b) => a.seatNo - b.seatNo)
+        .filter((player) => !hideAi || player.type !== "ai")
         .map((player) => ({
           id: player.id,
           name: player.name,

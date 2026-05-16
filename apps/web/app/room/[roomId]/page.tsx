@@ -616,8 +616,7 @@ export default function WaitingRoomPage() {
               {Array.from({
                 length: Math.max(
                   0,
-                  room.config.maxHumanPlayers +
-                    room.config.aiPlayerCount -
+                  room.config.maxHumanPlayers -
                     room.players.length,
                 ),
               }).map((_, i) => (

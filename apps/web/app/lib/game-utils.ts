@@ -5,6 +5,10 @@ export function humanCount(room: RoomSnapshot) {
     return room.players.filter((player) => player.revealedType === "human").length;
   }
 
+  if (room.status === "waiting") {
+    return room.players.length;
+  }
+
   return Math.max(0, room.players.length - room.config.aiPlayerCount);
 }
 
