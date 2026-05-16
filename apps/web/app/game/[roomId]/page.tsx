@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../lib/auth-client";
 import { useGameClient } from "../../lib/game-client";
+import { useRoomReconnect } from "../../lib/use-room-reconnect";
 import type {
   PublicMessage,
   PublicVoteResult,
@@ -274,7 +275,6 @@ export default function GamePage() {
   const router = useRouter();
   const roomId = params.roomId.toUpperCase();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const reconnectAttempted = useRef(false);
   const pointsRefreshRoomRef = useRef<string | null>(null);
   const { refreshMe } = useAuth();
   const {
@@ -298,27 +298,7 @@ export default function GamePage() {
   const room = getRoom(roomId);
   const playerId = getPlayerId(roomId);
 
-  useEffect(() => {
-    if (!connected) {
-      reconnectAttempted.current = false;
-    }
-  }, [connected]);
-
-  // Socket.IO room membership is bound to the current socket, so rejoin on
-  // initial load and after every transport reconnect.
-  useEffect(() => {
-    if (!connected || reconnectAttempted.current) {
-      return;
-    }
-
-    const storedPlayerId = getPlayerId(roomId);
-    if (!storedPlayerId) {
-      return;
-    }
-
-    reconnectAttempted.current = true;
-    void reconnectRoom(roomId);
-  }, [connected, roomId, getPlayerId, reconnectRoom]);
+  useRoomReconnect({ connected, roomId, getPlayerId, reconnectRoom });
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);

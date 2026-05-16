@@ -1,10 +1,11 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useAuth } from "../../lib/auth-client";
 import { useGameClient } from "../../lib/game-client";
 import { humanCount, statusLabel } from "../../lib/game-utils";
+import { useRoomReconnect } from "../../lib/use-room-reconnect";
 
 function IconCrown(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -195,7 +196,6 @@ export default function WaitingRoomPage() {
   const router = useRouter();
   const { user } = useAuth();
   const roomId = params.roomId.toUpperCase();
-  const reconnectAttempted = useRef(false);
   const {
     connected,
     pending,
@@ -233,27 +233,7 @@ export default function WaitingRoomPage() {
     }
   }, [setPlayerName, user]);
 
-  useEffect(() => {
-    if (!connected) {
-      reconnectAttempted.current = false;
-    }
-  }, [connected]);
-
-  // Socket.IO room membership is bound to the current socket, so rejoin on
-  // initial load and after every transport reconnect.
-  useEffect(() => {
-    if (!connected || reconnectAttempted.current) {
-      return;
-    }
-
-    const storedPlayerId = getPlayerId(roomId);
-    if (!storedPlayerId) {
-      return;
-    }
-
-    reconnectAttempted.current = true;
-    void reconnectRoom(roomId);
-  }, [connected, roomId, getPlayerId, reconnectRoom]);
+  useRoomReconnect({ connected, roomId, getPlayerId, reconnectRoom });
 
   async function handleJoinRoom() {
     if (!user) {

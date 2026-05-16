@@ -4,49 +4,54 @@ import { Server } from "socket.io";
 import { AiService } from "../ai/ai.service";
 import { GameContext, RoundVoteSummary, VoteRecord } from "../ai/ai.types";
 import { AuthService } from "../auth/auth.service";
+import {
+  AI_SPEECH_CHANCE,
+  AI_SPEECH_INTERVAL_MS,
+  AI_VOTE_DELAY_MS,
+  AI_VOTE_STAGGER_MS,
+  AUTO_RESOLVE_DELAY_MS,
+  DISCONNECT_GRACE_MS,
+  MAX_HUMAN_PLAYERS,
+  NEXT_ROUND_DELAY_MS,
+  REWARD_POOL,
+  SPEAK_COOLDOWN_MS,
+  VOTE_DURATION_MS,
+} from "./game.config";
 import { GameRoomRepository } from "./game-room.repository";
+import {
+  addChatMessage,
+  chooseFallbackVoteTarget,
+  countHumans,
+  createAiPlayers,
+  createHumanPlayer,
+  createRoomId,
+  futureIso,
+  getWinner,
+  normalizeContent,
+  normalizeDiscussionDuration,
+  normalizeRoomId,
+  randomItem,
+  resolveElimination,
+  touch,
+  validateCanSpeak,
+} from "./game.rules";
+import { toPublicMessage, toRoomSnapshot } from "./game.snapshot";
 import {
   ActionResult,
   CastVotePayload,
-  ChatMessage,
   CreateRoomPayload,
   GameAccount,
-  GamePhase,
   JoinRoomPayload,
   LeaveRoomPayload,
   Player,
   PointAward,
-  PlayerType,
-  PublicVoteResult,
   ReconnectPayload,
   Room,
   RoomSnapshot,
   SendChatPayload,
   StartGamePayload,
-  Vote,
   Winner,
 } from "./game.types";
-
-const MAX_HUMAN_PLAYERS = 5;
-const AI_PLAYER_COUNT = 2;
-const MAX_ROUNDS = 4;
-const REWARD_POOL = 2000;
-const DEFAULT_DISCUSSION_DURATION_MS = Number(process.env.ROUND_DURATION_MS ?? 300_000);
-const MIN_DISCUSSION_DURATION_MS = 60_000;
-const VOTE_DURATION_MS = Number(process.env.VOTE_DURATION_MS ?? 60_000);
-const SPEAK_COOLDOWN_MS = 15_000;
-const MESSAGE_LIMIT = 240;
-
-const AI_NAMES = [
-  "林舟",
-  "陈默",
-  "许知",
-  "赵晨",
-  "周言",
-  "沈星",
-  "陆白",
-  "江野",
-];
 
 type RoomTimers = {
   phase?: NodeJS.Timeout;
@@ -77,18 +82,18 @@ export class GameService {
     account?: GameAccount | null,
   ): Promise<ActionResult> {
     const now = new Date().toISOString();
-    const host = this.createHumanPlayer(
+    const host = createHumanPlayer(
       account?.displayName ?? payload.playerName,
       socketId,
       1,
       account?.id,
     );
     const room: Room = {
-      id: this.createRoomId(),
+      id: createRoomId(),
       status: "waiting",
       ownerPlayerId: host.id,
       players: [host],
-      discussionDurationMs: this.normalizeDiscussionDuration(payload),
+      discussionDurationMs: normalizeDiscussionDuration(payload),
       currentRound: 0,
       phase: "waiting",
       phaseEndsAt: null,
@@ -104,7 +109,7 @@ export class GameService {
     await this.roomRepository.save(room);
     return {
       ok: true,
-      room: this.toSnapshot(room),
+      room: toRoomSnapshot(room),
       playerId: host.id,
     };
   }
@@ -114,57 +119,57 @@ export class GameService {
     payload: JoinRoomPayload,
     account?: GameAccount | null,
   ): Promise<ActionResult> {
-    const roomId = this.normalizeRoomId(payload.roomId);
-    const room = await this.roomRepository.findById(roomId);
+    const roomId = normalizeRoomId(payload.roomId);
+    let playerId: string | null = null;
+    let failure = "房间不存在或操作冲突";
 
-    if (!room) {
-      return this.fail("房间不存在");
-    }
-
-    if (account) {
-      const existingAccountPlayer = room.players.find(
-        (candidate) =>
-          candidate.type === "human" && candidate.accountId === account.id,
-      );
-      if (existingAccountPlayer) {
-        this.cancelDisconnectRemoval(room.id, existingAccountPlayer.id);
-        existingAccountPlayer.socketId = socketId;
-        existingAccountPlayer.connected = true;
-        existingAccountPlayer.name = account.displayName;
-        this.touch(room);
-        await this.roomRepository.save(room);
-
-        return {
-          ok: true,
-          room: this.toSnapshot(room),
-          playerId: existingAccountPlayer.id,
-        };
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (account) {
+        const existingAccountPlayer = latest.players.find(
+          (candidate) =>
+            candidate.type === "human" && candidate.accountId === account.id,
+        );
+        if (existingAccountPlayer) {
+          this.cancelDisconnectRemoval(latest.id, existingAccountPlayer.id);
+          existingAccountPlayer.socketId = socketId;
+          existingAccountPlayer.connected = true;
+          existingAccountPlayer.name = account.displayName;
+          playerId = existingAccountPlayer.id;
+          touch(latest);
+          return true;
+        }
       }
-    }
 
-    if (room.status !== "waiting") {
-      return this.fail("游戏已开始，暂时不能加入");
-    }
+      if (latest.status !== "waiting") {
+        failure = "游戏已开始，暂时不能加入";
+        return false;
+      }
 
-    const humanCount = this.countHumans(room);
-    if (humanCount >= MAX_HUMAN_PLAYERS) {
-      return this.fail("真人玩家人数已满");
-    }
+      if (countHumans(latest) >= MAX_HUMAN_PLAYERS) {
+        failure = "真人玩家人数已满";
+        return false;
+      }
 
-    const player = this.createHumanPlayer(
-      account?.displayName ?? payload.playerName,
-      socketId,
-      room.players.length + 1,
-      account?.id,
-    );
-    room.players.push(player);
-    this.touch(room);
-    await this.roomRepository.save(room);
+      const player = createHumanPlayer(
+        account?.displayName ?? payload.playerName,
+        socketId,
+        latest.players.length + 1,
+        account?.id,
+      );
+      latest.players.push(player);
+      playerId = player.id;
+      touch(latest);
+      return true;
+    });
+
+    if (!room || !playerId) {
+      return this.fail(failure);
+    }
 
     return {
       ok: true,
-      room: this.toSnapshot(room),
-      playerId: player.id,
+      room: toRoomSnapshot(room),
+      playerId,
     };
   }
 
@@ -172,43 +177,55 @@ export class GameService {
     socketId: string,
     payload: LeaveRoomPayload,
   ): Promise<ActionResult> {
-    const roomId = this.normalizeRoomId(payload.roomId);
-    const room = await this.roomRepository.findById(roomId);
+    const roomId = normalizeRoomId(payload.roomId);
+    let shouldDelete = false;
+    let failure = "房间不存在或操作冲突";
+
+    const room = await this.applyWithLock(roomId, (latest) => {
+      const player = latest.players.find(
+        (candidate) =>
+          candidate.id === payload.playerId && candidate.type === "human",
+      );
+      if (!player) {
+        failure = "你不在该房间中";
+        return false;
+      }
+
+      if (latest.status !== "waiting") {
+        failure = "游戏进行中，无法离开";
+        return false;
+      }
+
+      latest.players = latest.players.filter(
+        (candidate) => candidate.id !== player.id,
+      );
+      if (latest.ownerPlayerId === player.id) {
+        const nextHuman = latest.players.find(
+          (candidate) => candidate.type === "human",
+        );
+        if (nextHuman) {
+          latest.ownerPlayerId = nextHuman.id;
+        }
+      }
+
+      shouldDelete = countHumans(latest) === 0;
+      touch(latest);
+      return true;
+    });
 
     if (!room) {
-      return this.fail("房间不存在");
+      return this.fail(failure);
     }
 
-    const player = room.players.find(
-      (candidate) => candidate.id === payload.playerId && candidate.type === "human",
-    );
-    if (!player) {
-      return this.fail("你不在该房间中");
-    }
-
-    if (room.status !== "waiting") {
-      return this.fail("游戏进行中，无法离开");
-    }
-
-    room.players = room.players.filter((candidate) => candidate.id !== player.id);
-    if (room.ownerPlayerId === player.id) {
-      const nextHuman = room.players.find((candidate) => candidate.type === "human");
-      if (nextHuman) {
-        room.ownerPlayerId = nextHuman.id;
-      }
-    }
-
-    if (this.countHumans(room) === 0) {
+    if (shouldDelete) {
       this.clearTimers(room.id);
       await this.roomRepository.delete(room.id);
       return { ok: true };
     }
 
-    this.touch(room);
-    await this.roomRepository.save(room);
     return {
       ok: true,
-      room: this.toSnapshot(room),
+      room: toRoomSnapshot(room),
     };
   }
 
@@ -216,7 +233,7 @@ export class GameService {
     socketId: string,
     payload: ReconnectPayload,
   ): Promise<ActionResult> {
-    const roomId = this.normalizeRoomId(payload.roomId);
+    const roomId = normalizeRoomId(payload.roomId);
 
     const room = await this.applyWithLock(roomId, (room) => {
       const player = room.players.find(
@@ -230,7 +247,7 @@ export class GameService {
 
       player.socketId = socketId;
       player.connected = true;
-      this.touch(room);
+      touch(room);
       return true;
     });
 
@@ -240,7 +257,7 @@ export class GameService {
 
     return {
       ok: true,
-      room: this.toSnapshot(room),
+      room: toRoomSnapshot(room),
       playerId: payload.playerId,
     };
   }
@@ -272,7 +289,7 @@ export class GameService {
         freshPlayer.socketId = undefined;
 
         if (room.status === "playing" || room.status === "finished") {
-          this.touch(room);
+          touch(room);
           return true;
         }
 
@@ -286,15 +303,15 @@ export class GameService {
           timerKey,
           setTimeout(() => {
             void this.removeDisconnectedPlayerAfterGrace(room.id, freshPlayer.id);
-          }, 30_000),
+          }, DISCONNECT_GRACE_MS),
         );
 
-        this.touch(room);
+        touch(room);
         return true;
       });
 
       if (room) {
-        updatedRooms.push(this.toSnapshot(room));
+        updatedRooms.push(toRoomSnapshot(room));
       }
     }
 
@@ -305,87 +322,105 @@ export class GameService {
     const timerKey = `${roomId}:${playerId}`;
     this.disconnectTimers.delete(timerKey);
 
-    const currentRoom = await this.roomRepository.findById(roomId);
-    if (!currentRoom || currentRoom.status !== "waiting") {
-      return;
-    }
-
-    const stillDisconnected = currentRoom.players.find(
-      (candidate) => candidate.id === playerId && !candidate.connected,
-    );
-    if (!stillDisconnected) {
-      return;
-    }
-
-    currentRoom.players = currentRoom.players.filter(
-      (candidate) => candidate.id !== playerId,
-    );
-    if (currentRoom.ownerPlayerId === playerId) {
-      const nextHuman = currentRoom.players.find(
-        (candidate) => candidate.type === "human",
-      );
-      if (nextHuman) {
-        currentRoom.ownerPlayerId = nextHuman.id;
+    let shouldDelete = false;
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (latest.status !== "waiting") {
+        return false;
       }
-    }
 
-    if (this.countHumans(currentRoom) === 0) {
-      this.clearTimers(currentRoom.id);
-      await this.roomRepository.delete(currentRoom.id);
-      this.server?.to(roomId).emit("room.updated", this.toSnapshot(currentRoom));
+      const stillDisconnected = latest.players.find(
+        (candidate) => candidate.id === playerId && !candidate.connected,
+      );
+      if (!stillDisconnected) {
+        return false;
+      }
+
+      latest.players = latest.players.filter(
+        (candidate) => candidate.id !== playerId,
+      );
+      if (latest.ownerPlayerId === playerId) {
+        const nextHuman = latest.players.find(
+          (candidate) => candidate.type === "human",
+        );
+        if (nextHuman) {
+          latest.ownerPlayerId = nextHuman.id;
+        }
+      }
+
+      shouldDelete = countHumans(latest) === 0;
+      touch(latest);
+      return true;
+    });
+
+    if (!room) {
       return;
     }
 
-    this.touch(currentRoom);
-    await this.roomRepository.save(currentRoom);
-    this.server?.to(roomId).emit("room.updated", this.toSnapshot(currentRoom));
+    if (shouldDelete) {
+      this.clearTimers(room.id);
+      await this.roomRepository.delete(room.id);
+      return;
+    }
+
+    this.server?.to(roomId).emit("room.updated", toRoomSnapshot(room));
   }
 
   async startGame(payload: StartGamePayload): Promise<ActionResult> {
-    const room = await this.getRoom(payload.roomId);
-    if (!room) {
-      return this.fail("房间不存在");
-    }
+    const roomId = normalizeRoomId(payload.roomId);
+    let failure = "房间不存在或操作冲突";
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (latest.status !== "waiting") {
+        failure = "游戏已经开始";
+        return false;
+      }
 
-    if (room.status !== "waiting") {
-      return this.fail("游戏已经开始");
-    }
+      if (payload.playerId !== latest.ownerPlayerId) {
+        failure = "只有房主可以开始游戏";
+        return false;
+      }
 
-    if (payload.playerId !== room.ownerPlayerId) {
-      return this.fail("只有房主可以开始游戏");
-    }
+      if (countHumans(latest) < 1) {
+        failure = "至少需要 1 名真人玩家";
+        return false;
+      }
 
-    if (this.countHumans(room) < 1) {
-      return this.fail("至少需要 1 名真人玩家");
-    }
+      latest.status = "playing";
+      latest.winner = null;
+      latest.currentRound = 1;
+      latest.phase = "discussion";
+      latest.phaseEndsAt = futureIso(latest.discussionDurationMs);
+      latest.messages = [];
+      latest.votes = [];
+      latest.pointAwards = [];
+      latest.rewardSettledAt = null;
+      for (const player of latest.players) {
+        player.status = "alive";
+        player.lastSpokeAt = 0;
+        player.eliminatedRound = undefined;
+      }
 
-    room.status = "playing";
-    room.winner = null;
-    room.currentRound = 0;
-    room.messages = [];
-    room.votes = [];
-    room.pointAwards = [];
-    room.rewardSettledAt = null;
-    for (const player of room.players) {
-      player.status = "alive";
-      player.lastSpokeAt = 0;
-      player.eliminatedRound = undefined;
-    }
+      const aiPlayers = createAiPlayers(latest.players.length + 1);
+      latest.players.push(...aiPlayers);
 
-    const aiPlayers = this.createAiPlayers(room.players.length + 1);
-    room.players.push(...aiPlayers);
+      latest.players.sort(() => Math.random() - 0.5);
+      latest.players.forEach((player, index) => {
+        player.seatNo = index + 1;
+      });
 
-    room.players.sort(() => Math.random() - 0.5);
-    room.players.forEach((player, index) => {
-      player.seatNo = index + 1;
+      touch(latest);
+      return true;
     });
 
-    await this.startDiscussion(room);
-    this.server?.to(room.id).emit("game.started", this.toSnapshot(room));
+    if (!room) {
+      return this.fail(failure);
+    }
+
+    this.afterDiscussionStarted(room);
+    this.server?.to(room.id).emit("game.started", toRoomSnapshot(room));
 
     return {
       ok: true,
-      room: this.toSnapshot(room),
+      room: toRoomSnapshot(room),
     };
   }
 
@@ -393,33 +428,43 @@ export class GameService {
     socketId: string,
     payload: SendChatPayload,
   ): Promise<ActionResult> {
-    const room = await this.getRoom(payload.roomId);
-    if (!room) {
-      return this.fail("房间不存在");
-    }
-
-    const actor = await this.findHumanForAction(room, socketId, payload.playerId);
-    if (!actor) {
-      return this.fail("你不在该房间中");
-    }
-
-    const validationError = this.validateCanSpeak(actor.room, actor.player);
-    if (validationError) {
-      return this.fail(validationError);
-    }
-
-    const content = this.normalizeContent(payload.content);
+    const content = normalizeContent(payload.content);
     if (!content) {
       return this.fail("发言内容不能为空");
     }
 
-    this.addMessage(actor.room, actor.player, content);
-    await this.roomRepository.save(actor.room);
-    this.broadcastRoom(actor.room);
+    const roomId = normalizeRoomId(payload.roomId);
+    let failure = "房间不存在或操作冲突";
+    const saved = await this.applyWithLock(roomId, (latest) => {
+      const player = this.bindHumanForAction(
+        latest,
+        socketId,
+        payload.playerId,
+      );
+      if (!player) {
+        failure = "你不在该房间中";
+        return false;
+      }
+
+      const validationError = validateCanSpeak(latest, player);
+      if (validationError) {
+        failure = validationError;
+        return false;
+      }
+
+      this.addMessage(latest, player, content, false);
+      return true;
+    });
+
+    if (!saved) {
+      return this.fail(failure);
+    }
+
+    this.broadcastRoom(saved);
 
     return {
       ok: true,
-      room: this.toSnapshot(actor.room),
+      room: toRoomSnapshot(saved),
     };
   }
 
@@ -442,7 +487,7 @@ export class GameService {
 
   async listRooms(): Promise<RoomSnapshot[]> {
     const rooms = await this.roomRepository.list();
-    return rooms.map((room) => this.toSnapshot(room));
+    return rooms.map((room) => toRoomSnapshot(room));
   }
 
   async recoverStuckRooms() {
@@ -469,16 +514,28 @@ export class GameService {
     }
   }
 
-  private async startDiscussion(room: Room) {
-    this.clearTimers(room.id);
-    room.currentRound += 1;
-    room.phase = "discussion";
-    room.phaseEndsAt = this.futureIso(room.discussionDurationMs);
-    this.touch(room);
-    await this.roomRepository.save(room);
+  private async startDiscussionById(roomId: string) {
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (latest.status !== "playing" || latest.phase !== "resolving") {
+        return false;
+      }
 
+      latest.currentRound += 1;
+      latest.phase = "discussion";
+      latest.phaseEndsAt = futureIso(latest.discussionDurationMs);
+      touch(latest);
+      return true;
+    });
+
+    if (room) {
+      this.afterDiscussionStarted(room);
+    }
+  }
+
+  private afterDiscussionStarted(room: Room) {
+    this.clearTimers(room.id);
     this.broadcastRoom(room);
-    this.server?.to(room.id).emit("round.started", this.toSnapshot(room));
+    this.server?.to(room.id).emit("round.started", toRoomSnapshot(room));
     this.startTick(room);
     this.startAiSpeech(room.id);
 
@@ -487,24 +544,28 @@ export class GameService {
     }, room.discussionDurationMs);
   }
 
+  private async startVoting(room: Room) {
+    await this.startVotingById(room.id);
+  }
+
   private async startVotingById(roomId: string) {
-    const room = await this.getRoom(roomId);
-    if (!room || room.status !== "playing") {
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (latest.status !== "playing" || latest.phase !== "discussion") {
+        return false;
+      }
+
+      latest.phase = "voting";
+      latest.phaseEndsAt = futureIso(VOTE_DURATION_MS);
+      touch(latest);
+      return true;
+    });
+    if (!room) {
       return;
     }
 
-    await this.startVoting(room);
-  }
-
-  private async startVoting(room: Room) {
     this.clearTimers(room.id);
-    room.phase = "voting";
-    room.phaseEndsAt = this.futureIso(VOTE_DURATION_MS);
-    this.touch(room);
-    await this.roomRepository.save(room);
-
     this.broadcastRoom(room);
-    this.server?.to(room.id).emit("vote.started", this.toSnapshot(room));
+    this.server?.to(room.id).emit("vote.started", toRoomSnapshot(room));
     this.startTick(room);
     this.scheduleAiVotes(room);
 
@@ -513,113 +574,89 @@ export class GameService {
     }, VOTE_DURATION_MS);
   }
 
+  private async resolveVotes(room: Room) {
+    await this.resolveVotesById(room.id);
+  }
+
   private async resolveVotesById(roomId: string) {
-    const room = await this.getRoom(roomId);
+    let eliminatedPlayer:
+      | { playerId: string; playerName: string; roundNo: number }
+      | null = null;
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (latest.status !== "playing" || latest.phase !== "voting") {
+        return false;
+      }
+
+      eliminatedPlayer = null;
+      latest.phase = "resolving";
+      latest.phaseEndsAt = null;
+
+      const eliminated = resolveElimination(latest);
+      if (eliminated) {
+        eliminated.status = "eliminated";
+        eliminated.eliminatedRound = latest.currentRound;
+        eliminatedPlayer = {
+          playerId: eliminated.id,
+          playerName: eliminated.name,
+          roundNo: latest.currentRound,
+        };
+      }
+
+      touch(latest);
+      return true;
+    });
     if (!room) {
       return;
     }
 
-    await this.resolveVotes(room);
-  }
-
-  private async resolveVotes(room: Room) {
     this.clearTimers(room.id);
-    if (room.phase === "game_over" || room.status === "finished") {
-      return;
-    }
-
-    room.phase = "resolving";
-    room.phaseEndsAt = null;
-
-    const eliminatedPlayer = this.resolveElimination(room);
     if (eliminatedPlayer) {
-      eliminatedPlayer.status = "eliminated";
-      eliminatedPlayer.eliminatedRound = room.currentRound;
-      this.server?.to(room.id).emit("player.eliminated", {
-        playerId: eliminatedPlayer.id,
-        playerName: eliminatedPlayer.name,
-        roundNo: room.currentRound,
-      });
+      this.server?.to(room.id).emit("player.eliminated", eliminatedPlayer);
     }
 
-    const winner = this.getWinner(room);
+    const winner = getWinner(room);
     if (winner) {
       await this.finishGame(room, winner);
       return;
     }
 
-    this.touch(room);
-    await this.roomRepository.save(room);
     this.broadcastRoom(room);
-
     setTimeout(() => {
-      void this.startNextDiscussion(room.id);
-    }, 3_000);
-  }
-
-  private async startNextDiscussion(roomId: string) {
-    const room = await this.getRoom(roomId);
-    if (room?.status === "playing") {
-      await this.startDiscussion(room);
-    }
+      void this.startDiscussionById(room.id);
+    }, NEXT_ROUND_DELAY_MS);
   }
 
   private async finishGame(room: Room, winner: Winner) {
-    room.status = "finished";
-    room.phase = "game_over";
-    room.phaseEndsAt = null;
-    room.winner = winner;
-    await this.settleRewards(room, winner);
-    this.touch(room);
-    this.clearTimers(room.id);
-    await this.roomRepository.save(room);
-    const snapshot = this.toSnapshot(room);
-    this.broadcastRoom(room);
-    this.server?.to(room.id).emit("game.ended", snapshot);
-  }
+    const saved = await this.applyWithLock(room.id, (latest) => {
+      if (latest.status === "finished" || latest.phase === "game_over") {
+        return false;
+      }
 
-  private resolveElimination(room: Room): Player | null {
-    const votes = room.votes.filter((vote) => vote.roundNo === room.currentRound);
-    if (votes.length === 0) {
-      return null;
+      latest.status = "finished";
+      latest.phase = "game_over";
+      latest.phaseEndsAt = null;
+      latest.winner = winner;
+      this.prepareRewardSettlement(latest, winner);
+      touch(latest);
+      return true;
+    });
+    if (!saved) {
+      return;
     }
 
-    const voteCounts = new Map<string, number>();
-    for (const vote of votes) {
-      voteCounts.set(vote.targetPlayerId, (voteCounts.get(vote.targetPlayerId) ?? 0) + 1);
+    this.clearTimers(saved.id);
+    try {
+      await this.awardSettledPoints(saved, winner);
+    } catch (error) {
+      this.logger.warn(
+        `Reward settlement failed for room ${saved.id}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
     }
-
-    const sorted = Array.from(voteCounts.entries()).sort((a, b) => b[1] - a[1]);
-    const [topTargetId, topCount] = sorted[0];
-    const isTie = sorted.length > 1 && sorted[1][1] === topCount;
-    if (isTie) {
-      return null;
-    }
-
-    return room.players.find((player) => player.id === topTargetId && player.status === "alive") ?? null;
-  }
-
-  private getWinner(room: Room): Winner {
-    const aliveAiCount = room.players.filter(
-      (player) => player.type === "ai" && player.status === "alive",
-    ).length;
-    const aliveHumanCount = room.players.filter(
-      (player) => player.type === "human" && player.status === "alive",
-    ).length;
-
-    if (aliveAiCount === 0) {
-      return "human";
-    }
-
-    if (aliveHumanCount === 0) {
-      return "ai";
-    }
-
-    if (room.currentRound >= MAX_ROUNDS) {
-      return aliveAiCount > 0 ? "ai" : "human";
-    }
-
-    return null;
+    const snapshot = toRoomSnapshot(saved);
+    this.broadcastRoom(saved);
+    this.server?.to(saved.id).emit("game.ended", snapshot);
   }
 
   private startTick(room: Room) {
@@ -659,11 +696,11 @@ export class GameService {
         (player) => Date.now() - player.lastSpokeAt >= SPEAK_COOLDOWN_MS,
       );
 
-      if (candidates.length === 0 || Math.random() > 0.55) {
+      if (candidates.length === 0 || Math.random() > AI_SPEECH_CHANCE) {
         return;
       }
 
-      const aiPlayer = this.randomItem(candidates);
+      const aiPlayer = randomItem(candidates);
       this.aiSpeaking.set(room.id, true);
       try {
         const context = this.buildGameContext(room, aiPlayer);
@@ -703,7 +740,7 @@ export class GameService {
       } finally {
         this.aiSpeaking.set(room.id, false);
       }
-    }, 6_000);
+    }, AI_SPEECH_INTERVAL_MS);
   }
 
   private scheduleAiVotes(room: Room) {
@@ -714,7 +751,7 @@ export class GameService {
     aiPlayers.forEach((aiPlayer, index) => {
       setTimeout(() => {
         void this.castAiVote(room.id, aiPlayer.id);
-      }, 1_500 + index * 1_200);
+      }, AI_VOTE_DELAY_MS + index * AI_VOTE_STAGGER_MS);
     });
   }
 
@@ -746,24 +783,10 @@ export class GameService {
     }
 
     this.logger.log(`[${aiPlayer.name}] Vote: LLM returned null, using fallback`);
-    const target = this.chooseFallbackVoteTarget(room, aiPlayer);
+    const target = chooseFallbackVoteTarget(room, aiPlayer);
     if (target) {
       await this.castVoteForPlayer(room, aiPlayer, target.id);
     }
-  }
-
-  private chooseFallbackVoteTarget(room: Room, aiPlayer: Player): Player | null {
-    const aliveHumans = room.players.filter(
-      (player) => player.type === "human" && player.status === "alive",
-    );
-    if (aliveHumans.length > 0) {
-      return this.randomItem(aliveHumans);
-    }
-
-    const fallbackTargets = room.players.filter(
-      (player) => player.id !== aiPlayer.id && player.status === "alive",
-    );
-    return fallbackTargets.length > 0 ? this.randomItem(fallbackTargets) : null;
   }
 
   private buildGameContext(room: Room, aiPlayer: Player): GameContext {
@@ -875,7 +898,7 @@ export class GameService {
         targetPlayerId: target.id,
         createdAt: new Date().toISOString(),
       });
-      this.touch(latest);
+      touch(latest);
       return true;
     });
 
@@ -883,7 +906,7 @@ export class GameService {
       return this.fail("投票失败，请重试");
     }
 
-    const snapshot = this.toSnapshot(saved);
+    const snapshot = toRoomSnapshot(saved);
     this.server?.to(saved.id).emit("vote.updated", snapshot);
     this.broadcastRoom(saved);
 
@@ -892,7 +915,7 @@ export class GameService {
     if (roundVotes.length >= aliveVoters.length) {
       setTimeout(() => {
         void this.resolveVotesById(saved.id);
-      }, 500);
+      }, AUTO_RESOLVE_DELAY_MS);
     }
 
     return {
@@ -907,135 +930,13 @@ export class GameService {
     content: string,
     emitChatMessage = true,
   ) {
-    const message: ChatMessage = {
-      id: randomUUID(),
-      roundNo: room.currentRound,
-      playerId: player.id,
-      playerName: player.name,
-      source: player.type,
-      content,
-      createdAt: new Date().toISOString(),
-    };
-
-    player.lastSpokeAt = Date.now();
-    room.messages.push(message);
-    this.touch(room);
+    const message = addChatMessage(room, player, content);
     if (emitChatMessage) {
-      this.server?.to(room.id).emit("chat.message", this.publicMessage(message, room));
+      this.server?.to(room.id).emit("chat.message", toPublicMessage(message, room));
     }
   }
 
-  private validateCanSpeak(room: Room, player: Player): string | null {
-    if (room.status !== "playing" || room.phase !== "discussion") {
-      return "当前不在发言阶段";
-    }
-
-    if (player.status !== "alive") {
-      return "已出局玩家不能发言";
-    }
-
-    const remainingMs = SPEAK_COOLDOWN_MS - (Date.now() - player.lastSpokeAt);
-    if (remainingMs > 0) {
-      return `发言冷却中，请等待 ${Math.ceil(remainingMs / 1000)} 秒`;
-    }
-
-    return null;
-  }
-
-  private toSnapshot(room: Room): RoomSnapshot {
-    const revealTypes = room.status === "finished";
-    const hideAi = room.status === "waiting";
-    return {
-      id: room.id,
-      status: room.status,
-      ownerPlayerId: room.ownerPlayerId,
-      players: room.players
-        .slice()
-        .sort((a, b) => a.seatNo - b.seatNo)
-        .filter((player) => !hideAi || player.type !== "ai")
-        .map((player) => ({
-          id: player.id,
-          name: player.name,
-          status: player.status,
-          seatNo: player.seatNo,
-          connected: player.connected,
-          eliminatedRound: player.eliminatedRound,
-          revealedType: revealTypes ? player.type : undefined,
-        })),
-      currentRound: room.currentRound,
-      phase: room.phase,
-      phaseEndsAt: room.phaseEndsAt,
-      winner: room.winner,
-      messages: room.messages.slice(-80).map((message) => this.publicMessage(message, room)),
-      voteCounts: this.getVoteCounts(room),
-      voteResults: this.getPublicVoteResults(room),
-      pointAwards: room.pointAwards,
-      config: {
-        maxHumanPlayers: MAX_HUMAN_PLAYERS,
-        aiPlayerCount: AI_PLAYER_COUNT,
-        maxRounds: MAX_ROUNDS,
-        discussionDurationMs: room.discussionDurationMs,
-        voteDurationMs: VOTE_DURATION_MS,
-        speakCooldownMs: SPEAK_COOLDOWN_MS,
-        rewardPool: REWARD_POOL,
-      },
-      canStart: room.status === "waiting" && this.countHumans(room) >= 1,
-      updatedAt: room.updatedAt,
-    };
-  }
-
-  private publicMessage(message: ChatMessage, room: Room) {
-    return {
-      id: message.id,
-      roundNo: message.roundNo,
-      playerId: message.playerId,
-      playerName: message.playerName,
-      content: message.content,
-      createdAt: message.createdAt,
-      source: room.status === "finished" ? message.source : undefined,
-    };
-  }
-
-  private getVoteCounts(room: Room): Record<string, number> {
-    if (!this.isVoteResultPublic(room, room.currentRound)) {
-      return {};
-    }
-
-    const counts: Record<string, number> = {};
-    for (const vote of room.votes) {
-      if (vote.roundNo !== room.currentRound) {
-        continue;
-      }
-      counts[vote.targetPlayerId] = (counts[vote.targetPlayerId] ?? 0) + 1;
-    }
-    return counts;
-  }
-
-  private getPublicVoteResults(room: Room): PublicVoteResult[] {
-    return room.votes
-      .filter((vote) => this.isVoteResultPublic(room, vote.roundNo))
-      .map((vote) => ({
-        id: vote.id,
-        roundNo: vote.roundNo,
-        voterPlayerId: vote.voterPlayerId,
-        targetPlayerId: vote.targetPlayerId,
-        createdAt: vote.createdAt,
-      }));
-  }
-
-  private isVoteResultPublic(room: Room, roundNo: number) {
-    if (room.status === "finished" || room.phase === "game_over") {
-      return true;
-    }
-
-    if (roundNo < room.currentRound) {
-      return true;
-    }
-
-    return room.currentRound === roundNo && room.phase === "resolving";
-  }
-
-  private async settleRewards(room: Room, winner: Winner) {
+  private prepareRewardSettlement(room: Room, winner: Winner) {
     if (room.rewardSettledAt) {
       return;
     }
@@ -1068,72 +969,22 @@ export class GameService {
       points: basePoints + (index < remainder ? 1 : 0),
     }));
 
-    await this.authService.addPointsToAccounts(
-      awards.flatMap((award, index) => {
-        const accountId = eligiblePlayers[index].accountId;
-        return accountId ? [{ accountId, points: award.points }] : [];
-      }),
-    );
-
     room.pointAwards = awards;
   }
 
-  private createHumanPlayer(
-    playerName: string | undefined,
-    socketId: string,
-    seatNo: number,
-    accountId?: string,
-  ): Player {
-    return {
-      id: randomUUID(),
-      accountId,
-      socketId,
-      name: this.normalizePlayerName(playerName),
-      type: "human",
-      status: "alive",
-      seatNo,
-      lastSpokeAt: 0,
-      connected: true,
-    };
-  }
-
-  private createAiPlayers(startSeatNo: number): Player[] {
-    const names = [...AI_NAMES].sort(() => Math.random() - 0.5);
-    return Array.from({ length: AI_PLAYER_COUNT }, (_, index) => ({
-      id: randomUUID(),
-      name: names[index] ?? `玩家${startSeatNo + index}`,
-      type: "ai" as PlayerType,
-      status: "alive" as const,
-      seatNo: startSeatNo + index,
-      lastSpokeAt: 0,
-      connected: true,
-    }));
-  }
-
-  private createRoomId() {
-    return randomUUID().replaceAll("-", "").slice(0, 6).toUpperCase();
-  }
-
-  private normalizeRoomId(roomId: string | undefined) {
-    return (roomId ?? "").trim().toUpperCase();
-  }
-
-  private normalizePlayerName(playerName: string | undefined) {
-    const name = (playerName ?? "").trim();
-    return name.slice(0, 16) || `玩家${Math.floor(Math.random() * 9000) + 1000}`;
-  }
-
-  private normalizeContent(content: string | undefined) {
-    return (content ?? "").trim().slice(0, MESSAGE_LIMIT);
-  }
-
-  private normalizeDiscussionDuration(payload: CreateRoomPayload) {
-    const minutes = Number(payload.discussionDurationMinutes);
-    if (!Number.isFinite(minutes)) {
-      return Math.max(DEFAULT_DISCUSSION_DURATION_MS, MIN_DISCUSSION_DURATION_MS);
+  private async awardSettledPoints(room: Room, winner: Winner) {
+    if (winner !== "human" || room.pointAwards.length === 0) {
+      return;
     }
 
-    return Math.max(Math.floor(minutes), 1) * 60_000;
+    await this.authService.addPointsToAccounts(
+      room.pointAwards.flatMap((award) => {
+        const accountId = room.players.find(
+          (player) => player.id === award.playerId,
+        )?.accountId;
+        return accountId ? [{ accountId, points: award.points }] : [];
+      }),
+    );
   }
 
   /**
@@ -1145,7 +996,7 @@ export class GameService {
     roomId: string,
     mutate: (room: Room) => boolean,
   ): Promise<Room | null> {
-    const normalizedId = this.normalizeRoomId(roomId);
+    const normalizedId = normalizeRoomId(roomId);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const room = await this.roomRepository.findById(normalizedId);
@@ -1169,13 +1020,41 @@ export class GameService {
   }
 
   private getRoom(roomId: string | undefined) {
-    return this.roomRepository.findById(this.normalizeRoomId(roomId));
+    return this.roomRepository.findById(normalizeRoomId(roomId));
   }
 
   private findHumanBySocket(room: Room, socketId: string) {
     return room.players.find(
       (player) => player.type === "human" && player.socketId === socketId,
     );
+  }
+
+  private bindHumanForAction(
+    room: Room,
+    socketId: string,
+    playerId: string | undefined,
+  ): Player | null {
+    const socketPlayer = this.findHumanBySocket(room, socketId);
+    if (socketPlayer) {
+      return socketPlayer;
+    }
+
+    if (!playerId) {
+      return null;
+    }
+
+    const player = room.players.find(
+      (candidate) => candidate.id === playerId && candidate.type === "human",
+    );
+    if (!player) {
+      return null;
+    }
+
+    this.cancelDisconnectRemoval(room.id, player.id);
+    player.socketId = socketId;
+    player.connected = true;
+    touch(room);
+    return player;
   }
 
   private async findHumanForAction(
@@ -1196,18 +1075,10 @@ export class GameService {
     }
 
     const saved = await this.applyWithLock(room.id, (latest) => {
-      const player = latest.players.find(
-        (candidate) =>
-          candidate.id === playerId && candidate.type === "human",
-      );
+      const player = this.bindHumanForAction(latest, socketId, playerId);
       if (!player) {
         return false;
       }
-
-      this.cancelDisconnectRemoval(latest.id, player.id);
-      player.socketId = socketId;
-      player.connected = true;
-      this.touch(latest);
       return true;
     });
     if (!saved) {
@@ -1227,10 +1098,6 @@ export class GameService {
     };
   }
 
-  private countHumans(room: Room) {
-    return room.players.filter((player) => player.type === "human").length;
-  }
-
   private cancelDisconnectRemoval(roomId: string, playerId: string) {
     const timerKey = `${roomId}:${playerId}`;
     const existingTimer = this.disconnectTimers.get(timerKey);
@@ -1242,16 +1109,8 @@ export class GameService {
     this.disconnectTimers.delete(timerKey);
   }
 
-  private futureIso(durationMs: number) {
-    return new Date(Date.now() + durationMs).toISOString();
-  }
-
-  private touch(room: Room) {
-    room.updatedAt = new Date().toISOString();
-  }
-
   private broadcastRoom(room: Room) {
-    this.server?.to(room.id).emit("room.updated", this.toSnapshot(room));
+    this.server?.to(room.id).emit("room.updated", toRoomSnapshot(room));
   }
 
   private getTimers(roomId: string): RoomTimers {
@@ -1283,10 +1142,6 @@ export class GameService {
 
     this.timers.set(roomId, {});
     this.aiSpeaking.delete(roomId);
-  }
-
-  private randomItem<T>(items: T[]): T {
-    return items[Math.floor(Math.random() * items.length)];
   }
 
   private fail(error: string): ActionResult {
