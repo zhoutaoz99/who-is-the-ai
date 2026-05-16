@@ -30,6 +30,245 @@ type TranscriptItem =
       votes: PublicVoteResult[];
     };
 
+/* ===== Icons ===== */
+function IconSend(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <line x1="22" y1="2" x2="11" y2="13" />
+      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+  );
+}
+
+function IconClock(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}
+
+function IconRound(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  );
+}
+
+function IconWifiOff(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <line x1="1" y1="1" x2="23" y2="23" />
+      <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01" />
+    </svg>
+  );
+}
+
+function IconSkull(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="9" cy="12" r="1" />
+      <circle cx="15" cy="12" r="1" />
+      <path d="M8 20v2h8v-2" />
+      <path d="M12 20V10" />
+      <path d="M9 17h6" />
+      <path d="M7 17H5a2 2 0 0 1-2-2v-4a6 6 0 0 1 6-6h6a6 6 0 0 1 6 6v4a2 2 0 0 1-2 2h-2" />
+    </svg>
+  );
+}
+
+function IconCheck(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function IconTrophy(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+      <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+      <path d="M4 22h16" />
+      <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+      <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+      <path d="M18 2H6v7a6 6 0 0 0 12 0V2z" />
+    </svg>
+  );
+}
+
+function IconFrown(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M16 16s-1.5-2-4-2-4 2-4 2" />
+      <line x1="9" y1="9" x2="9.01" y2="9" />
+      <line x1="15" y1="9" x2="15.01" y2="9" />
+    </svg>
+  );
+}
+
+function IconTarget(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="6" />
+      <circle cx="12" cy="12" r="2" />
+    </svg>
+  );
+}
+
+function IconMessage(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function IconSparkles(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
+      <path d="M5 3v4" />
+      <path d="M19 17v4" />
+      <path d="M3 5h4" />
+      <path d="M17 19h4" />
+    </svg>
+  );
+}
+
+/* ===== Seat colors ===== */
+const SEAT_COLORS = [
+  "#0f766e",
+  "#2563eb",
+  "#7c3aed",
+  "#b42318",
+  "#b54708",
+  "#047857",
+  "#0369a1",
+  "#4338ca",
+];
+
+function getSeatColor(seatNo: number) {
+  return SEAT_COLORS[(seatNo - 1) % SEAT_COLORS.length];
+}
+
+/* ===== Main Page ===== */
 export default function GamePage() {
   const params = useParams<{ roomId: string }>();
   const router = useRouter();
@@ -51,7 +290,9 @@ export default function GamePage() {
 
   const [chatDraft, setChatDraft] = useState("");
   const [votedTarget, setVotedTarget] = useState<string | null>(null);
-  const [selectedVoteTarget, setSelectedVoteTarget] = useState<string | null>(null);
+  const [selectedVoteTarget, setSelectedVoteTarget] = useState<string | null>(
+    null,
+  );
   const [now, setNow] = useState(Date.now());
 
   const room = getRoom(roomId);
@@ -73,7 +314,9 @@ export default function GamePage() {
       return;
     }
 
-    const playerInRoom = currentRoom.players.find((p) => p.id === storedPlayerId);
+    const playerInRoom = currentRoom.players.find(
+      (p) => p.id === storedPlayerId,
+    );
     if (!playerInRoom || playerInRoom.connected) {
       return;
     }
@@ -165,10 +408,23 @@ export default function GamePage() {
     currentPlayer?.status === "alive" &&
     room.status === "playing" &&
     !votedTarget;
-  const alivePlayers = room.players.filter((player) => player.status === "alive");
+  const alivePlayers = room.players.filter(
+    (player) => player.status === "alive",
+  );
   const selectedVotePlayer =
     alivePlayers.find((player) => player.id === selectedVoteTarget) ?? null;
   const transcriptItems = buildTranscriptItems(room);
+
+  const phaseTotalMs =
+    room.phase === "discussion"
+      ? room.config.discussionDurationMs
+      : room.phase === "voting"
+        ? room.config.voteDurationMs
+        : 0;
+  const phaseProgress =
+    phaseTotalMs > 0 && remainingMs > 0
+      ? remainingMs / phaseTotalMs
+      : 0;
 
   async function handleSendChat(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -203,105 +459,229 @@ export default function GamePage() {
 
   return (
     <main className="immersive-page">
+      {/* ===== Topline ===== */}
       <header className="game-topline">
-        <div>
-          <p className="eyebrow">Room {room.id}</p>
-          <h1>{phaseLabel(room.phase)}</h1>
+        <div className="game-topline-left">
+          <div className="phase-pill">{phaseLabel(room.phase)}</div>
+          <h1>Room {room.id}</h1>
         </div>
         <div className="game-topline-meta">
-          <span className={connected ? "status online" : "status offline"}>
-            {connected ? "已连接" : "断开连接"}
-          </span>
-          <div className="round-meter">
+          <div
+            className={`connection-badge ${connected ? "online" : "offline"}`}
+          >
+            <span className="connection-dot" />
+            {connected ? "已连接" : "断开"}
+          </div>
+          <div
+            className={`round-meter ${remainingMs <= 15_000 && remainingMs > 0 ? "critical" : room.phase !== "voting" && remainingMs <= 60_000 && remainingMs > 0 ? "warning" : ""}`}
+          >
             <span>
+              <IconRound
+                width="12"
+                height="12"
+                style={{ verticalAlign: "middle", marginRight: 4 }}
+              />
               第 {room.currentRound || 0}/{room.config.maxRounds} 轮
             </span>
-            <strong>{formatRemaining(remainingMs)}</strong>
+            <div className="timer-box">
+              <IconClock
+                width="16"
+                height="16"
+                style={{ verticalAlign: "middle", marginRight: 4 }}
+              />
+              <strong>{formatRemaining(remainingMs)}</strong>
+            </div>
+            {remainingMs <= 15_000 && remainingMs > 0 && (
+              <div className="timer-alert critical">
+                <span className="alert-pulse" />
+                即将结束！
+              </div>
+            )}
+            {room.phase !== "voting" && remainingMs > 15_000 && remainingMs <= 60_000 && remainingMs > 0 && (
+              <div className="timer-alert warning">
+                剩余时间不足 1 分钟
+              </div>
+            )}
+            {phaseTotalMs > 0 && remainingMs > 0 && (
+              <div className="timer-track">
+                <div
+                  className="timer-fill"
+                  style={{
+                    width: `${phaseProgress * 100}%`,
+                    transition: "width 1s linear",
+                  }}
+                />
+              </div>
+            )}
           </div>
         </div>
       </header>
 
+      {/* ===== Result Banner ===== */}
       {room.status === "finished" && (
-        <section className="game-result-banner">
-          <h2>{room.winner === "human" ? "真人玩家获胜" : "人类玩家失败"}</h2>
-          <p>
-            {room.winner === "human"
-              ? formatPointAwardSummary(room)
-              : "4 轮结束后仍有 AI 模拟玩家在场，本局挑战失败。"}
-          </p>
+        <section
+          className={`game-result-banner ${room.winner === "human" ? "win" : "loss"}`}
+        >
+          <div className="result-banner-left">
+            <div className="result-icon">
+              {room.winner === "human" ? <IconTrophy /> : <IconFrown />}
+            </div>
+            <div>
+              <h2>
+                {room.winner === "human"
+                  ? "真人玩家获胜"
+                  : "人类玩家失败"}
+              </h2>
+              <p>
+                {room.winner === "human"
+                  ? formatPointAwardSummary(room)
+                  : "4 轮结束后仍有 AI 模拟玩家在场，本局挑战失败。"}
+              </p>
+            </div>
+          </div>
           <button className="secondary" onClick={() => router.push("/")}>
             返回大厅
           </button>
         </section>
       )}
 
+      {/* ===== Game Stage ===== */}
       <section className="game-stage">
+        {/* --- Left: Players --- */}
         <aside className="immersive-panel player-dock">
-          <div>
-            <p className="eyebrow">Players</p>
-            <h2>玩家</h2>
+          <div className="panel-header">
+            <div className="panel-header-icon player-icon">
+              <IconTarget width="18" height="18" />
+            </div>
+            <div>
+              <p className="eyebrow">Players</p>
+              <h2>
+                玩家{" "}
+                <span className="panel-count">
+                  {alivePlayers.length}/{room.players.length} 存活
+                </span>
+              </h2>
+            </div>
           </div>
           <div className="player-dock-list">
-            {room.players.map((player) => (
-              <div className="player-row" key={player.id}>
-                <div>
-                  <strong>#{player.seatNo}</strong>
-                  {player.id === playerId && <span className="self">你</span>}
+            {room.players.map((player) => {
+              const isSelf = player.id === playerId;
+              return (
+                <div
+                  className={`player-row game-player-row ${isSelf ? "is-self" : ""} ${player.status === "eliminated" ? "is-dead" : ""}`}
+                  key={player.id}
+                >
+                  <div
+                    className="game-player-avatar"
+                    style={{ backgroundColor: getSeatColor(player.seatNo) }}
+                  >
+                    {player.seatNo}
+                  </div>
+                  <div className="game-player-info">
+                    <div className="game-player-name">
+                      <strong>#{player.seatNo}</strong>
+                      {isSelf && <span className="self">你</span>}
+                      {player.revealedType && (
+                        <span
+                          className={`identity-tag ${player.revealedType}`}
+                        >
+                          {player.revealedType === "ai" ? "AI" : "真人"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="game-player-status">
+                      {player.status === "alive" ? (
+                        <span className="alive">存活</span>
+                      ) : (
+                        <span className="dead">
+                          <IconSkull
+                            width="10"
+                            height="10"
+                            style={{ verticalAlign: "middle", marginRight: 2 }}
+                          />
+                          出局
+                        </span>
+                      )}
+                      {!player.connected && player.status === "alive" && (
+                        <span className="muted offline-tag">
+                          <IconWifiOff
+                            width="10"
+                            height="10"
+                            style={{ verticalAlign: "middle", marginRight: 2 }}
+                          />
+                          离线
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="player-meta">
-                  <span className={player.status === "alive" ? "alive" : "dead"}>
-                    {player.status === "alive" ? "存活" : "出局"}
-                  </span>
-                  {player.revealedType && (
-                    <span className="identity">
-                      {player.revealedType === "ai" ? "AI" : "真人"}
-                    </span>
-                  )}
-                  {!player.connected && player.status === "alive" && (
-                    <span className="muted">离线</span>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </aside>
 
+        {/* --- Center: Transcript --- */}
         <section className="immersive-panel transcript">
           <div className="transcript-header">
-            <div>
-              <p className="eyebrow">Discussion</p>
-              <h2>发言区</h2>
+            <div className="panel-header">
+              <div className="panel-header-icon chat-icon">
+                <IconMessage width="18" height="18" />
+              </div>
+              <div>
+                <p className="eyebrow">Discussion</p>
+                <h2>发言区</h2>
+              </div>
             </div>
-            <span>{room.messages.length} 条</span>
+            <span className="msg-count">
+              {room.messages.length} 条消息
+            </span>
           </div>
 
           <div className="transcript-messages">
             {transcriptItems.length === 0 ? (
-              <p className="muted-text">等待第一轮开始</p>
+              <div className="transcript-empty">
+                <IconSparkles
+                  width="40"
+                  height="40"
+                  style={{ color: "#2dd4bf", opacity: 0.6 }}
+                />
+                <p>等待第一轮开始</p>
+                <p className="muted-text" style={{ fontSize: 13 }}>
+                  观察发言逻辑，找出隐藏的 AI 玩家
+                </p>
+              </div>
             ) : (
               transcriptItems.map((item) =>
                 item.type === "round" ? (
-                  <div className="round-transition" key={`round-${item.roundNo}`}>
-                    <span>第 {item.roundNo} 轮</span>
+                  <div
+                    className="round-transition"
+                    key={`round-${item.roundNo}`}
+                  >
+                    <span>ROUND {item.roundNo}</span>
                     <strong>发言开始</strong>
-                    <p>请根据编号玩家的发言、逻辑和投票倾向判断谁是 AI 模拟玩家。</p>
+                    <p>
+                      请根据编号玩家的发言、逻辑和投票倾向判断谁是 AI 模拟玩家。
+                    </p>
                   </div>
                 ) : (
-                  renderTranscriptItem(room, item)
+                  renderTranscriptItem(room, item, playerId)
                 ),
               )
             )}
             <div ref={messagesEndRef} />
           </div>
 
-          <form className="composer immersive-composer" onSubmit={handleSendChat}>
+          <form
+            className="composer immersive-composer"
+            onSubmit={handleSendChat}
+          >
             <input
               value={chatDraft}
               maxLength={240}
               disabled={!canSpeak || pending}
               placeholder={
                 canSpeak
-                  ? "输入发言，15 秒冷却"
+                  ? "输入发言，15 秒冷却..."
                   : speakCooldownRemainingMs > 0
                     ? `发言冷却中，还剩 ${formatCooldownSeconds(
                         speakCooldownRemainingMs,
@@ -310,50 +690,99 @@ export default function GamePage() {
               }
               onChange={(event) => setChatDraft(event.target.value)}
             />
-            <button disabled={!canSpeak || pending || !chatDraft.trim()}>发送</button>
+            <button
+              disabled={!canSpeak || pending || !chatDraft.trim()}
+              aria-label="发送"
+              className="send-btn"
+            >
+              <IconSend />
+            </button>
           </form>
         </section>
 
+        {/* --- Right: Action --- */}
         <aside className="immersive-panel action-dock">
-          <div>
-            <p className="eyebrow">Action</p>
-            <h2>{room.phase === "voting" ? "投票" : "当前行动"}</h2>
+          <div className="panel-header">
+            <div className="panel-header-icon action-icon">
+              <IconTarget width="18" height="18" />
+            </div>
+            <div>
+              <p className="eyebrow">Action</p>
+              <h2>{room.phase === "voting" ? "投票" : "当前行动"}</h2>
+            </div>
           </div>
 
           {room.phase !== "voting" && room.status !== "finished" && (
             <div className="phase-hint">
-              <strong>{phaseLabel(room.phase)}</strong>
-              <p>观察发言逻辑、前后矛盾和跟票行为，投票阶段开始后选择怀疑对象。</p>
+              <div className="phase-hint-title">
+                <IconSparkles
+                  width="16"
+                  height="16"
+                  style={{ color: "#2dd4bf" }}
+                />
+                <strong>{phaseLabel(room.phase)}</strong>
+              </div>
+              <p>
+                观察发言逻辑、前后矛盾和跟票行为，投票阶段开始后选择怀疑对象。
+              </p>
             </div>
           )}
 
           {room.phase === "voting" && (
             <>
               {votedTarget ? (
-                <div className="phase-hint">
-                  <strong>投票已提交</strong>
+                <div className="phase-hint voted-hint">
+                  <div className="phase-hint-title">
+                    <IconCheck
+                      width="18"
+                      height="18"
+                      style={{ color: "#34d399" }}
+                    />
+                    <strong>投票已提交</strong>
+                  </div>
                   <p>等待本轮投票结束后公开结果。</p>
                 </div>
               ) : (
                 <>
+                  <div className="vote-section-title">
+                    <IconTarget
+                      width="14"
+                      height="14"
+                      style={{ verticalAlign: "middle", marginRight: 4 }}
+                    />
+                    选择怀疑对象
+                  </div>
                   <div className="vote-options vertical">
                     {alivePlayers
                       .filter((player) => player.id !== playerId)
                       .map((player) => (
                         <button
-                          className={selectedVoteTarget === player.id ? "selected" : ""}
+                          className={`vote-btn ${selectedVoteTarget === player.id ? "selected" : ""}`}
                           key={player.id}
                           disabled={!canVote || pending}
                           onClick={() => setSelectedVoteTarget(player.id)}
                         >
-                          <span>#{player.seatNo}</span>
+                          <span
+                            className="vote-btn-avatar"
+                            style={{
+                              backgroundColor: getSeatColor(player.seatNo),
+                            }}
+                          >
+                            {player.seatNo}
+                          </span>
+                          <span className="vote-btn-label">
+                            #{player.seatNo}
+                          </span>
                         </button>
                       ))}
                   </div>
 
                   {selectedVotePlayer && (
                     <div className="vote-confirm">
-                      <p>确认投给 #{selectedVotePlayer.seatNo}？</p>
+                      <p>
+                        确认投给{" "}
+                        <strong>#{selectedVotePlayer.seatNo}</strong>？
+                      </p>
                       <div>
                         <button
                           className="secondary"
@@ -362,7 +791,10 @@ export default function GamePage() {
                         >
                           取消
                         </button>
-                        <button disabled={!canVote || pending} onClick={handleConfirmVote}>
+                        <button
+                          disabled={!canVote || pending}
+                          onClick={handleConfirmVote}
+                        >
                           确认投票
                         </button>
                       </div>
@@ -375,8 +807,15 @@ export default function GamePage() {
 
           {room.status === "finished" && (
             <div className="phase-hint">
-              <strong>身份已揭晓</strong>
-              <p>可以查看左侧玩家身份和发言记录。</p>
+              <div className="phase-hint-title">
+                <IconSparkles
+                  width="16"
+                  height="16"
+                  style={{ color: "#fcd34d" }}
+                />
+                <strong>身份已揭晓</strong>
+              </div>
+              <p>可以查看左侧玩家身份和完整发言记录。</p>
             </div>
           )}
 
@@ -387,6 +826,7 @@ export default function GamePage() {
   );
 }
 
+/* ===== Helpers ===== */
 function buildTranscriptItems(room: RoomSnapshot): TranscriptItem[] {
   const maxMessageRound = room.messages.reduce(
     (maxRound, message) => Math.max(maxRound, message.roundNo),
@@ -432,28 +872,58 @@ function buildTranscriptItems(room: RoomSnapshot): TranscriptItem[] {
   return items;
 }
 
-function renderTranscriptItem(room: RoomSnapshot, item: Exclude<TranscriptItem, { type: "round" }>) {
+function renderTranscriptItem(
+  room: RoomSnapshot,
+  item: Exclude<TranscriptItem, { type: "round" }>,
+  currentPlayerId?: string | null,
+) {
   if (item.type === "voteResult") {
     return (
       <div className="vote-result-card" key={`vote-result-${item.roundNo}`}>
-        <strong>第 {item.roundNo} 轮投票结果：</strong>
-        <span>
-          {formatVoteResultLine(room, item.votes)}；{formatEliminationLine(room, item.roundNo)}
-        </span>
+        <div className="vote-result-header">
+          <IconTarget
+            width="14"
+            height="14"
+            style={{ color: "#fde68a" }}
+          />
+          <strong>第 {item.roundNo} 轮投票结果</strong>
+        </div>
+        <div className="vote-result-body">
+          <span>{formatVoteResultLine(room, item.votes)}</span>
+          <span className="vote-result-sep">·</span>
+          <span>{formatEliminationLine(room, item.roundNo)}</span>
+        </div>
       </div>
     );
   }
 
+  const seatNo = getPlayerSeatNo(room, item.message.playerId);
+  const isAi = item.message.source === "ai";
+  const isSelf = item.message.playerId === currentPlayerId;
+
   return (
-    <article className="message immersive-message" key={item.message.id}>
-      <div>
-        <strong>#{getPlayerSeatNo(room, item.message.playerId)}</strong>
-        <span>第 {item.message.roundNo} 轮</span>
-        {item.message.source && (
-          <span>{item.message.source === "ai" ? "AI" : "真人"}</span>
-        )}
+    <article
+      className={`message immersive-message ${isAi ? "is-ai" : ""} ${isSelf ? "is-self-msg" : ""}`}
+      key={item.message.id}
+    >
+      <div className="message-header">
+        <div
+          className="msg-avatar"
+          style={{ backgroundColor: getSeatColor(Number(seatNo)) }}
+        >
+          {seatNo}
+        </div>
+        <div className="msg-meta">
+          <strong>#{seatNo}</strong>
+          <span>第 {item.message.roundNo} 轮</span>
+          {item.message.source && (
+            <span className={`msg-source ${isAi ? "ai" : "human"}`}>
+              {isAi ? "AI" : "真人"}
+            </span>
+          )}
+        </div>
       </div>
-      <p>{item.message.content}</p>
+      <p className="msg-content">{item.message.content}</p>
     </article>
   );
 }
@@ -482,7 +952,7 @@ function formatVoteResultLine(room: RoomSnapshot, votes: PublicVoteResult[]) {
   return votes
     .map(
       (vote) =>
-        `#${getPlayerSeatNo(room, vote.voterPlayerId)}->#${getPlayerSeatNo(
+        `#${getPlayerSeatNo(room, vote.voterPlayerId)}→#${getPlayerSeatNo(
           room,
           vote.targetPlayerId,
         )}`,
@@ -508,7 +978,10 @@ function formatPointAwardSummary(room: RoomSnapshot) {
   }
 
   const awardLine = room.pointAwards
-    .map((award) => `#${getPlayerSeatNo(room, award.playerId)} +${award.points}`)
+    .map(
+      (award) =>
+        `#${getPlayerSeatNo(room, award.playerId)} +${award.points}`,
+    )
     .join("，");
 
   return `存活真人玩家平分 ${room.config.rewardPool} 积分：${awardLine}`;
