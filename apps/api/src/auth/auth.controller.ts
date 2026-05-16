@@ -17,8 +17,8 @@ export class AuthController {
   }
 
   @Get("me")
-  me(@Headers("authorization") authorization: string | undefined) {
-    const user = this.authService.getPublicAccountByToken(
+  async me(@Headers("authorization") authorization: string | undefined) {
+    const user = await this.authService.getPublicAccountByToken(
       this.getBearerToken(authorization),
     );
 
@@ -36,12 +36,12 @@ export class AuthController {
   }
 
   @Post("logout")
-  logout(@Headers("authorization") authorization: string | undefined) {
+  async logout(@Headers("authorization") authorization: string | undefined) {
     return this.authService.logout(this.getBearerToken(authorization));
   }
 
   @Patch("profile")
-  updateProfile(
+  async updateProfile(
     @Headers("authorization") authorization: string | undefined,
     @Body() payload: ProfileUpdatePayload,
   ) {

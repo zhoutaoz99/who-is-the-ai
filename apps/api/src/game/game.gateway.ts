@@ -42,39 +42,39 @@ export class GameGateway
     this.gameService.bindServer(server);
   }
 
-  handleConnection(client: Socket) {
+  async handleConnection(client: Socket) {
     client.emit("server.ready", {
       socketId: client.id,
-      rooms: this.gameService.listRooms(),
+      rooms: await this.gameService.listRooms(),
     });
   }
 
-  handleDisconnect(client: Socket) {
-    const updatedRooms = this.gameService.disconnect(client.id);
+  async handleDisconnect(client: Socket) {
+    const updatedRooms = await this.gameService.disconnect(client.id);
     for (const room of updatedRooms) {
       this.server.to(room.id).emit("room.updated", room);
     }
   }
 
   @SubscribeMessage("room.list")
-  handleListRooms() {
+  async handleListRooms() {
     return {
       ok: true,
-      rooms: this.gameService.listRooms(),
+      rooms: await this.gameService.listRooms(),
     };
   }
 
   @SubscribeMessage("room.create")
-  handleCreateRoom(
+  async handleCreateRoom(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: CreateRoomPayload,
   ) {
-    const authResult = this.getAccount(payload?.authToken);
+    const authResult = await this.getAccount(payload?.authToken);
     if (!authResult.ok) {
       return authResult;
     }
 
-    const result = this.gameService.createRoom(
+    const result = await this.gameService.createRoom(
       client.id,
       payload ?? {},
       authResult.account,
@@ -87,16 +87,16 @@ export class GameGateway
   }
 
   @SubscribeMessage("room.join")
-  handleJoinRoom(
+  async handleJoinRoom(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: JoinRoomPayload,
   ) {
-    const authResult = this.getAccount(payload?.authToken);
+    const authResult = await this.getAccount(payload?.authToken);
     if (!authResult.ok) {
       return authResult;
     }
 
-    const result = this.gameService.joinRoom(
+    const result = await this.gameService.joinRoom(
       client.id,
       payload ?? {},
       authResult.account,
@@ -109,11 +109,11 @@ export class GameGateway
   }
 
   @SubscribeMessage("room.leave")
-  handleLeaveRoom(
+  async handleLeaveRoom(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: LeaveRoomPayload,
   ) {
-    const result = this.gameService.leaveRoom(client.id, payload ?? {});
+    const result = await this.gameService.leaveRoom(client.id, payload ?? {});
     if (result.room) {
       client.leave(result.room.id);
       this.server.to(result.room.id).emit("room.updated", result.room);
@@ -122,11 +122,11 @@ export class GameGateway
   }
 
   @SubscribeMessage("room.reconnect")
-  handleReconnect(
+  async handleReconnect(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: ReconnectPayload,
   ) {
-    const result = this.gameService.reconnect(client.id, payload ?? {});
+    const result = await this.gameService.reconnect(client.id, payload ?? {});
     if (result.room) {
       client.join(result.room.id);
       this.server.to(result.room.id).emit("room.updated", result.room);
@@ -135,12 +135,12 @@ export class GameGateway
   }
 
   @SubscribeMessage("game.start")
-  handleStartGame(@MessageBody() payload: StartGamePayload) {
+  async handleStartGame(@MessageBody() payload: StartGamePayload) {
     return this.gameService.startGame(payload ?? {});
   }
 
   @SubscribeMessage("chat.send")
-  handleSendChat(
+  async handleSendChat(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: SendChatPayload,
   ) {
@@ -148,14 +148,14 @@ export class GameGateway
   }
 
   @SubscribeMessage("vote.cast")
-  handleCastVote(
+  async handleCastVote(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: CastVotePayload,
   ) {
     return this.gameService.castVote(client.id, payload ?? {});
   }
 
-  private getAccount(authToken: string | undefined):
+  private async getAccount(authToken: string | undefined): Promise<
     | {
         ok: true;
         account: AuthenticatedAccount | null;
@@ -163,7 +163,8 @@ export class GameGateway
     | {
         ok: false;
         error: string;
-      } {
+      }
+  > {
     if (authToken === undefined) {
       return {
         ok: true,
@@ -171,7 +172,7 @@ export class GameGateway
       };
     }
 
-    const account = this.authService.getAccountByToken(authToken);
+    const account = await this.authService.getAccountByToken(authToken);
     if (!account) {
       return {
         ok: false,

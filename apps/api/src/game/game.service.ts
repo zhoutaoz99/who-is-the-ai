@@ -4,6 +4,7 @@ import { Server } from "socket.io";
 import { AiService } from "../ai/ai.service";
 import { GameContext, RoundVoteSummary, VoteRecord } from "../ai/ai.types";
 import { AuthService } from "../auth/auth.service";
+import { GameRoomRepository } from "./game-room.repository";
 import {
   ActionResult,
   CastVotePayload,
@@ -56,7 +57,6 @@ type RoomTimers = {
 @Injectable()
 export class GameService {
   private readonly logger = new Logger(GameService.name);
-  private readonly rooms = new Map<string, Room>();
   private readonly timers = new Map<string, RoomTimers>();
   private readonly aiSpeaking = new Map<string, boolean>();
   private server?: Server;
@@ -64,17 +64,18 @@ export class GameService {
   constructor(
     private readonly aiService: AiService,
     private readonly authService: AuthService,
+    private readonly roomRepository: GameRoomRepository,
   ) {}
 
   bindServer(server: Server) {
     this.server = server;
   }
 
-  createRoom(
+  async createRoom(
     socketId: string,
     payload: CreateRoomPayload,
     account?: GameAccount | null,
-  ): ActionResult {
+  ): Promise<ActionResult> {
     const now = new Date().toISOString();
     const host = this.createHumanPlayer(
       account?.displayName ?? payload.playerName,
@@ -101,7 +102,7 @@ export class GameService {
       updatedAt: now,
     };
 
-    this.rooms.set(room.id, room);
+    await this.roomRepository.save(room);
     return {
       ok: true,
       room: this.toSnapshot(room),
@@ -109,13 +110,13 @@ export class GameService {
     };
   }
 
-  joinRoom(
+  async joinRoom(
     socketId: string,
     payload: JoinRoomPayload,
     account?: GameAccount | null,
-  ): ActionResult {
+  ): Promise<ActionResult> {
     const roomId = this.normalizeRoomId(payload.roomId);
-    const room = this.rooms.get(roomId);
+    const room = await this.roomRepository.findById(roomId);
 
     if (!room) {
       return this.fail("房间不存在");
@@ -132,6 +133,7 @@ export class GameService {
         existingAccountPlayer.connected = true;
         existingAccountPlayer.name = account.displayName;
         this.touch(room);
+        await this.roomRepository.save(room);
 
         return {
           ok: true,
@@ -158,6 +160,7 @@ export class GameService {
     );
     room.players.push(player);
     this.touch(room);
+    await this.roomRepository.save(room);
 
     return {
       ok: true,
@@ -166,9 +169,12 @@ export class GameService {
     };
   }
 
-  leaveRoom(socketId: string, payload: LeaveRoomPayload): ActionResult {
+  async leaveRoom(
+    socketId: string,
+    payload: LeaveRoomPayload,
+  ): Promise<ActionResult> {
     const roomId = this.normalizeRoomId(payload.roomId);
-    const room = this.rooms.get(roomId);
+    const room = await this.roomRepository.findById(roomId);
 
     if (!room) {
       return this.fail("房间不存在");
@@ -195,20 +201,24 @@ export class GameService {
 
     if (this.countHumans(room) === 0) {
       this.clearTimers(room.id);
-      this.rooms.delete(room.id);
+      await this.roomRepository.delete(room.id);
       return { ok: true };
     }
 
     this.touch(room);
+    await this.roomRepository.save(room);
     return {
       ok: true,
       room: this.toSnapshot(room),
     };
   }
 
-  reconnect(socketId: string, payload: ReconnectPayload): ActionResult {
+  async reconnect(
+    socketId: string,
+    payload: ReconnectPayload,
+  ): Promise<ActionResult> {
     const roomId = this.normalizeRoomId(payload.roomId);
-    const room = this.rooms.get(roomId);
+    const room = await this.roomRepository.findById(roomId);
 
     if (!room) {
       return this.fail("房间不存在");
@@ -226,6 +236,7 @@ export class GameService {
     player.socketId = socketId;
     player.connected = true;
     this.touch(room);
+    await this.roomRepository.save(room);
 
     return {
       ok: true,
@@ -236,10 +247,10 @@ export class GameService {
 
   private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
 
-  disconnect(socketId: string): RoomSnapshot[] {
+  async disconnect(socketId: string): Promise<RoomSnapshot[]> {
     const updatedRooms: RoomSnapshot[] = [];
 
-    for (const room of this.rooms.values()) {
+    for (const room of await this.roomRepository.list(200)) {
       const player = room.players.find((candidate) => candidate.socketId === socketId);
       if (!player) {
         continue;
@@ -250,6 +261,7 @@ export class GameService {
 
       if (room.status === "playing" || room.status === "finished") {
         this.touch(room);
+        await this.roomRepository.save(room);
         updatedRooms.push(this.toSnapshot(room));
         continue;
       }
@@ -264,51 +276,60 @@ export class GameService {
       this.disconnectTimers.set(
         timerKey,
         setTimeout(() => {
-          this.disconnectTimers.delete(timerKey);
-          const currentRoom = this.rooms.get(room.id);
-          if (!currentRoom || currentRoom.status !== "waiting") {
-            return;
-          }
-
-          const stillDisconnected = currentRoom.players.find(
-            (candidate) => candidate.id === player.id && !candidate.connected,
-          );
-          if (!stillDisconnected) {
-            return;
-          }
-
-          currentRoom.players = currentRoom.players.filter(
-            (candidate) => candidate.id !== player.id,
-          );
-          if (currentRoom.ownerPlayerId === player.id) {
-            const nextHuman = currentRoom.players.find(
-              (candidate) => candidate.type === "human",
-            );
-            if (nextHuman) {
-              currentRoom.ownerPlayerId = nextHuman.id;
-            }
-          }
-
-          if (this.countHumans(currentRoom) === 0) {
-            this.clearTimers(currentRoom.id);
-            this.rooms.delete(currentRoom.id);
-            this.server?.to(room.id).emit("room.updated", this.toSnapshot(currentRoom));
-          } else {
-            this.touch(currentRoom);
-            this.server?.to(room.id).emit("room.updated", this.toSnapshot(currentRoom));
-          }
+          void this.removeDisconnectedPlayerAfterGrace(room.id, player.id);
         }, 30_000),
       );
 
       this.touch(room);
+      await this.roomRepository.save(room);
       updatedRooms.push(this.toSnapshot(room));
     }
 
     return updatedRooms;
   }
 
-  startGame(payload: StartGamePayload): ActionResult {
-    const room = this.getRoom(payload.roomId);
+  private async removeDisconnectedPlayerAfterGrace(roomId: string, playerId: string) {
+    const timerKey = `${roomId}:${playerId}`;
+    this.disconnectTimers.delete(timerKey);
+
+    const currentRoom = await this.roomRepository.findById(roomId);
+    if (!currentRoom || currentRoom.status !== "waiting") {
+      return;
+    }
+
+    const stillDisconnected = currentRoom.players.find(
+      (candidate) => candidate.id === playerId && !candidate.connected,
+    );
+    if (!stillDisconnected) {
+      return;
+    }
+
+    currentRoom.players = currentRoom.players.filter(
+      (candidate) => candidate.id !== playerId,
+    );
+    if (currentRoom.ownerPlayerId === playerId) {
+      const nextHuman = currentRoom.players.find(
+        (candidate) => candidate.type === "human",
+      );
+      if (nextHuman) {
+        currentRoom.ownerPlayerId = nextHuman.id;
+      }
+    }
+
+    if (this.countHumans(currentRoom) === 0) {
+      this.clearTimers(currentRoom.id);
+      await this.roomRepository.delete(currentRoom.id);
+      this.server?.to(roomId).emit("room.updated", this.toSnapshot(currentRoom));
+      return;
+    }
+
+    this.touch(currentRoom);
+    await this.roomRepository.save(currentRoom);
+    this.server?.to(roomId).emit("room.updated", this.toSnapshot(currentRoom));
+  }
+
+  async startGame(payload: StartGamePayload): Promise<ActionResult> {
+    const room = await this.getRoom(payload.roomId);
     if (!room) {
       return this.fail("房间不存在");
     }
@@ -338,7 +359,7 @@ export class GameService {
       player.eliminatedRound = undefined;
     }
 
-    this.startDiscussion(room);
+    await this.startDiscussion(room);
     this.server?.to(room.id).emit("game.started", this.toSnapshot(room));
 
     return {
@@ -347,8 +368,11 @@ export class GameService {
     };
   }
 
-  sendChat(socketId: string, payload: SendChatPayload): ActionResult {
-    const room = this.getRoom(payload.roomId);
+  async sendChat(
+    socketId: string,
+    payload: SendChatPayload,
+  ): Promise<ActionResult> {
+    const room = await this.getRoom(payload.roomId);
     if (!room) {
       return this.fail("房间不存在");
     }
@@ -369,6 +393,7 @@ export class GameService {
     }
 
     this.addMessage(room, player, content);
+    await this.roomRepository.save(room);
     this.broadcastRoom(room);
 
     return {
@@ -377,8 +402,11 @@ export class GameService {
     };
   }
 
-  castVote(socketId: string, payload: CastVotePayload): ActionResult {
-    const room = this.getRoom(payload.roomId);
+  async castVote(
+    socketId: string,
+    payload: CastVotePayload,
+  ): Promise<ActionResult> {
+    const room = await this.getRoom(payload.roomId);
     if (!room) {
       return this.fail("房间不存在");
     }
@@ -391,32 +419,44 @@ export class GameService {
     return this.castVoteForPlayer(room, player, payload.targetPlayerId);
   }
 
-  listRooms(): RoomSnapshot[] {
-    return Array.from(this.rooms.values()).map((room) => this.toSnapshot(room));
+  async listRooms(): Promise<RoomSnapshot[]> {
+    const rooms = await this.roomRepository.list();
+    return rooms.map((room) => this.toSnapshot(room));
   }
 
-  private startDiscussion(room: Room) {
+  private async startDiscussion(room: Room) {
     this.clearTimers(room.id);
     room.currentRound += 1;
     room.phase = "discussion";
     room.phaseEndsAt = this.futureIso(room.discussionDurationMs);
     this.touch(room);
+    await this.roomRepository.save(room);
 
     this.broadcastRoom(room);
     this.server?.to(room.id).emit("round.started", this.toSnapshot(room));
     this.startTick(room);
-    this.startAiSpeech(room);
+    this.startAiSpeech(room.id);
 
     this.getTimers(room.id).phase = setTimeout(() => {
-      this.startVoting(room);
+      void this.startVotingById(room.id);
     }, room.discussionDurationMs);
   }
 
-  private startVoting(room: Room) {
+  private async startVotingById(roomId: string) {
+    const room = await this.getRoom(roomId);
+    if (!room || room.status !== "playing") {
+      return;
+    }
+
+    await this.startVoting(room);
+  }
+
+  private async startVoting(room: Room) {
     this.clearTimers(room.id);
     room.phase = "voting";
     room.phaseEndsAt = this.futureIso(VOTE_DURATION_MS);
     this.touch(room);
+    await this.roomRepository.save(room);
 
     this.broadcastRoom(room);
     this.server?.to(room.id).emit("vote.started", this.toSnapshot(room));
@@ -424,11 +464,20 @@ export class GameService {
     this.scheduleAiVotes(room);
 
     this.getTimers(room.id).phase = setTimeout(() => {
-      this.resolveVotes(room);
+      void this.resolveVotesById(room.id);
     }, VOTE_DURATION_MS);
   }
 
-  private resolveVotes(room: Room) {
+  private async resolveVotesById(roomId: string) {
+    const room = await this.getRoom(roomId);
+    if (!room) {
+      return;
+    }
+
+    await this.resolveVotes(room);
+  }
+
+  private async resolveVotes(room: Room) {
     this.clearTimers(room.id);
     if (room.phase === "game_over" || room.status === "finished") {
       return;
@@ -450,28 +499,35 @@ export class GameService {
 
     const winner = this.getWinner(room);
     if (winner) {
-      this.finishGame(room, winner);
+      await this.finishGame(room, winner);
       return;
     }
 
     this.touch(room);
+    await this.roomRepository.save(room);
     this.broadcastRoom(room);
 
     setTimeout(() => {
-      if (room.status === "playing") {
-        this.startDiscussion(room);
-      }
+      void this.startNextDiscussion(room.id);
     }, 3_000);
   }
 
-  private finishGame(room: Room, winner: Winner) {
+  private async startNextDiscussion(roomId: string) {
+    const room = await this.getRoom(roomId);
+    if (room?.status === "playing") {
+      await this.startDiscussion(room);
+    }
+  }
+
+  private async finishGame(room: Room, winner: Winner) {
     room.status = "finished";
     room.phase = "game_over";
     room.phaseEndsAt = null;
     room.winner = winner;
-    this.settleRewards(room, winner);
+    await this.settleRewards(room, winner);
     this.touch(room);
     this.clearTimers(room.id);
+    await this.roomRepository.save(room);
     const snapshot = this.toSnapshot(room);
     this.broadcastRoom(room);
     this.server?.to(room.id).emit("game.ended", snapshot);
@@ -535,8 +591,13 @@ export class GameService {
     }, 1_000);
   }
 
-  private startAiSpeech(room: Room) {
-    this.getTimers(room.id).aiSpeech = setInterval(async () => {
+  private startAiSpeech(roomId: string) {
+    this.getTimers(roomId).aiSpeech = setInterval(async () => {
+      const room = await this.getRoom(roomId);
+      if (!room) {
+        return;
+      }
+
       if (room.phase !== "discussion") {
         return;
       }
@@ -568,6 +629,7 @@ export class GameService {
 
         if (action.type === "speak") {
           this.addMessage(room, aiPlayer, action.content);
+          await this.roomRepository.save(room);
           this.broadcastRoom(room);
         }
       } finally {
@@ -582,30 +644,44 @@ export class GameService {
     );
 
     aiPlayers.forEach((aiPlayer, index) => {
-      setTimeout(async () => {
-        if (room.phase !== "voting") {
-          return;
-        }
-
-        const context = this.buildGameContext(room, aiPlayer);
-        const voteAction = await this.aiService.generateVote(context, aiPlayer.id);
-
-        if (voteAction) {
-          this.logger.log(
-            `[${aiPlayer.name}] Vote: target=${voteAction.targetPlayerId} reason="${voteAction.reason ?? ""}"`,
-          );
-          this.castVoteForPlayer(room, aiPlayer, voteAction.targetPlayerId);
-        } else {
-          this.logger.log(
-            `[${aiPlayer.name}] Vote: LLM returned null, using fallback`,
-          );
-          const target = this.chooseFallbackVoteTarget(room, aiPlayer);
-          if (target) {
-            this.castVoteForPlayer(room, aiPlayer, target.id);
-          }
-        }
+      setTimeout(() => {
+        void this.castAiVote(room.id, aiPlayer.id);
       }, 1_500 + index * 1_200);
     });
+  }
+
+  private async castAiVote(roomId: string, aiPlayerId: string) {
+    const room = await this.getRoom(roomId);
+    if (!room || room.phase !== "voting") {
+      return;
+    }
+
+    const aiPlayer = room.players.find(
+      (player) =>
+        player.id === aiPlayerId &&
+        player.type === "ai" &&
+        player.status === "alive",
+    );
+    if (!aiPlayer) {
+      return;
+    }
+
+    const context = this.buildGameContext(room, aiPlayer);
+    const voteAction = await this.aiService.generateVote(context, aiPlayer.id);
+
+    if (voteAction) {
+      this.logger.log(
+        `[${aiPlayer.name}] Vote: target=${voteAction.targetPlayerId} reason="${voteAction.reason ?? ""}"`,
+      );
+      await this.castVoteForPlayer(room, aiPlayer, voteAction.targetPlayerId);
+      return;
+    }
+
+    this.logger.log(`[${aiPlayer.name}] Vote: LLM returned null, using fallback`);
+    const target = this.chooseFallbackVoteTarget(room, aiPlayer);
+    if (target) {
+      await this.castVoteForPlayer(room, aiPlayer, target.id);
+    }
   }
 
   private chooseFallbackVoteTarget(room: Room, aiPlayer: Player): Player | null {
@@ -691,11 +767,11 @@ export class GameService {
     };
   }
 
-  private castVoteForPlayer(
+  private async castVoteForPlayer(
     room: Room,
     voter: Player,
     targetPlayerId?: string,
-  ): ActionResult {
+  ): Promise<ActionResult> {
     if (room.status !== "playing" || room.phase !== "voting") {
       return this.fail("当前不在投票阶段");
     }
@@ -731,6 +807,7 @@ export class GameService {
     };
     room.votes.push(vote);
     this.touch(room);
+    await this.roomRepository.save(room);
 
     const snapshot = this.toSnapshot(room);
     this.server?.to(room.id).emit("vote.updated", snapshot);
@@ -739,7 +816,9 @@ export class GameService {
     const aliveVoters = room.players.filter((player) => player.status === "alive");
     const roundVotes = room.votes.filter((item) => item.roundNo === room.currentRound);
     if (roundVotes.length >= aliveVoters.length) {
-      setTimeout(() => this.resolveVotes(room), 500);
+      setTimeout(() => {
+        void this.resolveVotesById(room.id);
+      }, 500);
     }
 
     return {
@@ -873,7 +952,7 @@ export class GameService {
     return room.currentRound === roundNo && room.phase === "resolving";
   }
 
-  private settleRewards(room: Room, winner: Winner) {
+  private async settleRewards(room: Room, winner: Winner) {
     if (room.rewardSettledAt) {
       return;
     }
@@ -906,7 +985,7 @@ export class GameService {
       points: basePoints + (index < remainder ? 1 : 0),
     }));
 
-    this.authService.addPointsToAccounts(
+    await this.authService.addPointsToAccounts(
       awards.flatMap((award, index) => {
         const accountId = eligiblePlayers[index].accountId;
         return accountId ? [{ accountId, points: award.points }] : [];
@@ -975,7 +1054,7 @@ export class GameService {
   }
 
   private getRoom(roomId: string | undefined) {
-    return this.rooms.get(this.normalizeRoomId(roomId));
+    return this.roomRepository.findById(this.normalizeRoomId(roomId));
   }
 
   private findHumanBySocket(room: Room, socketId: string) {
