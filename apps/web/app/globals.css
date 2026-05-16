@@ -1987,16 +1987,15 @@ p {
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.05em;
-  margin-bottom: 6px;
-  padding: 4px 14px;
+  padding: 5px 14px;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 /* Game topline refinements */
 .game-topline-left {
+  align-items: center;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
 .connection-badge {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../../lib/auth-client";
 import { useGameClient } from "../../lib/game-client";
 import { humanCount, statusLabel } from "../../lib/game-utils";
@@ -191,10 +191,94 @@ function IconDoorOpen(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function IconSettings(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+function IconLogout(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}
+
+function IconChevronDown(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function UserAvatar({ name }: { name: string }) {
+  const colors = [
+    { bg: "#e6f4f1", text: "#0f766e" },
+    { bg: "#dbeafe", text: "#1d4ed8" },
+    { bg: "#ede9fe", text: "#7c3aed" },
+    { bg: "#fce7f3", text: "#db2777" },
+    { bg: "#fee2e2", text: "#dc2626" },
+    { bg: "#ffedd5", text: "#ea580c" },
+    { bg: "#fef3c7", text: "#ca8a04" },
+    { bg: "#dcfce7", text: "#16a34a" },
+    { bg: "#cffafe", text: "#0891b2" },
+    { bg: "#e0e7ff", text: "#4f46e5" },
+  ];
+  const hash = name.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const color = colors[hash % colors.length];
+  const initial = name.charAt(0).toUpperCase();
+
+  return (
+    <div
+      className="avatar-circle"
+      style={{ background: color.bg, color: color.text }}
+    >
+      {initial}
+    </div>
+  );
+}
+
 export default function WaitingRoomPage() {
   const params = useParams<{ roomId: string }>();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, pending: authPending, logout } = useAuth();
   const roomId = params.roomId.toUpperCase();
   const {
     connected,
@@ -234,6 +318,29 @@ export default function WaitingRoomPage() {
   }, [setPlayerName, user]);
 
   useRoomReconnect({ connected, roomId, getPlayerId, reconnectRoom });
+
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(event.target as Node)
+      ) {
+        setUserMenuOpen(false);
+      }
+    }
+    if (userMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [userMenuOpen]);
+
+  async function handleLogout() {
+    await logout();
+    setError("请先登录账号");
+  }
 
   async function handleJoinRoom() {
     if (!user) {
@@ -292,29 +399,71 @@ export default function WaitingRoomPage() {
           </div>
         </div>
         <div className="topbar-actions">
-          {user && (
-            <div className="status account-status">
-              <IconUsers
-                width="14"
-                height="14"
-                style={{ marginRight: 6, verticalAlign: "middle" }}
-              />
-              {user.displayName}
-            </div>
-          )}
-          {!user && (
-            <button
-              className="compact-button"
-              onClick={() => router.push("/account")}
-            >
-              登录 / 注册
-            </button>
-          )}
-          <div className={connected ? "status online" : "status offline"}>
+          <div
+            className={`connection-pill ${connected ? "online" : "offline"}`}
+          >
             <span
               className={`status-dot ${connected ? "online" : "offline"}`}
             />
-            {connected ? "后端已连接" : "后端未连接"}
+            {connected ? "已连接" : "未连接"}
+          </div>
+          <div className="user-actions-group">
+            {user ? (
+              <div className="user-dropdown" ref={userMenuRef}>
+                <button
+                  className="account-badge account-badge--clickable"
+                  disabled={authPending}
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
+                >
+                  <UserAvatar name={user.displayName} />
+                  <span>{user.displayName}</span>
+                  <IconChevronDown
+                    width="14"
+                    height="14"
+                    className={`dropdown-chevron ${userMenuOpen ? "open" : ""}`}
+                  />
+                </button>
+                {userMenuOpen && (
+                  <div className="dropdown-menu">
+                    <div className="dropdown-header">
+                      <UserAvatar name={user.displayName} />
+                      <div className="dropdown-header-info">
+                        <span className="dropdown-header-name">{user.displayName}</span>
+                        <span className="dropdown-header-username">@{user.username}</span>
+                      </div>
+                    </div>
+                    <div className="dropdown-divider" />
+                    <button
+                      className="dropdown-item"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        router.push("/profile");
+                      }}
+                    >
+                      <IconSettings width="16" height="16" />
+                      个人信息
+                    </button>
+                    <button
+                      className="dropdown-item"
+                      onClick={() => {
+                        setUserMenuOpen(false);
+                        handleLogout();
+                      }}
+                    >
+                      <IconLogout width="16" height="16" />
+                      退出登录
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                className="action-pill action-pill--primary"
+                onClick={() => router.push("/account")}
+              >
+                登录 / 注册
+              </button>
+            )}
           </div>
         </div>
       </header>

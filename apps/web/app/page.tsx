@@ -270,6 +270,16 @@ export default function Home() {
   const [roomPage, setRoomPage] = useState(1);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Auto-refresh room list every 3 seconds
+  useEffect(() => {
+    if (!connected) return;
+    refreshTimerRef.current = setInterval(() => void refreshRooms(), 3000);
+    return () => {
+      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+    };
+  }, [connected, refreshRooms]);
 
   const sortedRooms = [...rooms].sort((a, b) => {
     if (a.status === "finished" && b.status !== "finished") return 1;

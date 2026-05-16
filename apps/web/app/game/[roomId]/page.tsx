@@ -437,10 +437,10 @@ export default function GamePage() {
       {/* ===== Topline ===== */}
       <header className="game-topline">
         <div className="game-topline-left">
-          <div className="phase-pill">{phaseLabel(room.phase)}</div>
           <h1>Room {room.id}</h1>
         </div>
         <div className="game-topline-meta">
+          <div className="phase-pill">{phaseLabel(room.phase)}</div>
           <div
             className={`connection-badge ${connected ? "online" : "offline"}`}
           >
