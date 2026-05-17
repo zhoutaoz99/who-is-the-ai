@@ -4,6 +4,10 @@ import { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 @Injectable()
 export class PostgresService implements OnModuleInit, OnModuleDestroy {
   private readonly pool: Pool;
+  private migrateResolve!: () => void;
+  readonly ready = new Promise<void>((resolve) => {
+    this.migrateResolve = resolve;
+  });
 
   constructor() {
     const connectionString = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
@@ -24,6 +28,7 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     await this.migrate();
+    this.migrateResolve();
   }
 
   async onModuleDestroy() {

@@ -20,6 +20,7 @@ import {
   SendChatPayload,
   StartGamePayload,
 } from "./game.types";
+import { PostgresService } from "../data/postgres.service";
 import { GameService } from "./game.service";
 
 @WebSocketGateway({
@@ -36,11 +37,12 @@ export class GameGateway
   constructor(
     private readonly gameService: GameService,
     private readonly authService: AuthService,
+    private readonly postgres: PostgresService,
   ) {}
 
   afterInit(server: Server) {
     this.gameService.bindServer(server);
-    void this.gameService.recoverStuckRooms();
+    void this.postgres.ready.then(() => this.gameService.recoverStuckRooms());
   }
 
   async handleConnection(client: Socket) {
