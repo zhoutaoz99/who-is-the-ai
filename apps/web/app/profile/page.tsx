@@ -4,6 +4,36 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../lib/auth-client";
 
+function getInitials(name: string) {
+  return name.slice(0, 2).toUpperCase();
+}
+
+function stringToHue(str: string) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash % 360);
+}
+
+function Avatar({ name, size = 64 }: { name: string; size?: number }) {
+  const hue = stringToHue(name || "?");
+  const bg = `hsl(${hue} 60% 45%)`;
+  return (
+    <div
+      className="profile-avatar"
+      style={{
+        width: size,
+        height: size,
+        background: bg,
+        fontSize: size * 0.4,
+      }}
+    >
+      {getInitials(name || "?")}
+    </div>
+  );
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const { user, pending, error, updateProfile } = useAuth();
@@ -25,6 +55,7 @@ export default function ProfilePage() {
     if (result.ok && result.user) {
       setDisplayName(result.user.displayName);
       setSuccessMessage("昵称已更新");
+      setTimeout(() => setSuccessMessage(""), 3000);
     }
   }
 
@@ -44,70 +75,88 @@ export default function ProfilePage() {
 
       {!user ? (
         <section className="profile-layout">
-          <div className="panel profile-card">
-            <div>
-              <p className="eyebrow">Account</p>
-              <h2>需要登录</h2>
+          <div className="panel profile-card profile-card--center">
+            <div className="profile-empty">
+              <div className="profile-avatar profile-avatar--muted">?</div>
+              <div>
+                <h2>需要登录</h2>
+                <p className="muted-text">登录后可以查看积分和修改游戏昵称。</p>
+              </div>
+              <button onClick={() => router.push("/account")}>登录 / 注册</button>
             </div>
-            <p className="muted-text">登录后可以查看积分和修改游戏昵称。</p>
-            <button onClick={() => router.push("/account")}>登录 / 注册</button>
           </div>
         </section>
       ) : (
         <section className="profile-layout">
+          {/* 左侧：账号资料 */}
           <div className="panel profile-card">
-            <div>
-              <p className="eyebrow">Overview</p>
-              <h2>账号资料</h2>
-            </div>
-
-            <div className="profile-stats">
-              <div>
-                <span>游戏昵称</span>
-                <strong>{user.displayName}</strong>
-              </div>
-              <div>
-                <span>积分</span>
-                <strong>{user.points}</strong>
+            {/* 头部：头像 + 昵称 */}
+            <div className="profile-header">
+              <Avatar name={user.displayName || user.username} size={72} />
+              <div className="profile-header-info">
+                <strong>{user.displayName || user.username}</strong>
+                <span>@{user.username}</span>
               </div>
             </div>
 
+            {/* 积分 */}
+            <div className="profile-highlight-stat">
+              <span>积分</span>
+              <strong>{user.points}</strong>
+            </div>
+
+            {/* 详细信息 */}
             <div className="profile-info-list">
-              <div>
+              <div className="profile-info-row">
                 <span>账号</span>
                 <strong>@{user.username}</strong>
               </div>
-              <div>
+              <div className="profile-info-row">
                 <span>注册时间</span>
                 <strong>{formatDateTime(user.createdAt)}</strong>
+              </div>
+              <div className="profile-info-row">
+                <span>游戏昵称</span>
+                <strong>{user.displayName || "未设置"}</strong>
               </div>
             </div>
           </div>
 
+          {/* 右侧：修改昵称 */}
           <div className="panel profile-card">
             <div>
               <p className="eyebrow">Edit</p>
               <h2>修改昵称</h2>
+              <p className="muted-text" style={{ marginTop: 6 }}>
+                设置一个个性化的游戏昵称，让其他玩家更容易认出你。
+              </p>
             </div>
 
-            <form className="auth-form" onSubmit={handleUpdateProfile}>
+            <form className="profile-form" onSubmit={handleUpdateProfile}>
               <label className="field">
                 <span>游戏昵称</span>
-                <input
-                  autoComplete="nickname"
-                  value={displayName}
-                  maxLength={16}
-                  placeholder="留空则使用账号"
-                  onChange={(event) => setDisplayName(event.target.value)}
-                />
+                <div className="profile-input-wrap">
+                  <input
+                    autoComplete="nickname"
+                    value={displayName}
+                    maxLength={16}
+                    placeholder="留空则使用账号名"
+                    onChange={(event) => setDisplayName(event.target.value)}
+                  />
+                  <small className="profile-char-count">
+                    {displayName.length}/16
+                  </small>
+                </div>
               </label>
               <button disabled={pending} type="submit">
-                保存昵称
+                {pending ? "保存中…" : "保存昵称"}
               </button>
             </form>
 
-            {successMessage && <p className="success">{successMessage}</p>}
-            {error && <p className="error">{error}</p>}
+            {successMessage && (
+              <p className="success profile-toast">{successMessage}</p>
+            )}
+            {error && <p className="error profile-toast">{error}</p>}
           </div>
         </section>
       )}
