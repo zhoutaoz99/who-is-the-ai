@@ -59,6 +59,7 @@ export interface GameContext {
   mySeatNo: number;
   alivePlayers: Array<{ id: string; seatNo: number }>;
   recentMessages: ChatMessageInput[];
+  historicalMessages: Array<ChatMessageInput & { roundNo: number }>;
   myLastSpeech: string | null;
   currentVoteCounts: Record<string, number>;
   voteHistory: RoundVoteSummary[];

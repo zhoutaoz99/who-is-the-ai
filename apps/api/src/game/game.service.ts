@@ -798,6 +798,15 @@ export class GameService {
         isSelf: m.playerId === aiPlayer.id,
       }));
 
+    const historicalMessages = room.messages
+      .filter((m) => m.roundNo < room.currentRound)
+      .map((m) => ({
+        roundNo: m.roundNo,
+        playerName: m.playerId === aiPlayer.id ? "你" : `${seatMap.get(m.playerId) ?? "?"}号位`,
+        content: m.content,
+        isSelf: m.playerId === aiPlayer.id,
+      }));
+
     const myLastMessage = [...room.messages]
       .reverse()
       .find((m) => m.playerId === aiPlayer.id);
@@ -845,6 +854,7 @@ export class GameService {
       mySeatNo: aiPlayer.seatNo,
       alivePlayers,
       recentMessages,
+      historicalMessages,
       myLastSpeech: myLastMessage?.content ?? null,
       currentVoteCounts,
       voteHistory,

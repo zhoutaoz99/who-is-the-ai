@@ -2,6 +2,8 @@
 可投票目标：{{voteTargets}}
 本轮讨论记录：
 {{recentMessages}}
+历史对话：
+{{historicalMessages}}
 历史投票：
 {{voteHistory}}
 当前投票情况：{{currentVoteInfo}}

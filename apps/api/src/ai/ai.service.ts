@@ -6,6 +6,7 @@ import {
   AiSpeechStrategy,
   AiSpeechStrategyAction,
   AiVoteAction,
+  ChatMessageInput,
   GameContext,
 } from "./ai.types";
 import { loadPrompt, renderTemplate } from "./prompt-loader";
@@ -194,6 +195,7 @@ export class AiService {
       remainingSeconds: String(Math.ceil(context.remainingTimeMs / 1000)),
       myLastSpeech: context.myLastSpeech || "无",
       recentMessages: "无",
+      historicalMessages: "无",
       voteHistory: "无",
       currentVoteInfo: "无",
       alivePlayersList: context.alivePlayers
@@ -208,6 +210,12 @@ export class AiService {
           return `  ${prefix}：${msg.content}`;
         })
         .join("\n");
+    }
+
+    if (context.historicalMessages.length > 0) {
+      vars.historicalMessages = this.formatHistoricalMessages(
+        context.historicalMessages,
+      );
     }
 
     if (context.voteHistory.length > 0) {
@@ -248,6 +256,7 @@ export class AiService {
       myName: context.myName,
       roundNo: String(context.roundNo),
       recentMessages: "无",
+      historicalMessages: "无",
       voteHistory: "无",
       currentVoteInfo: "无",
       voteTargets: targets
@@ -262,6 +271,12 @@ export class AiService {
           return `  ${prefix}：${msg.content}`;
         })
         .join("\n");
+    }
+
+    if (context.historicalMessages.length > 0) {
+      vars.historicalMessages = this.formatHistoricalMessages(
+        context.historicalMessages,
+      );
     }
 
     if (context.voteHistory.length > 0) {
@@ -289,6 +304,22 @@ export class AiService {
     }
 
     return renderTemplate("user-vote-template.txt", vars);
+  }
+
+  private formatHistoricalMessages(
+    messages: Array<ChatMessageInput & { roundNo: number }>,
+  ): string {
+    const grouped = new Map<number, string[]>();
+    for (const msg of messages) {
+      const prefix = msg.isSelf ? "你" : msg.playerName;
+      const lines = grouped.get(msg.roundNo) ?? [];
+      lines.push(`    ${prefix}：${msg.content}`);
+      grouped.set(msg.roundNo, lines);
+    }
+
+    return [...grouped.entries()]
+      .map(([roundNo, lines]) => [`  第${roundNo}轮：`, ...lines].join("\n"))
+      .join("\n");
   }
 
   private async callModel(
