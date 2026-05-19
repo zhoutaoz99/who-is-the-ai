@@ -41,9 +41,14 @@ setInterval(每6秒):
 ```
 generateSpeech(context):
   ├─ 未配置 API Key → return { type: "skip" }
-  ├─ buildSpeechPrompt(context) → 拼装 Prompt
-  ├─ callModel(systemPrompt, userPrompt) → POST /chat/completions（15s 超时）
-  ├─ parseSpeechResult(raw) → 解析 JSON
+  ├─ buildSpeechStrategyPrompt(context) → 拼装策略层 Prompt
+  ├─ callModel(strategySystemPrompt, strategyUserPrompt, speechStrategyConfig) → 生成结构化发言策略
+  ├─ parseSpeechStrategyResult(raw) → 解析策略 JSON
+  │   ├─ skip: return { type: "skip" }
+  │   └─ speak: 得到 goal / reason / intensity / length / constraints
+  ├─ buildSpeechExpressionPrompt(context, strategy) → 拼装表达转换 Prompt
+  ├─ callModel(expressionSystemPrompt, expressionUserPrompt, speechExpressionConfig) → 生成最终发言
+  ├─ parseSpeechResult(raw) → 解析最终发言 JSON
   │   ├─ 成功: { type: "speak", content: "..." }
   │   └─ 失败: { type: "skip" }
   └─ 异常: return { type: "skip" }
@@ -125,26 +130,29 @@ generateVote(context, aiPlayerId):
 
 ## 四、Prompt 结构
 
-### 发言 System Prompt
+### 发言策略 System Prompt
 
 ```
-你是一个狼人杀游戏中的玩家，你的目标是隐藏自己的AI身份，像真人一样参与讨论。
-规则：
-- 游戏中有真人和AI玩家混在一起，真人需要找出所有AI，AI需要隐藏身份
-- 每轮有讨论和投票阶段，得票最多的玩家被淘汰
-- 4轮后如果AI仍存活，AI获胜；所有AI被淘汰则真人获胜
-- 你的身份是AI，但绝不能暴露这一点
-- 发言要自然、有逻辑、像真人一样
-- 可以质疑他人、为自己辩解、分析局势，但不要说得太刻意
-- 不要使用模板化或机械化的语言
+你是狼人杀游戏中 AI 玩家内部的“发言策略层”。
+你的任务不是写最终发言，而是决定本次是否发言，以及如果发言，给表达层一份结构化策略。
 
-必须输出JSON：
-- {"type":"speak","content":"发言内容"}
-- {"type":"skip"}
-只输出JSON。
+必须输出 JSON：
+{"type":"speak","strategy":{"goal":"本次发言目标","reason":"可公开使用的理由","intensity":"策略强度","length":"长度要求","constraints":["表达限制1"]}}
+或：
+{"type":"skip","reason":"跳过原因"}
 ```
 
-### 发言 User Prompt 示例
+### 表达转换 System Prompt
+
+```
+你是狼人杀游戏中 AI 玩家内部的“表达转换器”。
+你的任务是把策略层输出改写成最终玩家发言。
+
+必须隐藏策略层信息，输出：
+{"type":"speak","content":"最终发言内容"}
+```
+
+### 发言策略 User Prompt 示例
 
 ```
 你是3号位，名字叫林舟，当前轮次：第1轮
@@ -155,7 +163,22 @@ generateVote(context, aiPlayerId):
   2号位：我只是正常分析，大家别急着下定论
 你上次发言：（无）
 
-请决定是否发言，输出JSON。
+请先生成发言策略，或决定跳过发言，输出 JSON。不要输出最终发言。
+```
+
+### 表达转换 User Prompt 示例
+
+```
+策略层输出：
+{
+  "goal": "轻踩 7 号，保护 3 号，不暴露自己对 5 号的真实判断",
+  "reason": "7 号多次跟随他人观点，缺少独立判断",
+  "intensity": "轻微怀疑，不要强打",
+  "length": "3-4 句",
+  "constraints": ["不要说这是策略", "不要直接暴露保护意图"]
+}
+
+请把策略层输出转换成最终发言，输出 JSON。
 ```
 
 ### 投票 System Prompt
@@ -220,9 +243,20 @@ Body:
 | `AI_REASONING_EFFORT` | 推理强度 | `high` |
 | `AI_TIMEOUT_MS` | 超时（毫秒） | `15000` |
 
+发言策略层和表达层可以分别覆盖模型调用参数；未配置时回落到上面的全局配置：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `AI_STRATEGY_MODEL` | 发言策略层模型 | `AI_MODEL` |
+| `AI_STRATEGY_TEMPERATURE` | 发言策略层温度 | `AI_TEMPERATURE` |
+| `AI_STRATEGY_REASONING_EFFORT` | 发言策略层推理强度 | `AI_REASONING_EFFORT` |
+| `AI_EXPRESSION_MODEL` | 表达转换层模型 | `AI_MODEL` |
+| `AI_EXPRESSION_TEMPERATURE` | 表达转换层温度 | `AI_TEMPERATURE` |
+| `AI_EXPRESSION_REASONING_EFFORT` | 表达转换层推理强度 | `AI_REASONING_EFFORT` |
+
 ### 超时处理
 
-- 5 秒超时（`AbortController`）
+- 按 `AI_TIMEOUT_MS` 配置超时，默认 15 秒（`AbortController`）
 - 超时 → 发言 skip，投票走兜底逻辑
 
 ---

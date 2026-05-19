@@ -1,7 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
 import {
   AiConfig,
+  AiModelCallConfig,
   AiSpeechAction,
+  AiSpeechStrategy,
+  AiSpeechStrategyAction,
   AiVoteAction,
   GameContext,
 } from "./ai.types";
@@ -13,21 +16,34 @@ export class AiService {
   private readonly config: AiConfig;
 
   constructor() {
+    const defaultModelConfig = this.readModelCallConfig("AI");
+
     this.config = {
       baseURL: (process.env.AI_BASE_URL ?? "https://api.openai.com/v1").replace(
         /\/+$/,
         "",
       ),
       apiKey: process.env.AI_API_KEY ?? "",
-      model: process.env.AI_MODEL ?? "gpt-4o-mini",
-      temperature: Number(process.env.AI_TEMPERATURE) || 0.7,
-      reasoningEffort: process.env.AI_REASONING_EFFORT ?? "high",
+      ...defaultModelConfig,
       timeoutMs: Number(process.env.AI_TIMEOUT_MS) || 15000,
+      speechStrategy: this.readModelCallConfig(
+        "AI_STRATEGY",
+        defaultModelConfig,
+      ),
+      speechExpression: this.readModelCallConfig(
+        "AI_EXPRESSION",
+        defaultModelConfig,
+      ),
     };
 
     if (this.config.apiKey) {
       this.logger.log(
-        `AI service configured: ${this.config.baseURL} model=${this.config.model}`,
+        [
+          `AI service configured: ${this.config.baseURL}`,
+          `default=${this.describeModelConfig(this.config)}`,
+          `strategy=${this.describeModelConfig(this.config.speechStrategy)}`,
+          `expression=${this.describeModelConfig(this.config.speechExpression)}`,
+        ].join(" "),
       );
     } else {
       this.logger.warn(
@@ -42,12 +58,43 @@ export class AiService {
     }
 
     try {
-      const systemPrompt = loadPrompt("system-speech.txt");
-      const userPrompt = this.buildSpeechPrompt(context);
-      this.logger.log(`[${context.myName}] Speech Prompt:\n${userPrompt}`);
-      const result = await this.callModel(systemPrompt, userPrompt);
-      this.logger.log(`[${context.myName}] Raw Response: ${result.slice(0, 500)}`);
-      return this.parseSpeechResult(result, context);
+      const strategySystemPrompt = loadPrompt("system-speech-strategy.txt");
+      const strategyUserPrompt = this.buildSpeechStrategyPrompt(context);
+      this.logger.log(
+        `[${context.myName}] Speech Strategy Prompt:\n${strategyUserPrompt}`,
+      );
+      const strategyResult = await this.callModel(
+        strategySystemPrompt,
+        strategyUserPrompt,
+        this.config.speechStrategy,
+      );
+      this.logger.log(
+        `[${context.myName}] Raw Speech Strategy Response: ${strategyResult.slice(0, 500)}`,
+      );
+
+      const strategyAction = this.parseSpeechStrategyResult(strategyResult);
+      if (strategyAction.type === "skip") {
+        return { type: "skip" };
+      }
+
+      const expressionSystemPrompt = loadPrompt("system-speech-expression.txt");
+      const expressionUserPrompt = this.buildSpeechExpressionPrompt(
+        context,
+        strategyAction.strategy,
+      );
+      this.logger.log(
+        `[${context.myName}] Speech Expression Prompt:\n${expressionUserPrompt}`,
+      );
+      const expressionResult = await this.callModel(
+        expressionSystemPrompt,
+        expressionUserPrompt,
+        this.config.speechExpression,
+      );
+      this.logger.log(
+        `[${context.myName}] Raw Speech Expression Response: ${expressionResult.slice(0, 500)}`,
+      );
+
+      return this.parseSpeechResult(expressionResult, context);
     } catch (error) {
       this.logger.warn(
         `Speech generation failed: ${error instanceof Error ? error.message : error}`,
@@ -68,7 +115,7 @@ export class AiService {
       const systemPrompt = loadPrompt("system-vote.txt");
       const userPrompt = this.buildVotePrompt(context, aiPlayerId);
       this.logger.log(`[${context.myName}] Vote Prompt:\n${userPrompt}`);
-      const result = await this.callModel(systemPrompt, userPrompt);
+      const result = await this.callModel(systemPrompt, userPrompt, this.config);
       this.logger.log(`[${context.myName}] Raw Vote Response: ${result.slice(0, 300)}`);
       return this.parseVoteResult(result, context);
     } catch (error) {
@@ -79,7 +126,24 @@ export class AiService {
     }
   }
 
-  private buildSpeechPrompt(context: GameContext): string {
+  private buildSpeechStrategyPrompt(context: GameContext): string {
+    return renderTemplate(
+      "user-speech-template.txt",
+      this.buildSpeechVars(context),
+    );
+  }
+
+  private buildSpeechExpressionPrompt(
+    context: GameContext,
+    strategy: AiSpeechStrategy,
+  ): string {
+    return renderTemplate("user-speech-expression-template.txt", {
+      ...this.buildSpeechVars(context),
+      speechStrategy: JSON.stringify(strategy, null, 2),
+    });
+  }
+
+  private buildSpeechVars(context: GameContext): Record<string, string> {
     const vars: Record<string, string> = {
       mySeatNo: String(context.mySeatNo),
       myName: context.myName,
@@ -127,7 +191,7 @@ export class AiService {
         .join("、");
     }
 
-    return renderTemplate("user-speech-template.txt", vars);
+    return vars;
   }
 
   private buildVotePrompt(
@@ -184,6 +248,7 @@ export class AiService {
   private async callModel(
     systemPrompt: string,
     userPrompt: string,
+    modelConfig: AiModelCallConfig,
   ): Promise<string> {
     const url = `${this.config.baseURL}/chat/completions`;
 
@@ -201,14 +266,14 @@ export class AiService {
           Authorization: `Bearer ${this.config.apiKey}`,
         },
         body: JSON.stringify({
-          model: this.config.model,
-          temperature: this.config.temperature,
+          model: modelConfig.model,
+          temperature: modelConfig.temperature,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
           thinking: { type: "enabled" },
-          reasoning_effort: this.config.reasoningEffort,
+          reasoning_effort: modelConfig.reasoningEffort,
         }),
         signal: controller.signal,
       });
@@ -228,6 +293,45 @@ export class AiService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private readModelCallConfig(
+    prefix: string,
+    fallback?: AiModelCallConfig,
+  ): AiModelCallConfig {
+    return {
+      model:
+        this.readStringEnv(`${prefix}_MODEL`) ??
+        fallback?.model ??
+        "gpt-4o-mini",
+      temperature:
+        this.readNumberEnv(`${prefix}_TEMPERATURE`) ??
+        fallback?.temperature ??
+        0.7,
+      reasoningEffort:
+        this.readStringEnv(`${prefix}_REASONING_EFFORT`) ??
+        fallback?.reasoningEffort ??
+        "high",
+    };
+  }
+
+  private readStringEnv(name: string): string | null {
+    const value = process.env[name]?.trim();
+    return value ? value : null;
+  }
+
+  private readNumberEnv(name: string): number | null {
+    const rawValue = this.readStringEnv(name);
+    if (!rawValue) {
+      return null;
+    }
+
+    const value = Number(rawValue);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  private describeModelConfig(config: AiModelCallConfig): string {
+    return `${config.model}/temp=${config.temperature}/reasoning=${config.reasoningEffort}`;
   }
 
   private parseSpeechResult(
@@ -251,6 +355,60 @@ export class AiService {
     }
 
     return { type: "skip" };
+  }
+
+  private parseSpeechStrategyResult(raw: string): AiSpeechStrategyAction {
+    const parsed = this.extractJson(raw);
+    if (!parsed) {
+      this.logger.warn(
+        `Speech strategy parse failed: invalid JSON. raw="${raw.slice(0, 500)}"`,
+      );
+      return { type: "skip" };
+    }
+
+    if (parsed.type === "skip") {
+      return {
+        type: "skip",
+        reason: this.readString(parsed.reason) ?? undefined,
+      };
+    }
+
+    if (parsed.type !== "speak") {
+      this.logger.warn(
+        `Speech strategy parse failed: unexpected type="${String(parsed.type)}"`,
+      );
+      return { type: "skip" };
+    }
+
+    if (!this.isRecord(parsed.strategy)) {
+      this.logger.warn(
+        `Speech strategy parse failed: missing strategy object. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
+      );
+      return { type: "skip" };
+    }
+
+    const goal = this.readString(parsed.strategy.goal);
+    const reason = this.readString(parsed.strategy.reason);
+    const intensity = this.readString(parsed.strategy.intensity);
+    const length = this.readString(parsed.strategy.length);
+    const constraints = this.readRequiredStringArray(parsed.strategy.constraints);
+    if (!goal || !reason || !intensity || !length || !constraints) {
+      this.logger.warn(
+        `Speech strategy parse failed: invalid strategy fields. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
+      );
+      return { type: "skip" };
+    }
+
+    return {
+      type: "speak",
+      strategy: {
+        goal,
+        reason,
+        intensity,
+        length,
+        constraints,
+      },
+    };
   }
 
   private parseVoteResult(
@@ -309,5 +467,30 @@ export class AiService {
     }
 
     return null;
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+
+  private readString(value: unknown): string | null {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private readRequiredStringArray(value: unknown): string[] | null {
+    if (!Array.isArray(value)) {
+      return null;
+    }
+
+    const items = value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    return items.length === value.length ? items : null;
   }
 }

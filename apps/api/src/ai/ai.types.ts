@@ -1,15 +1,32 @@
-export interface AiConfig {
-  baseURL: string;
-  apiKey: string;
+export interface AiModelCallConfig {
   model: string;
   temperature: number;
   reasoningEffort: string;
+}
+
+export interface AiConfig extends AiModelCallConfig {
+  baseURL: string;
+  apiKey: string;
   timeoutMs: number;
+  speechStrategy: AiModelCallConfig;
+  speechExpression: AiModelCallConfig;
 }
 
 export type AiSpeechAction =
   | { type: "speak"; content: string }
   | { type: "skip" };
+
+export interface AiSpeechStrategy {
+  goal: string;
+  reason: string;
+  intensity: string;
+  length: string;
+  constraints: string[];
+}
+
+export type AiSpeechStrategyAction =
+  | { type: "speak"; strategy: AiSpeechStrategy }
+  | { type: "skip"; reason?: string };
 
 export type AiVoteAction = {
   type: "vote";

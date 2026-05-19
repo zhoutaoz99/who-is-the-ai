@@ -15,4 +15,8 @@
 {{#if currentVoteInfo}}
 当前投票情况：{{currentVoteInfo}}
 {{/if}}
-请先生成发言策略，或决定跳过发言，输出 JSON。不要输出最终发言。
+
+策略层输出：
+{{speechStrategy}}
+
+请把策略层输出转换成最终发言，输出 JSON。
