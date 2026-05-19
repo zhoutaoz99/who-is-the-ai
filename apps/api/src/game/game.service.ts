@@ -705,9 +705,6 @@ export class GameService {
       try {
         const context = this.buildGameContext(room, aiPlayer);
         const action = await this.aiService.generateSpeech(context);
-        this.logger.log(
-          `[${aiPlayer.name}] Action: ${action.type}${action.type === "speak" ? ` "${action.content}"` : ""}`,
-        );
 
         if (action.type === "speak") {
           const saved = await this.applyWithLock(room.id, (latest) => {
@@ -775,14 +772,10 @@ export class GameService {
     const voteAction = await this.aiService.generateVote(context, aiPlayer.id);
 
     if (voteAction) {
-      this.logger.log(
-        `[${aiPlayer.name}] Vote: target=${voteAction.targetPlayerId} reason="${voteAction.reason ?? ""}"`,
-      );
       await this.castVoteForPlayer(room, aiPlayer, voteAction.targetPlayerId);
       return;
     }
 
-    this.logger.log(`[${aiPlayer.name}] Vote: LLM returned null, using fallback`);
     const target = chooseFallbackVoteTarget(room, aiPlayer);
     if (target) {
       await this.castVoteForPlayer(room, aiPlayer, target.id);

@@ -61,7 +61,11 @@ export class AiService {
       const strategySystemPrompt = loadPrompt("system-speech-strategy.txt");
       const strategyUserPrompt = this.buildSpeechStrategyPrompt(context);
       this.logger.log(
-        `[${context.myName}] Speech Strategy Prompt:\n${strategyUserPrompt}`,
+        this.formatAiLog(
+          context.myName,
+          "Speech Strategy Prompt",
+          strategyUserPrompt,
+        ),
       );
       const strategyResult = await this.callModel(
         strategySystemPrompt,
@@ -69,7 +73,11 @@ export class AiService {
         this.config.speechStrategy,
       );
       this.logger.log(
-        `[${context.myName}] Raw Speech Strategy Response: ${strategyResult.slice(0, 500)}`,
+        this.formatAiLog(
+          context.myName,
+          "Raw Speech Strategy Response",
+          strategyResult.slice(0, 500),
+        ),
       );
 
       const strategyAction = this.parseSpeechStrategyResult(strategyResult);
@@ -83,7 +91,11 @@ export class AiService {
         strategyAction.strategy,
       );
       this.logger.log(
-        `[${context.myName}] Speech Expression Prompt:\n${expressionUserPrompt}`,
+        this.formatAiLog(
+          context.myName,
+          "Speech Expression Prompt",
+          expressionUserPrompt,
+        ),
       );
       const expressionResult = await this.callModel(
         expressionSystemPrompt,
@@ -91,7 +103,11 @@ export class AiService {
         this.config.speechExpression,
       );
       this.logger.log(
-        `[${context.myName}] Raw Speech Expression Response: ${expressionResult.slice(0, 500)}`,
+        this.formatAiLog(
+          context.myName,
+          "Raw Speech Expression Response",
+          expressionResult.slice(0, 500),
+        ),
       );
 
       return this.parseSpeechResult(expressionResult, context);
@@ -114,9 +130,17 @@ export class AiService {
     try {
       const systemPrompt = loadPrompt("system-vote.txt");
       const userPrompt = this.buildVotePrompt(context, aiPlayerId);
-      this.logger.log(`[${context.myName}] Vote Prompt:\n${userPrompt}`);
+      this.logger.log(
+        this.formatAiLog(context.myName, "Vote Prompt", userPrompt),
+      );
       const result = await this.callModel(systemPrompt, userPrompt, this.config);
-      this.logger.log(`[${context.myName}] Raw Vote Response: ${result.slice(0, 300)}`);
+      this.logger.log(
+        this.formatAiLog(
+          context.myName,
+          "Raw Vote Response",
+          result.slice(0, 300),
+        ),
+      );
       return this.parseVoteResult(result, context);
     } catch (error) {
       this.logger.warn(
@@ -131,6 +155,25 @@ export class AiService {
       "user-speech-template.txt",
       this.buildSpeechVars(context),
     );
+  }
+
+  private formatAiLog(
+    playerName: string,
+    title: string,
+    content: string,
+  ): string {
+    const separator = "=".repeat(72);
+    const subSeparator = "-".repeat(72);
+    return [
+      "",
+      separator,
+      `[${playerName}] ${title}`,
+      subSeparator,
+      content,
+      separator,
+      "",
+      "",
+    ].join("\n");
   }
 
   private buildSpeechExpressionPrompt(
