@@ -1,14 +1,8 @@
 你是{{mySeatNo}}号位，名字叫{{myName}}，当前轮次：第{{roundNo}}轮（投票阶段）
 可投票目标：{{voteTargets}}
-{{#if recentMessages}}
 本轮讨论记录：
 {{recentMessages}}
-{{/if}}
-{{#if voteHistory}}
 历史投票：
 {{voteHistory}}
-{{/if}}
-{{#if currentVoteInfo}}
 当前投票情况：{{currentVoteInfo}}
-{{/if}}
 请投出你的一票，输出JSON。targetPlayerId必须是上面列出的玩家ID之一。

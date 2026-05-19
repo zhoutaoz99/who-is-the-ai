@@ -149,14 +149,14 @@ export class AiService {
       myName: context.myName,
       roundNo: String(context.roundNo),
       remainingSeconds: String(Math.ceil(context.remainingTimeMs / 1000)),
+      myLastSpeech: context.myLastSpeech || "无",
+      recentMessages: "无",
+      voteHistory: "无",
+      currentVoteInfo: "无",
       alivePlayersList: context.alivePlayers
         .map((p) => `${p.seatNo}号位(ID:${p.id})`)
         .join("、"),
     };
-
-    if (context.myLastSpeech) {
-      vars.myLastSpeech = context.myLastSpeech;
-    }
 
     if (context.recentMessages.length > 0) {
       vars.recentMessages = context.recentMessages
@@ -204,6 +204,9 @@ export class AiService {
       mySeatNo: String(context.mySeatNo),
       myName: context.myName,
       roundNo: String(context.roundNo),
+      recentMessages: "无",
+      voteHistory: "无",
+      currentVoteInfo: "无",
       voteTargets: targets
         .map((p) => `${p.seatNo}号位(ID:${p.id})`)
         .join("、"),
