@@ -31,6 +31,8 @@ interface AccountRow extends QueryResultRow {
   username: string;
   display_name: string;
   points: number;
+  games_played: number;
+  games_won: number;
   password_salt: string;
   password_hash: string;
   created_at: Date;
@@ -72,6 +74,8 @@ export class AuthService {
       username,
       displayName,
       points: INITIAL_POINTS,
+      gamesPlayed: 0,
+      gamesWon: 0,
       passwordSalt: salt,
       passwordHash: await this.hashPassword(password, salt),
       createdAt: now,
@@ -86,18 +90,22 @@ export class AuthService {
             username,
             display_name,
             points,
+            games_played,
+            games_won,
             password_salt,
             password_hash,
             created_at,
             updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `,
         [
           account.id,
           account.username,
           account.displayName,
           account.points,
+          account.gamesPlayed,
+          account.gamesWon,
           account.passwordSalt,
           account.passwordHash,
           account.createdAt,
@@ -238,6 +246,40 @@ export class AuthService {
     return updatedAccounts;
   }
 
+  async recordGameResults(
+    results: Array<{ accountId: string; won: boolean }>,
+  ) {
+    const updatedAccounts: PublicAccount[] = [];
+    const uniqueResults = new Map<string, boolean>();
+    for (const result of results) {
+      uniqueResults.set(result.accountId, result.won);
+    }
+
+    for (const [accountId, won] of uniqueResults) {
+      const now = new Date().toISOString();
+      const result = await this.postgres.query<AccountRow>(
+        `
+          UPDATE accounts
+          SET
+            games_played = games_played + 1,
+            games_won = games_won + $1,
+            updated_at = $2
+          WHERE id = $3
+          RETURNING *
+        `,
+        [won ? 1 : 0, now, accountId],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        continue;
+      }
+
+      updatedAccounts.push(this.toPublicAccount(this.fromRow(row)));
+    }
+
+    return updatedAccounts;
+  }
+
   async logout(token: string | undefined) {
     const normalizedToken = this.normalizeToken(token);
     if (normalizedToken) {
@@ -340,6 +382,8 @@ export class AuthService {
       username: row.username,
       displayName: row.display_name,
       points: row.points,
+      gamesPlayed: row.games_played,
+      gamesWon: row.games_won,
       passwordSalt: row.password_salt,
       passwordHash: row.password_hash,
       createdAt: row.created_at.toISOString(),
@@ -353,6 +397,8 @@ export class AuthService {
       username: account.username,
       displayName: account.displayName,
       points: account.points,
+      gamesPlayed: account.gamesPlayed,
+      gamesWon: account.gamesWon,
       createdAt: account.createdAt,
     };
   }

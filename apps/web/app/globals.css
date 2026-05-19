@@ -854,6 +854,56 @@ p {
   font-weight: 600;
 }
 
+/* Stats row: game stats left, points right */
+.profile-stats-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 480px) {
+  .profile-stats-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Game stats card */
+.profile-game-stats {
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  padding: 16px 12px;
+  text-align: center;
+  align-items: center;
+}
+
+.profile-game-stat-item {
+  display: grid;
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.profile-game-stat-item:not(:last-child) {
+  border-right: 1px solid rgba(59, 130, 246, 0.15);
+}
+
+.profile-game-stat-item span {
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.profile-game-stat-item strong {
+  color: #1e3a8a;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 800;
+}
+
 /* Highlight stat (points) */
 .profile-highlight-stat {
   background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
@@ -863,6 +913,7 @@ p {
   gap: 8px;
   padding: 20px;
   text-align: center;
+  align-content: center;
 }
 
 .profile-highlight-stat span {

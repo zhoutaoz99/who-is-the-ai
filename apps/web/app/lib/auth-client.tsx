@@ -15,6 +15,8 @@ export type AuthUser = {
   username: string;
   displayName: string;
   points: number;
+  gamesPlayed: number;
+  gamesWon: number;
   createdAt: string;
 };
 

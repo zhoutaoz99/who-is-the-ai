@@ -646,6 +646,16 @@ export class GameService {
 
     this.clearTimers(saved.id);
     try {
+      await this.recordSettledGameResults(saved, winner);
+    } catch (error) {
+      this.logger.warn(
+        `Game stats settlement failed for room ${saved.id}: ${
+          error instanceof Error ? error.message : error
+        }`,
+      );
+    }
+
+    try {
       await this.awardSettledPoints(saved, winner);
     } catch (error) {
       this.logger.warn(
@@ -988,6 +998,25 @@ export class GameService {
         return accountId ? [{ accountId, points: award.points }] : [];
       }),
     );
+  }
+
+  private async recordSettledGameResults(room: Room, winner: Winner) {
+    const results = room.players.flatMap((player) => {
+      if (player.type !== "human" || !player.accountId) {
+        return [];
+      }
+
+      return [{
+        accountId: player.accountId,
+        won: winner === "human" && player.status === "alive",
+      }];
+    });
+
+    if (results.length === 0) {
+      return;
+    }
+
+    await this.authService.recordGameResults(results);
   }
 
   /**

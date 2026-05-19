@@ -64,11 +64,23 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
         username varchar(20) NOT NULL UNIQUE,
         display_name varchar(16) NOT NULL,
         points integer NOT NULL DEFAULT 1000,
+        games_played integer NOT NULL DEFAULT 0,
+        games_won integer NOT NULL DEFAULT 0,
         password_salt text NOT NULL,
         password_hash text NOT NULL,
         created_at timestamptz NOT NULL,
         updated_at timestamptz NOT NULL
       )
+    `);
+
+    await this.query(`
+      ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS games_played integer NOT NULL DEFAULT 0
+    `);
+
+    await this.query(`
+      ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS games_won integer NOT NULL DEFAULT 0
     `);
 
     await this.query(`

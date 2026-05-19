@@ -13,6 +13,8 @@ export interface AccountRecord {
   username: string;
   displayName: string;
   points: number;
+  gamesPlayed: number;
+  gamesWon: number;
   passwordSalt: string;
   passwordHash: string;
   createdAt: string;
@@ -24,6 +26,8 @@ export interface PublicAccount {
   username: string;
   displayName: string;
   points: number;
+  gamesPlayed: number;
+  gamesWon: number;
   createdAt: string;
 }
 

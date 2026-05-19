@@ -275,7 +275,7 @@ export default function GamePage() {
   const router = useRouter();
   const roomId = params.roomId.toUpperCase();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const pointsRefreshRoomRef = useRef<string | null>(null);
+  const accountRefreshRoomRef = useRef<string | null>(null);
   const { refreshMe } = useAuth();
   const {
     connected,
@@ -326,13 +326,12 @@ export default function GamePage() {
     if (
       !room ||
       room.status !== "finished" ||
-      room.pointAwards.length === 0 ||
-      pointsRefreshRoomRef.current === room.id
+      accountRefreshRoomRef.current === room.id
     ) {
       return;
     }
 
-    pointsRefreshRoomRef.current = room.id;
+    accountRefreshRoomRef.current = room.id;
     void refreshMe();
   }, [refreshMe, room]);
 

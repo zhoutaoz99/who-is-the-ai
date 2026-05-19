@@ -85,6 +85,13 @@ export default function AccountPage() {
                 <strong>{user.points}</strong>
                 <small>初始积分 1000</small>
               </div>
+              <div>
+                <span>战绩</span>
+                <strong>
+                  {user.gamesWon}/{user.gamesPlayed}
+                </strong>
+                <small>胜率 {formatWinRate(user.gamesPlayed, user.gamesWon)}</small>
+              </div>
               <button className="secondary" disabled={pending} onClick={handleLogout}>
                 退出登录
               </button>
@@ -185,4 +192,12 @@ export default function AccountPage() {
       </section>
     </main>
   );
+}
+
+function formatWinRate(gamesPlayed: number, gamesWon: number) {
+  if (gamesPlayed <= 0) {
+    return "0%";
+  }
+
+  return `${Math.round((gamesWon / gamesPlayed) * 100)}%`;
 }

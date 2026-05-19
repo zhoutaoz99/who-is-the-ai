@@ -99,13 +99,29 @@ export default function ProfilePage() {
               </div>
             </div>
 
-            {/* 积分 */}
-            <div className="profile-highlight-stat">
-              <span>积分</span>
-              <strong>{user.points}</strong>
+            {/* 统计区域：对局信息在左，积分在右 */}
+            <div className="profile-stats-row">
+              <div className="profile-game-stats">
+                <div className="profile-game-stat-item">
+                  <span>对局次数</span>
+                  <strong>{user.gamesPlayed}</strong>
+                </div>
+                <div className="profile-game-stat-item">
+                  <span>胜利次数</span>
+                  <strong>{user.gamesWon}</strong>
+                </div>
+                <div className="profile-game-stat-item">
+                  <span>胜率</span>
+                  <strong>{formatWinRate(user.gamesPlayed, user.gamesWon)}</strong>
+                </div>
+              </div>
+              <div className="profile-highlight-stat">
+                <span>积分</span>
+                <strong>{user.points}</strong>
+              </div>
             </div>
 
-            {/* 详细信息 */}
+            {/* 账号详细信息 */}
             <div className="profile-info-list">
               <div className="profile-info-row">
                 <span>账号</span>
@@ -162,6 +178,14 @@ export default function ProfilePage() {
       )}
     </main>
   );
+}
+
+function formatWinRate(gamesPlayed: number, gamesWon: number) {
+  if (gamesPlayed <= 0) {
+    return "0%";
+  }
+
+  return `${Math.round((gamesWon / gamesPlayed) * 100)}%`;
 }
 
 function formatDateTime(value: string) {
