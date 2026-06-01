@@ -44,7 +44,11 @@ type GameClientContextValue = {
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:3001`
+    : "http://localhost:3001");
 const PLAYER_NAME_KEY = "ai-werewolf-name";
 const PLAYER_ID_PREFIX = "ai-werewolf-player-";
 
