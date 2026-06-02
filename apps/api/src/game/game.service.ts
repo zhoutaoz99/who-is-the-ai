@@ -904,10 +904,12 @@ export class GameService {
     }
 
     return {
+      roomId: room.id,
       roundNo: room.currentRound,
       phase: room.phase,
       remainingTimeMs: remainingMs,
       myName: aiPlayer.name,
+      myPlayerId: aiPlayer.id,
       mySeatNo: aiPlayer.seatNo,
       alivePlayers,
       recentMessages,

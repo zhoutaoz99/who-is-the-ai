@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import {
+  AiCallRecorder,
   AiConfig,
   AiModelCallConfig,
   AiSpeechAction,
@@ -15,6 +16,11 @@ import { loadPrompt, renderTemplate } from "./prompt-loader";
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly config: AiConfig;
+  private recorder?: AiCallRecorder;
+
+  setRecorder(recorder: AiCallRecorder) {
+    this.recorder = recorder;
+  }
 
   constructor() {
     const defaultModelConfig = this.readModelCallConfig("AI");
@@ -80,6 +86,20 @@ export class AiService {
           strategyResult.slice(0, 500),
         ),
       );
+      this.recorder?.record({
+        roomId: context.roomId,
+        roundNo: context.roundNo,
+        callType: "speech-strategy",
+        aiPlayerId: context.myPlayerId,
+        aiPlayerName: context.myName,
+        aiPlayerSeatNo: context.mySeatNo,
+        systemPrompt: strategySystemPrompt,
+        userPrompt: strategyUserPrompt,
+        rawResponse: strategyResult,
+        modelName: this.config.speechStrategy.model,
+        temperature: this.config.speechStrategy.temperature,
+        reasoningEffort: this.config.speechStrategy.reasoningEffort,
+      });
 
       const strategyAction = this.parseSpeechStrategyResult(strategyResult);
       if (strategyAction.type === "skip") {
@@ -110,6 +130,20 @@ export class AiService {
           expressionResult.slice(0, 500),
         ),
       );
+      this.recorder?.record({
+        roomId: context.roomId,
+        roundNo: context.roundNo,
+        callType: "speech-expression",
+        aiPlayerId: context.myPlayerId,
+        aiPlayerName: context.myName,
+        aiPlayerSeatNo: context.mySeatNo,
+        systemPrompt: expressionSystemPrompt,
+        userPrompt: expressionUserPrompt,
+        rawResponse: expressionResult,
+        modelName: this.config.speechExpression.model,
+        temperature: this.config.speechExpression.temperature,
+        reasoningEffort: this.config.speechExpression.reasoningEffort,
+      });
 
       return this.parseSpeechResult(expressionResult, context);
     } catch (error) {
@@ -142,6 +176,20 @@ export class AiService {
           result.slice(0, 300),
         ),
       );
+      this.recorder?.record({
+        roomId: context.roomId,
+        roundNo: context.roundNo,
+        callType: "vote",
+        aiPlayerId: context.myPlayerId,
+        aiPlayerName: context.myName,
+        aiPlayerSeatNo: context.mySeatNo,
+        systemPrompt,
+        userPrompt,
+        rawResponse: result,
+        modelName: this.config.model,
+        temperature: this.config.temperature,
+        reasoningEffort: this.config.reasoningEffort,
+      });
       return this.parseVoteResult(result, context);
     } catch (error) {
       this.logger.warn(
@@ -322,7 +370,7 @@ export class AiService {
       .join("\n");
   }
 
-  private async callModel(
+  async callModel(
     systemPrompt: string,
     userPrompt: string,
     modelConfig: AiModelCallConfig,

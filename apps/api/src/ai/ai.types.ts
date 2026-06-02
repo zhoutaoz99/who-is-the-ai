@@ -52,10 +52,12 @@ export interface RoundVoteSummary {
 }
 
 export interface GameContext {
+  roomId: string;
   roundNo: number;
   phase: string;
   remainingTimeMs: number;
   myName: string;
+  myPlayerId: string;
   mySeatNo: number;
   alivePlayers: Array<{ id: string; seatNo: number }>;
   recentMessages: ChatMessageInput[];
@@ -63,4 +65,40 @@ export interface GameContext {
   myLastSpeech: string | null;
   currentVoteCounts: Record<string, number>;
   voteHistory: RoundVoteSummary[];
+}
+
+export type AiCallType = "speech-strategy" | "speech-expression" | "vote";
+
+export interface AiCallRecord {
+  roomId: string;
+  roundNo: number;
+  callType: AiCallType;
+  aiPlayerId: string;
+  aiPlayerName: string;
+  aiPlayerSeatNo: number;
+  systemPrompt: string;
+  userPrompt: string;
+  rawResponse: string;
+  modelName: string;
+  temperature: number;
+  reasoningEffort: string;
+}
+
+export interface AiCallRecorder {
+  record(call: AiCallRecord): void;
+}
+
+export interface DebugCallRequest {
+  systemPrompt: string;
+  userPrompt: string;
+  model?: string;
+  temperature?: number;
+  reasoningEffort?: string;
+}
+
+export interface DebugCallResponse {
+  ok: boolean;
+  rawResponse?: string;
+  thinkingContent?: string;
+  error?: string;
 }

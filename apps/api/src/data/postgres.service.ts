@@ -103,5 +103,29 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
       CREATE INDEX IF NOT EXISTS game_rooms_updated_at_idx
       ON game_rooms (updated_at DESC)
     `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS ai_call_logs (
+        id uuid PRIMARY KEY,
+        room_id varchar(16) NOT NULL,
+        round_no integer NOT NULL,
+        call_type text NOT NULL,
+        ai_player_id text NOT NULL,
+        ai_player_name text NOT NULL,
+        ai_player_seat_no integer NOT NULL,
+        system_prompt text NOT NULL,
+        user_prompt text NOT NULL,
+        raw_response text NOT NULL,
+        model_name text NOT NULL,
+        temperature double precision NOT NULL,
+        reasoning_effort text NOT NULL,
+        created_at timestamptz NOT NULL
+      )
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS ai_call_logs_room_idx
+      ON ai_call_logs (room_id, round_no, created_at)
+    `);
   }
 }

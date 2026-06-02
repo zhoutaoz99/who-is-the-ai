@@ -620,7 +620,28 @@ export default function Home() {
                           <span className="room-join-hint">加入 →</span>
                         )}
                         {room.status === "finished" && (
-                          <span className="room-join-hint">查看记录 →</span>
+                          <div className="replay-room-actions">
+                            <span className="room-join-hint">查看记录 →</span>
+                            {room.debug && (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="replay-link-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  router.push(`/replay/${room.id}`);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.stopPropagation();
+                                    router.push(`/replay/${room.id}`);
+                                  }
+                                }}
+                              >
+                                复盘
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
                     </button>
