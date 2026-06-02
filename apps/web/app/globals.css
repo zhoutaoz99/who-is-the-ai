@@ -3349,6 +3349,21 @@ p {
   color: var(--text);
 }
 
+.replay-apply-strategy-btn {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 16px;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #2563eb;
+  min-height: auto;
+  border: 1px solid #bfdbfe;
+}
+
+.replay-apply-strategy-btn:hover {
+  background: #dbeafe;
+}
+
 .replay-debug-result {
   margin-top: 8px;
 }

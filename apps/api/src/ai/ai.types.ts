@@ -82,6 +82,7 @@ export interface AiCallRecord {
   modelName: string;
   temperature: number;
   reasoningEffort: string;
+  templatePrompt?: string;
 }
 
 export interface AiCallRecorder {

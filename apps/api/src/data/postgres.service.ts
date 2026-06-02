@@ -127,5 +127,10 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
       CREATE INDEX IF NOT EXISTS ai_call_logs_room_idx
       ON ai_call_logs (room_id, round_no, created_at)
     `);
+
+    await this.query(`
+      ALTER TABLE ai_call_logs
+      ADD COLUMN IF NOT EXISTS template_prompt text
+    `);
   }
 }

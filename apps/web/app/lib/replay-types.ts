@@ -17,6 +17,7 @@ export type AiCallLog = {
   temperature: number;
   reasoningEffort: string;
   createdAt: string;
+  templatePrompt?: string;
 };
 
 export type ReplayData = {

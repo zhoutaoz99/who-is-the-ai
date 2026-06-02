@@ -11,8 +11,8 @@ export class ReplayService {
       `INSERT INTO ai_call_logs
         (id, room_id, round_no, call_type, ai_player_id, ai_player_name,
          ai_player_seat_no, system_prompt, user_prompt, raw_response,
-         model_name, temperature, reasoning_effort, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+         model_name, temperature, reasoning_effort, created_at, template_prompt)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         log.id,
         log.roomId,
@@ -28,6 +28,7 @@ export class ReplayService {
         log.temperature,
         log.reasoningEffort,
         log.createdAt,
+        log.templatePrompt ?? null,
       ],
     );
   }
@@ -43,7 +44,8 @@ export class ReplayService {
         user_prompt AS "userPrompt",
         raw_response AS "rawResponse",
         model_name AS "modelName", temperature, reasoning_effort AS "reasoningEffort",
-        created_at AS "createdAt"
+        created_at AS "createdAt",
+        template_prompt AS "templatePrompt"
       FROM ai_call_logs
       WHERE room_id = $1
       ORDER BY round_no, created_at`,

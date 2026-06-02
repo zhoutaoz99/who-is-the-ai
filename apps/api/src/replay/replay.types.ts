@@ -17,6 +17,7 @@ export interface AiCallLog {
   temperature: number;
   reasoningEffort: string;
   createdAt: string;
+  templatePrompt?: string;
 }
 
 export interface ReplayResponse {

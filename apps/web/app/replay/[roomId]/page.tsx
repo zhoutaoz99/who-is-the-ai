@@ -156,6 +156,35 @@ function buildTimeline(
   return items;
 }
 
+function AiCallGroup({ calls }: { calls: AiCallLog[] }) {
+  const expressionCall = calls.find((c) => c.callType === "speech-expression");
+  const template = expressionCall?.templatePrompt ?? expressionCall?.userPrompt ?? "";
+  const [expressionUserPrompt, setExpressionUserPrompt] = useState(
+    expressionCall?.userPrompt ?? "",
+  );
+
+  function applyStrategyToExpression(strategyOutput: string) {
+    if (!expressionCall) return;
+    setExpressionUserPrompt(
+      template.replace(/\{\{speechStrategy\}\}/, strategyOutput),
+    );
+  }
+
+  return (
+    <div className="replay-msg-ai-calls">
+      {calls.map((call) => (
+        <AiCallInline
+          key={call.id}
+          call={call}
+          onApplyStrategy={call.callType === "speech-strategy" ? applyStrategyToExpression : undefined}
+          managedUserPrompt={call.callType === "speech-expression" ? expressionUserPrompt : undefined}
+          onManagedUserPromptChange={call.callType === "speech-expression" ? setExpressionUserPrompt : undefined}
+        />
+      ))}
+    </div>
+  );
+}
+
 function EditablePrompt({
   label,
   value,
@@ -178,10 +207,24 @@ function EditablePrompt({
   );
 }
 
-function AiCallInline({ call }: { call: AiCallLog }) {
+function AiCallInline({
+  call,
+  onApplyStrategy,
+  managedUserPrompt,
+  onManagedUserPromptChange,
+}: {
+  call: AiCallLog;
+  onApplyStrategy?: (output: string) => void;
+  managedUserPrompt?: string;
+  onManagedUserPromptChange?: (v: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState(call.systemPrompt);
-  const [userPrompt, setUserPrompt] = useState(call.userPrompt);
+  const [localUserPrompt, setLocalUserPrompt] = useState(call.userPrompt);
+
+  const userPrompt = managedUserPrompt ?? localUserPrompt;
+  const setUserPrompt = onManagedUserPromptChange ?? setLocalUserPrompt;
+
   const [debugResponse, setDebugResponse] = useState<string | null>(null);
   const [debugThinking, setDebugThinking] = useState<string | null>(null);
   const [debugLoading, setDebugLoading] = useState(false);
@@ -269,6 +312,14 @@ function AiCallInline({ call }: { call: AiCallLog }) {
             >
               重置
             </button>
+            {onApplyStrategy && debugResponse && (
+              <button
+                className="replay-apply-strategy-btn"
+                onClick={() => onApplyStrategy(debugResponse)}
+              >
+                应用到表达层
+              </button>
+            )}
           </div>
           {debugThinking && (
             <div className="replay-debug-result">
@@ -440,11 +491,7 @@ export default function ReplayPage() {
                         </div>
                       </div>
                       {isAi && item.aiCalls.length > 0 && (
-                        <div className="replay-msg-ai-calls">
-                          {item.aiCalls.map((call) => (
-                            <AiCallInline key={call.id} call={call} />
-                          ))}
-                        </div>
+                        <AiCallGroup calls={item.aiCalls} />
                       )}
                     </div>
                   );

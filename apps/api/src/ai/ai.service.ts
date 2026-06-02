@@ -130,6 +130,10 @@ export class AiService {
           expressionResult.slice(0, 500),
         ),
       );
+      const expressionTemplatePrompt = this.buildSpeechExpressionPrompt(
+        context,
+        null,
+      );
       this.recorder?.record({
         roomId: context.roomId,
         roundNo: context.roundNo,
@@ -143,6 +147,7 @@ export class AiService {
         modelName: this.config.speechExpression.model,
         temperature: this.config.speechExpression.temperature,
         reasoningEffort: this.config.speechExpression.reasoningEffort,
+        templatePrompt: expressionTemplatePrompt,
       });
 
       return this.parseSpeechResult(expressionResult, context);
@@ -227,11 +232,11 @@ export class AiService {
 
   private buildSpeechExpressionPrompt(
     context: GameContext,
-    strategy: AiSpeechStrategy,
+    strategy: AiSpeechStrategy | null,
   ): string {
     return renderTemplate("user-speech-expression-template.txt", {
       ...this.buildSpeechVars(context),
-      speechStrategy: JSON.stringify(strategy, null, 2),
+      speechStrategy: strategy ? JSON.stringify(strategy, null, 2) : "{{speechStrategy}}",
     });
   }
 
