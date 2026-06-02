@@ -105,6 +105,7 @@ export interface RoomSnapshot {
     rewardPool: number;
   };
   canStart: boolean;
+  debug?: boolean;
   updatedAt: string;
 }
 
@@ -148,6 +149,11 @@ export interface LeaveRoomPayload {
 }
 
 export interface ReconnectPayload {
+  roomId?: string;
+  playerId?: string;
+}
+
+export interface StopGamePayload {
   roomId?: string;
   playerId?: string;
 }

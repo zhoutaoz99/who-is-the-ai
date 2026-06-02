@@ -1,5 +1,6 @@
 import {
   AI_PLAYER_COUNT,
+  DEBUG,
   MAX_HUMAN_PLAYERS,
   MAX_ROUNDS,
   REWARD_POOL,
@@ -55,6 +56,7 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
       rewardPool: REWARD_POOL,
     },
     canStart: room.status === "waiting" && countHumans(room) >= 1,
+    debug: DEBUG || undefined,
     updatedAt: room.updatedAt,
   };
 }

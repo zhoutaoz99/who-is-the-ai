@@ -65,6 +65,7 @@ export type RoomSnapshot = {
     rewardPool: number;
   };
   canStart: boolean;
+  debug?: boolean;
   updatedAt: string;
 };
 

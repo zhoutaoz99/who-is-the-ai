@@ -286,6 +286,7 @@ export default function GamePage() {
     reconnectRoom,
     sendChat,
     castVote,
+    stopGame,
   } = useGameClient();
 
   const [chatDraft, setChatDraft] = useState("");
@@ -504,12 +505,16 @@ export default function GamePage() {
               <h2>
                 {room.winner === "human"
                   ? "真人玩家获胜"
-                  : "人类玩家失败"}
+                  : room.winner === "ai"
+                    ? "人类玩家失败"
+                    : "游戏已中止"}
               </h2>
               <p>
                 {room.winner === "human"
                   ? formatPointAwardSummary(room)
-                  : "4 轮结束后仍有 AI 模拟玩家在场，本局挑战失败。"}
+                  : room.winner === "ai"
+                    ? "4 轮结束后仍有 AI 模拟玩家在场，本局挑战失败。"
+                    : "游戏被调试模式中止。"}
               </p>
             </div>
           </div>
@@ -791,6 +796,17 @@ export default function GamePage() {
               </div>
               <p>可以查看左侧玩家身份和完整发言记录。</p>
             </div>
+          )}
+
+          {room.debug && room.status === "playing" && (
+            <button
+              className="secondary"
+              disabled={pending}
+              onClick={() => stopGame(room.id)}
+              style={{ marginTop: "1rem", width: "100%" }}
+            >
+              停止游戏（调试）
+            </button>
           )}
 
           {error && <p className="error">{error}</p>}

@@ -10,6 +10,7 @@ import {
   AI_VOTE_DELAY_MS,
   AI_VOTE_STAGGER_MS,
   AUTO_RESOLVE_DELAY_MS,
+  DEBUG,
   DISCONNECT_GRACE_MS,
   MAX_HUMAN_PLAYERS,
   NEXT_ROUND_DELAY_MS,
@@ -50,6 +51,7 @@ import {
   RoomSnapshot,
   SendChatPayload,
   StartGamePayload,
+  StopGamePayload,
   Winner,
 } from "./game.types";
 
@@ -488,6 +490,51 @@ export class GameService {
   async listRooms(): Promise<RoomSnapshot[]> {
     const rooms = await this.roomRepository.list();
     return rooms.map((room) => toRoomSnapshot(room));
+  }
+
+  async stopGame(payload: StopGamePayload): Promise<ActionResult> {
+    if (!DEBUG) {
+      return this.fail("调试模式未开启");
+    }
+
+    const roomId = normalizeRoomId(payload.roomId);
+    let failure = "房间不存在或操作冲突";
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (latest.status !== "playing") {
+        failure = "游戏未在进行中";
+        return false;
+      }
+
+      const player = latest.players.find(
+        (candidate) =>
+          candidate.id === payload.playerId && candidate.type === "human",
+      );
+      if (!player) {
+        failure = "你不在该房间中";
+        return false;
+      }
+
+      latest.status = "finished";
+      latest.phase = "game_over";
+      latest.phaseEndsAt = null;
+      latest.winner = null;
+      touch(latest);
+      return true;
+    });
+
+    if (!room) {
+      return this.fail(failure);
+    }
+
+    this.clearTimers(room.id);
+    const snapshot = toRoomSnapshot(room);
+    this.broadcastRoom(room);
+    this.server?.to(room.id).emit("game.ended", snapshot);
+
+    return {
+      ok: true,
+      room: snapshot,
+    };
   }
 
   async recoverStuckRooms() {

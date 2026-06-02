@@ -19,6 +19,7 @@ import {
   ReconnectPayload,
   SendChatPayload,
   StartGamePayload,
+  StopGamePayload,
 } from "./game.types";
 import { PostgresService } from "../data/postgres.service";
 import { GameService } from "./game.service";
@@ -164,6 +165,11 @@ export class GameGateway
       client.join(result.room.id);
     }
     return result;
+  }
+
+  @SubscribeMessage("game.stop")
+  async handleStopGame(@MessageBody() payload: StopGamePayload) {
+    return this.gameService.stopGame(payload ?? {});
   }
 
   private async getAccount(authToken: string | undefined): Promise<

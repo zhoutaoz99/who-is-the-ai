@@ -17,6 +17,8 @@ export const AI_VOTE_DELAY_MS = 1_500;
 export const AI_VOTE_STAGGER_MS = 1_200;
 export const AUTO_RESOLVE_DELAY_MS = 500;
 
+export const DEBUG = process.env.DEBUG === "true";
+
 export const AI_NAMES = [
   "林舟",
   "陈默",

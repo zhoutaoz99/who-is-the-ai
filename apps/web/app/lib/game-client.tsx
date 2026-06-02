@@ -42,6 +42,7 @@ type GameClientContextValue = {
   startGame: (roomId: string) => Promise<ActionResult>;
   sendChat: (roomId: string, content: string) => Promise<ActionResult>;
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
+  stopGame: (roomId: string) => Promise<ActionResult>;
 };
 
 const API_URL =
@@ -365,6 +366,11 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
           targetPlayerId,
+        }),
+      stopGame: (roomId: string) =>
+        emitAction("game.stop", {
+          roomId,
+          playerId: playerIds[roomId.toUpperCase()],
         }),
     };
   }, [
