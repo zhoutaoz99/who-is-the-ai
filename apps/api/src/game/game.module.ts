@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { GameController } from "./game.controller";
 import { GameGateway } from "./game.gateway";
 import { GameService } from "./game.service";
 import { GameRoomRepository } from "./game-room.repository";
@@ -8,6 +9,7 @@ import { DataModule } from "../data/data.module";
 
 @Module({
   imports: [AiModule, AuthModule, DataModule],
+  controllers: [GameController],
   providers: [GameGateway, GameService, GameRoomRepository],
 })
 export class GameModule {}

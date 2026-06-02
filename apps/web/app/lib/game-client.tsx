@@ -43,6 +43,7 @@ type GameClientContextValue = {
   sendChat: (roomId: string, content: string) => Promise<ActionResult>;
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
   stopGame: (roomId: string) => Promise<ActionResult>;
+  fetchRoom: (roomId: string) => Promise<RoomSnapshot | null>;
 };
 
 const API_URL =
@@ -372,6 +373,23 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
         }),
+      fetchRoom: async (roomId: string) => {
+        const upperId = roomId.toUpperCase();
+        const local = rooms.find((r) => r.id === upperId);
+        if (local) return local;
+
+        try {
+          const response = await fetch(`${API_URL}/rooms/${upperId}`);
+          const data = await response.json();
+          if (data.ok && data.room) {
+            upsertRoom(data.room);
+            return data.room;
+          }
+        } catch {
+          // ignore
+        }
+        return null;
+      },
     };
   }, [
     connected,

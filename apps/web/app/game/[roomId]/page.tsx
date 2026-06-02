@@ -287,6 +287,7 @@ export default function GamePage() {
     sendChat,
     castVote,
     stopGame,
+    fetchRoom,
   } = useGameClient();
 
   const [chatDraft, setChatDraft] = useState("");
@@ -295,11 +296,18 @@ export default function GamePage() {
     null,
   );
   const [now, setNow] = useState(Date.now());
+  const [fetchAttempted, setFetchAttempted] = useState(false);
 
   const room = getRoom(roomId);
   const playerId = getPlayerId(roomId);
 
   useRoomReconnect({ connected, roomId, getPlayerId, reconnectRoom });
+
+  useEffect(() => {
+    if (room || fetchAttempted) return;
+    setFetchAttempted(true);
+    void fetchRoom(roomId);
+  }, [room, fetchAttempted, fetchRoom, roomId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -348,8 +356,12 @@ export default function GamePage() {
       <main className="immersive-page">
         <section className="missing-game">
           <p className="eyebrow">Game</p>
-          <h1>正在连接对局</h1>
-          <p>如果长时间没有进入，请从大厅重新加入房间。</p>
+          <h1>{fetchAttempted ? "对局未找到" : "正在加载对局"}</h1>
+          <p>
+            {fetchAttempted
+              ? "该对局不存在或已被清理。"
+              : "正在从服务器获取对局信息..."}
+          </p>
           <button className="secondary" onClick={() => router.push("/")}>
             返回大厅
           </button>

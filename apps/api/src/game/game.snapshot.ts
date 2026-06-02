@@ -40,8 +40,7 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
     phase: room.phase,
     phaseEndsAt: room.phaseEndsAt,
     winner: room.winner,
-    messages: room.messages
-      .slice(-80)
+    messages: (room.status === "finished" ? room.messages : room.messages.slice(-80))
       .map((message) => toPublicMessage(message, room)),
     voteCounts: getVoteCounts(room),
     voteResults: getPublicVoteResults(room),

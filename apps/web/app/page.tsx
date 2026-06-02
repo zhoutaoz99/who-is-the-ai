@@ -575,8 +575,14 @@ export default function Home() {
                       className="room-row"
                       key={room.id}
                       data-status={room.status}
-                      disabled={room.status !== "waiting" || lobbyDisabled}
-                      onClick={() => handleJoinRoom(room.id)}
+                      disabled={room.status === "playing" || lobbyDisabled}
+                      onClick={() => {
+                        if (room.status === "finished") {
+                          router.push(`/game/${room.id}`);
+                        } else {
+                          handleJoinRoom(room.id);
+                        }
+                      }}
                     >
                       <div className="room-row-main">
                         <div className="room-row-info">
@@ -612,6 +618,9 @@ export default function Home() {
                         </div>
                         {room.status === "waiting" && (
                           <span className="room-join-hint">加入 →</span>
+                        )}
+                        {room.status === "finished" && (
+                          <span className="room-join-hint">查看记录 →</span>
                         )}
                       </div>
                     </button>
