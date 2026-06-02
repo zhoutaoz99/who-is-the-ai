@@ -376,8 +376,8 @@ export default function Home() {
             </svg>
           </div>
           <div>
-            <p className="eyebrow">AI Werewolf MVP</p>
-            <h1>AI 狼人杀</h1>
+            <p className="eyebrow">Who's the AI</p>
+            <h1>谁是AI</h1>
           </div>
         </div>
         <div className="topbar-actions">

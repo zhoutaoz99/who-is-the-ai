@@ -15,7 +15,7 @@ async function bootstrap() {
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port);
-  console.log(`AI Werewolf API listening on http://localhost:${port}`);
+  console.log(`Who's the AI API listening on http://localhost:${port}`);
 }
 
 void bootstrap();

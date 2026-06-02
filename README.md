@@ -1,6 +1,6 @@
-# AI Werewolf MVP
+# Who's the AI
 
-AI 狼人杀的最小可运行版本，采用推荐选型中的前后台方案：
+"谁是AI"是一款社交聊天推理游戏——真人玩家与 AI 玩家混在一起，通过自由发言和投票找出隐藏的 AI。本仓库是它的最小可运行版本，采用推荐选型中的前后台方案：
 
 - 前端：`Next.js App Router + React + TypeScript`
 - 后端：`NestJS + Socket.IO + TypeScript`

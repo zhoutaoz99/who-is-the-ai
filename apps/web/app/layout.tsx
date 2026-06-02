@@ -4,7 +4,7 @@ import { GameClientProvider } from "./lib/game-client";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI 狼人杀 MVP",
+  title: "谁是AI",
   description: "真人玩家与 AI 玩家同场推理的最小可运行版本",
 };
 
