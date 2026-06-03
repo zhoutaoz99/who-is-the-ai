@@ -1,9 +1,21 @@
-import { Body, Controller, Post } from "@nestjs/common";
+import { Body, Controller, Get, Post } from "@nestjs/common";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { DebugCallRequest, DebugCallResponse } from "../ai/ai.types";
 import { DEBUG } from "../game/game.config";
 
 @Controller("replay/debug")
 export class ReplayDebugController {
+  @Get("prompts")
+  getPrompts() {
+    const dir = join(__dirname, "..", "ai", "prompts");
+    return {
+      "speech-strategy": readFileSync(join(dir, "system-speech-strategy.txt"), "utf-8").trim(),
+      "speech-expression": readFileSync(join(dir, "system-speech-expression.txt"), "utf-8").trim(),
+      vote: readFileSync(join(dir, "system-vote.txt"), "utf-8").trim(),
+    };
+  }
+
   private readonly baseURL = (
     process.env.AI_BASE_URL ?? "https://api.openai.com/v1"
   ).replace(/\/+$/, "");

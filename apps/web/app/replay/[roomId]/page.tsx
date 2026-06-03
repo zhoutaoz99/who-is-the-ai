@@ -156,7 +156,7 @@ function buildTimeline(
   return items;
 }
 
-function AiCallGroup({ calls }: { calls: AiCallLog[] }) {
+function AiCallGroup({ calls, systemPrompts }: { calls: AiCallLog[]; systemPrompts: Record<string, string> }) {
   const expressionCall = calls.find((c) => c.callType === "speech-expression");
   const template = expressionCall?.templatePrompt ?? expressionCall?.userPrompt ?? "";
   const [expressionUserPrompt, setExpressionUserPrompt] = useState(
@@ -176,6 +176,7 @@ function AiCallGroup({ calls }: { calls: AiCallLog[] }) {
         <AiCallInline
           key={call.id}
           call={call}
+          systemPrompt={systemPrompts[call.callType] ?? ""}
           onApplyStrategy={call.callType === "speech-strategy" ? applyStrategyToExpression : undefined}
           managedUserPrompt={call.callType === "speech-expression" ? expressionUserPrompt : undefined}
           onManagedUserPromptChange={call.callType === "speech-expression" ? setExpressionUserPrompt : undefined}
@@ -209,17 +210,19 @@ function EditablePrompt({
 
 function AiCallInline({
   call,
+  systemPrompt: initialSystemPrompt,
   onApplyStrategy,
   managedUserPrompt,
   onManagedUserPromptChange,
 }: {
   call: AiCallLog;
+  systemPrompt: string;
   onApplyStrategy?: (output: string) => void;
   managedUserPrompt?: string;
   onManagedUserPromptChange?: (v: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [systemPrompt, setSystemPrompt] = useState(call.systemPrompt);
+  const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
   const [localUserPrompt, setLocalUserPrompt] = useState(call.userPrompt);
 
   const userPrompt = managedUserPrompt ?? localUserPrompt;
@@ -262,7 +265,7 @@ function AiCallInline({
   }
 
   function handleReset() {
-    setSystemPrompt(call.systemPrompt);
+    setSystemPrompt(initialSystemPrompt);
     setUserPrompt(call.userPrompt);
     setDebugResponse(null);
     setDebugThinking(null);
@@ -350,6 +353,7 @@ export default function ReplayPage() {
   const [data, setData] = useState<ReplayData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [localPrompts, setLocalPrompts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetch(`${API_URL}/replay/${roomId}`)
@@ -363,6 +367,13 @@ export default function ReplayPage() {
         setLoading(false);
       });
   }, [roomId]);
+
+  useEffect(() => {
+    fetch(`${API_URL}/replay/debug/prompts`)
+      .then((res) => res.json())
+      .then((prompts: Record<string, string>) => setLocalPrompts(prompts))
+      .catch(() => {});
+  }, []);
 
   if (loading) {
     return (
@@ -405,6 +416,79 @@ export default function ReplayPage() {
   }
   const rounds = [...roundMap.values()];
 
+  function handleExport(
+    room: NonNullable<ReplayData["room"]>,
+    aiCallLogs: AiCallLog[],
+  ) {
+    const stripAiCall = (call: AiCallLog) => ({
+      callType: call.callType,
+      aiPlayerName: call.aiPlayerName,
+      aiPlayerSeatNo: call.aiPlayerSeatNo,
+      modelName: call.modelName,
+      rawResponse: call.rawResponse,
+      createdAt: call.createdAt,
+    });
+
+    const exportData = {
+      roomId: room.id,
+      winner: room.winner,
+      currentRound: room.currentRound,
+      config: room.config,
+      players: room.players
+        .slice()
+        .sort((a, b) => a.seatNo - b.seatNo)
+        .map((p) => ({
+          seatNo: p.seatNo,
+          name: p.name,
+          revealedType: p.revealedType ?? null,
+          status: p.status,
+          eliminatedRound: p.eliminatedRound ?? null,
+        })),
+      rounds: rounds.map((r) => {
+        const timeline = buildTimeline(r.messages, r.votes, r.aiCalls, playerMap);
+        const messages: Record<string, unknown>[] = [];
+        const voteRounds: { votes: Record<string, unknown>[]; aiCalls: Record<string, unknown>[] }[] = [];
+        for (const item of timeline) {
+          if (item.type === "message") {
+            messages.push({
+              seatNo: seatMap.get(item.msg.playerId) ?? "?",
+              playerName: item.msg.playerName,
+              content: item.msg.content,
+              source: item.msg.source ?? null,
+              createdAt: item.msg.createdAt,
+              aiCalls: item.aiCalls.map(stripAiCall),
+            });
+          } else {
+            voteRounds.push({
+              votes: item.votes.map((v) => ({
+                voterSeatNo: seatMap.get(v.voterPlayerId) ?? "?",
+                voterName: playerMap.get(v.voterPlayerId)?.name ?? "?",
+                targetSeatNo: seatMap.get(v.targetPlayerId) ?? "?",
+                targetName: playerMap.get(v.targetPlayerId)?.name ?? "?",
+              })),
+              aiCalls: item.aiCalls.map(stripAiCall),
+            });
+          }
+        }
+        return {
+          roundNo: r.roundNo,
+          messages,
+          votes: voteRounds[0] ?? { votes: [], aiCalls: [] },
+        };
+      }),
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `replay-${room.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <main className="replay-page">
       {/* Header */}
@@ -415,9 +499,14 @@ export default function ReplayPage() {
             {winnerLabel(room.winner)}
           </span>
         </div>
-        <button className="secondary" onClick={() => router.push("/")}>
-          返回大厅
-        </button>
+        <div className="replay-header-actions">
+          <button className="secondary" onClick={() => handleExport(room, aiCallLogs)}>
+            导出 JSON
+          </button>
+          <button className="secondary" onClick={() => router.push("/")}>
+            返回大厅
+          </button>
+        </div>
       </header>
 
       {/* Player Overview */}
@@ -491,7 +580,7 @@ export default function ReplayPage() {
                         </div>
                       </div>
                       {isAi && item.aiCalls.length > 0 && (
-                        <AiCallGroup calls={item.aiCalls} />
+                        <AiCallGroup calls={item.aiCalls} systemPrompts={localPrompts} />
                       )}
                     </div>
                   );
@@ -534,7 +623,7 @@ export default function ReplayPage() {
                     {item.aiCalls.length > 0 && (
                       <div className="replay-msg-ai-calls">
                         {item.aiCalls.map((call) => (
-                          <AiCallInline key={call.id} call={call} />
+                          <AiCallInline key={call.id} call={call} systemPrompt={localPrompts[call.callType] ?? ""} />
                         ))}
                       </div>
                     )}

@@ -93,7 +93,6 @@ export class AiService {
         aiPlayerId: context.myPlayerId,
         aiPlayerName: context.myName,
         aiPlayerSeatNo: context.mySeatNo,
-        systemPrompt: strategySystemPrompt,
         userPrompt: strategyUserPrompt,
         rawResponse: strategyResult,
         modelName: this.config.speechStrategy.model,
@@ -141,7 +140,6 @@ export class AiService {
         aiPlayerId: context.myPlayerId,
         aiPlayerName: context.myName,
         aiPlayerSeatNo: context.mySeatNo,
-        systemPrompt: expressionSystemPrompt,
         userPrompt: expressionUserPrompt,
         rawResponse: expressionResult,
         modelName: this.config.speechExpression.model,
@@ -188,7 +186,6 @@ export class AiService {
         aiPlayerId: context.myPlayerId,
         aiPlayerName: context.myName,
         aiPlayerSeatNo: context.mySeatNo,
-        systemPrompt,
         userPrompt,
         rawResponse: result,
         modelName: this.config.model,
@@ -206,7 +203,7 @@ export class AiService {
 
   private buildSpeechStrategyPrompt(context: GameContext): string {
     return renderTemplate(
-      "user-speech-template.txt",
+      "user-speech-strategy-template.txt",
       this.buildSpeechVars(context),
     );
   }

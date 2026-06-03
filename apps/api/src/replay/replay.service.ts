@@ -10,9 +10,9 @@ export class ReplayService {
     await this.postgres.query(
       `INSERT INTO ai_call_logs
         (id, room_id, round_no, call_type, ai_player_id, ai_player_name,
-         ai_player_seat_no, system_prompt, user_prompt, raw_response,
+         ai_player_seat_no, user_prompt, raw_response,
          model_name, temperature, reasoning_effort, created_at, template_prompt)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         log.id,
         log.roomId,
@@ -21,7 +21,6 @@ export class ReplayService {
         log.aiPlayerId,
         log.aiPlayerName,
         log.aiPlayerSeatNo,
-        log.systemPrompt,
         log.userPrompt,
         log.rawResponse,
         log.modelName,
@@ -40,7 +39,6 @@ export class ReplayService {
         call_type AS "callType", ai_player_id AS "aiPlayerId",
         ai_player_name AS "aiPlayerName",
         ai_player_seat_no AS "aiPlayerSeatNo",
-        system_prompt AS "systemPrompt",
         user_prompt AS "userPrompt",
         raw_response AS "rawResponse",
         model_name AS "modelName", temperature, reasoning_effort AS "reasoningEffort",

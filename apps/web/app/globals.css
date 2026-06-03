@@ -3402,6 +3402,11 @@ p {
   background: #dbeafe;
 }
 
+.replay-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
 @media (max-width: 600px) {
   .replay-page {
     padding: 12px 8px 32px;

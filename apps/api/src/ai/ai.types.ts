@@ -76,7 +76,6 @@ export interface AiCallRecord {
   aiPlayerId: string;
   aiPlayerName: string;
   aiPlayerSeatNo: number;
-  systemPrompt: string;
   userPrompt: string;
   rawResponse: string;
   modelName: string;

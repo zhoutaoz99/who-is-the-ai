@@ -113,7 +113,6 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
         ai_player_id text NOT NULL,
         ai_player_name text NOT NULL,
         ai_player_seat_no integer NOT NULL,
-        system_prompt text NOT NULL,
         user_prompt text NOT NULL,
         raw_response text NOT NULL,
         model_name text NOT NULL,
@@ -131,6 +130,10 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
     await this.query(`
       ALTER TABLE ai_call_logs
       ADD COLUMN IF NOT EXISTS template_prompt text
+    `);
+
+    await this.query(`
+      ALTER TABLE ai_call_logs DROP COLUMN IF EXISTS system_prompt
     `);
   }
 }
