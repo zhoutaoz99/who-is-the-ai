@@ -13,8 +13,13 @@ export interface AiConfig extends AiModelCallConfig {
 }
 
 export type AiSpeechAction =
-  | { type: "speak"; content: string }
-  | { type: "skip" };
+  | {
+      type: "speak";
+      content: string;
+      targetResponseDelayMs: number;
+      nextCheckAfterMs: number;
+    }
+  | { type: "skip"; nextCheckAfterMs: number };
 
 export interface AiSpeechStrategy {
   replyTo: string;
@@ -27,8 +32,13 @@ export interface AiSpeechStrategy {
 }
 
 export type AiSpeechStrategyAction =
-  | { type: "speak"; strategy: AiSpeechStrategy }
-  | { type: "skip"; reason?: string };
+  | {
+      type: "speak";
+      strategy: AiSpeechStrategy;
+      targetResponseDelayMs: number;
+      nextCheckAfterMs: number;
+    }
+  | { type: "skip"; reason?: string; nextCheckAfterMs: number };
 
 export type AiVoteAction = {
   type: "vote";

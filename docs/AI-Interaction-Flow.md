@@ -19,20 +19,23 @@ AI 组件：
 
 ### 触发机制
 
-`startAiSpeech()` 在讨论阶段开始时启动，使用**随机间隔 4-10 秒**的递归 `setTimeout`：
+`startAiSpeech()` 在讨论阶段开始时启动，使用 AI 决策返回的 `nextCheckAfterMs` 递归调度：
 
 ```
 scheduleNext():
-  ├─ 随机延迟 4~10 秒后执行回调
+  ├─ 按上一次 AI 返回的 nextCheckAfterMs 延迟执行回调（首次默认 1 秒）
   ├─ 检查当前阶段是否为 "discussion"（不是则停止调度）
   ├─ 检查是否已有 AI 正在发言中（aiSpeaking 并发锁）
   ├─ 筛选存活 AI 玩家
   ├─ 过滤满足 15 秒冷却的候选 AI
-  ├─ 45% 概率跳过（Math.random() > 0.55，即 55% 概率继续）
   ├─ 没有候选人也跳过 → scheduleNext()
   ├─ 从候选人中随机选一个 AI
+  ├─ 记录上下文版本（roundNo / messageCount / lastMessageId / voteCount）
   ├─ 设置 aiSpeaking 锁 = true
   ├─ await aiService.generateSpeech(context) → 调用 LLM
+  ├─ 如果生成期间出现新消息 → 丢弃旧结果，短延迟后重新调度
+  ├─ 如果 speak → 用 targetResponseDelayMs - 模型耗时得到剩余等待
+  ├─ 发言前再次校验上下文版本
   ├─ 广播结果 / skip
   └─ finally: aiSpeaking 锁 = false → scheduleNext()
 ```
@@ -41,18 +44,18 @@ scheduleNext():
 
 ```
 generateSpeech(context):
-  ├─ 未配置 API Key → return { type: "skip" }
+  ├─ 未配置 API Key → return { type: "skip", nextCheckAfterMs }
   ├─ buildSpeechStrategyPrompt(context) → 拼装策略层 Prompt
   ├─ callModel(strategySystemPrompt, strategyUserPrompt, speechStrategyConfig) → 生成结构化发言策略
   ├─ parseSpeechStrategyResult(raw) → 解析策略 JSON
-  │   ├─ skip: return { type: "skip" }
-  │   └─ speak: 得到 replyTo / speechAct / publicPoint / tone / maxSentences / constraints / avoidPhrases
+  │   ├─ skip: 得到 reason / nextCheckAfterMs
+  │   └─ speak: 得到 targetResponseDelayMs / nextCheckAfterMs / strategy
   ├─ buildSpeechExpressionPrompt(context, strategy) → 拼装表达转换 Prompt
   ├─ callModel(expressionSystemPrompt, expressionUserPrompt, speechExpressionConfig) → 生成最终发言
   ├─ parseSpeechResult(raw) → 解析最终发言 JSON
-  │   ├─ 成功: { type: "speak", content: "..." }
-  │   └─ 失败: { type: "skip" }
-  └─ 异常: return { type: "skip" }
+  │   ├─ 成功: { type: "speak", content, targetResponseDelayMs, nextCheckAfterMs }
+  │   └─ 失败: { type: "skip", nextCheckAfterMs }
+  └─ 异常: return { type: "skip", nextCheckAfterMs }
 ```
 
 ### GameService 收到结果后
@@ -141,9 +144,9 @@ generateVote(context, aiPlayerId):
 你的任务不是写最终发言，而是决定本次是否发言，以及如果发言，给表达层一份结构化策略。
 
 必须输出 JSON：
-{"type":"speak","strategy":{"replyTo":"接哪句话或无","speechAct":"发言动作","publicPoint":"可公开表达的单个观点","tone":"语气和力度","maxSentences":2,"constraints":["表达限制1"],"avoidPhrases":["禁用话术1"]}}
+{"type":"speak","targetResponseDelayMs":2500,"nextCheckAfterMs":10000,"strategy":{"replyTo":"接哪句话或无","speechAct":"发言动作","publicPoint":"可公开表达的单个观点","tone":"语气和力度","maxSentences":2,"constraints":["表达限制1"],"avoidPhrases":["禁用话术1"]}}
 或：
-{"type":"skip","reason":"跳过原因"}
+{"type":"skip","reason":"跳过原因","nextCheckAfterMs":12000}
 ```
 
 ### 表达转换 System Prompt
@@ -171,7 +174,7 @@ generateVote(context, aiPlayerId):
 历史投票：
   无
 当前投票情况：无
-请先生成发言策略，或决定跳过发言，输出 JSON。不要输出最终发言。
+请先决定现在是否发言、目标反应时间和下次观察时间；如果发言，再生成发言策略。输出 JSON，不要输出最终发言。
 ```
 
 ### 表达转换 User Prompt 示例

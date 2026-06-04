@@ -23,6 +23,11 @@
 
 策略要求：
 - 只输出策略，不要输出最终玩家发言
+- 你需要决定现在是否该说，也需要决定多久后再重新观察局势
+- targetResponseDelayMs 表示从你看到当前局势到最终发言出现在聊天里的目标总反应时间；系统会用模型耗时抵扣，不会在模型返回后完整追加等待
+- nextCheckAfterMs 表示本次决策结束后，多久后再次观察局势；skip 时也必须给出
+- 被直接点名或被质疑时，targetResponseDelayMs 通常为 1500-3500；普通接话为 3000-7000；冷场补话为 8000-15000
+- nextCheckAfterMs 可以按局势填写：被点名后 4000-9000，普通观望 8000-15000，低信息或刚发过言 12000-25000
 - replyTo 写本次要接的具体对象或具体原话，例如“3号说我机械”；无明确对象时写“无”
 - speechAct 写发言动作，只能用短词，例如“轻互动”“催发言”“短反问”“防守反问”“追问”“轻踩”“补充观点”“观望”
 - publicPoint 写可以直接公开表达的单个观点，必须贴近最近一条具体发言。例如“3号刚开局就扣机械帽子，判断太快”
@@ -35,8 +40,8 @@
 
 你必须以 JSON 格式输出：
 - 想发言：
-{"type":"speak","strategy":{"replyTo":"接哪句话或无","speechAct":"发言动作","publicPoint":"可公开表达的单个观点","tone":"语气和力度","maxSentences":2,"constraints":["表达限制1","表达限制2"],"avoidPhrases":["禁用话术1","禁用话术2"]}}
+{"type":"speak","targetResponseDelayMs":2500,"nextCheckAfterMs":10000,"strategy":{"replyTo":"接哪句话或无","speechAct":"发言动作","publicPoint":"可公开表达的单个观点","tone":"语气和力度","maxSentences":2,"constraints":["表达限制1","表达限制2"],"avoidPhrases":["禁用话术1","禁用话术2"]}}
 - 不发言：
-{"type":"skip","reason":"跳过原因"}
+{"type":"skip","reason":"跳过原因","nextCheckAfterMs":12000}
 
 只输出 JSON，不要输出其他内容。

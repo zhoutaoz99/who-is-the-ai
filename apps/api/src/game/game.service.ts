@@ -5,9 +5,13 @@ import { AiService } from "../ai/ai.service";
 import { GameContext, RoundVoteSummary, VoteRecord } from "../ai/ai.types";
 import { AuthService } from "../auth/auth.service";
 import {
-  AI_SPEECH_CHANCE,
-  AI_SPEECH_INTERVAL_MIN_MS,
-  AI_SPEECH_INTERVAL_MAX_MS,
+  AI_SPEECH_INITIAL_CHECK_MS,
+  AI_SPEECH_NEXT_CHECK_MAX_MS,
+  AI_SPEECH_NEXT_CHECK_MIN_MS,
+  AI_SPEECH_RESPONSE_DELAY_MAX_MS,
+  AI_SPEECH_RESPONSE_DELAY_MIN_MS,
+  AI_SPEECH_STALE_RETRY_MAX_MS,
+  AI_SPEECH_STALE_RETRY_MIN_MS,
   AI_VOTE_DELAY_MS,
   AI_VOTE_STAGGER_MS,
   AUTO_RESOLVE_DELAY_MS,
@@ -60,6 +64,13 @@ type RoomTimers = {
   phase?: NodeJS.Timeout;
   tick?: NodeJS.Timeout;
   aiSpeech?: NodeJS.Timeout;
+};
+
+type AiSpeechContextMark = {
+  roundNo: number;
+  messageCount: number;
+  lastMessageId: string | null;
+  voteCount: number;
 };
 
 @Injectable()
@@ -732,10 +743,7 @@ export class GameService {
   }
 
   private startAiSpeech(roomId: string) {
-    const scheduleNext = () => {
-      const delay =
-        AI_SPEECH_INTERVAL_MIN_MS +
-        Math.random() * (AI_SPEECH_INTERVAL_MAX_MS - AI_SPEECH_INTERVAL_MIN_MS);
+    const scheduleNext = (delayMs = AI_SPEECH_INITIAL_CHECK_MS) => {
       this.getTimers(roomId).aiSpeech = setTimeout(async () => {
         const room = await this.getRoom(roomId);
         if (!room) {
@@ -748,7 +756,7 @@ export class GameService {
 
         // Prevent concurrent AI speech for the same room
         if (this.aiSpeaking.get(room.id)) {
-          scheduleNext();
+          scheduleNext(AI_SPEECH_NEXT_CHECK_MIN_MS);
           return;
         }
 
@@ -759,23 +767,53 @@ export class GameService {
           (player) => Date.now() - player.lastSpokeAt >= SPEAK_COOLDOWN_MS,
         );
 
-        if (candidates.length === 0 || Math.random() > AI_SPEECH_CHANCE) {
-          scheduleNext();
+        if (candidates.length === 0) {
+          scheduleNext(AI_SPEECH_NEXT_CHECK_MIN_MS);
           return;
         }
 
         const aiPlayer = randomItem(candidates);
+        const contextMark = this.markAiSpeechContext(room);
+        const decisionStartedAt = Date.now();
+        let nextDelayMs: number | null = AI_SPEECH_NEXT_CHECK_MIN_MS;
         this.aiSpeaking.set(room.id, true);
         try {
           const context = this.buildGameContext(room, aiPlayer);
           const action = await this.aiService.generateSpeech(context);
+          nextDelayMs = this.clampAiNextCheckDelay(action.nextCheckAfterMs);
+
+          const latestAfterModel = await this.getRoom(room.id);
+          if (
+            !latestAfterModel ||
+            latestAfterModel.status !== "playing" ||
+            latestAfterModel.phase !== "discussion" ||
+            latestAfterModel.currentRound !== contextMark.roundNo
+          ) {
+            nextDelayMs = null;
+            return;
+          }
+
+          if (this.hasNewAiSpeechContext(latestAfterModel, contextMark)) {
+            nextDelayMs = this.randomAiStaleRetryDelay();
+            return;
+          }
 
           if (action.type === "speak") {
+            const elapsedMs = Date.now() - decisionStartedAt;
+            const targetDelayMs = this.clampAiResponseDelay(
+              action.targetResponseDelayMs,
+            );
+            const remainingDelayMs = Math.max(0, targetDelayMs - elapsedMs);
+            if (remainingDelayMs > 0) {
+              await this.delay(remainingDelayMs);
+            }
+
+            let staleAtSave = false;
             const saved = await this.applyWithLock(room.id, (latest) => {
               if (
                 latest.status !== "playing" ||
                 latest.phase !== "discussion" ||
-                latest.currentRound !== room.currentRound
+                latest.currentRound !== contextMark.roundNo
               ) {
                 return false;
               }
@@ -790,9 +828,19 @@ export class GameService {
                 return false;
               }
 
+              if (this.hasNewAiSpeechContext(latest, contextMark)) {
+                staleAtSave = true;
+                return false;
+              }
+
               this.addMessage(latest, freshAiPlayer, action.content, false);
               return true;
             });
+
+            if (staleAtSave) {
+              nextDelayMs = this.randomAiStaleRetryDelay();
+              return;
+            }
 
             if (saved) {
               this.broadcastRoom(saved);
@@ -800,12 +848,68 @@ export class GameService {
           }
         } finally {
           this.aiSpeaking.set(room.id, false);
-          scheduleNext();
+          if (nextDelayMs != null) {
+            const latest = await this.getRoom(room.id);
+            if (latest?.status === "playing" && latest.phase === "discussion") {
+              scheduleNext(nextDelayMs);
+            }
+          }
         }
-      }, delay);
+      }, delayMs);
     };
 
     scheduleNext();
+  }
+
+  private markAiSpeechContext(room: Room): AiSpeechContextMark {
+    const lastMessage = room.messages[room.messages.length - 1];
+    return {
+      roundNo: room.currentRound,
+      messageCount: room.messages.length,
+      lastMessageId: lastMessage?.id ?? null,
+      voteCount: room.votes.length,
+    };
+  }
+
+  private hasNewAiSpeechContext(
+    room: Room,
+    mark: AiSpeechContextMark,
+  ): boolean {
+    const lastMessage = room.messages[room.messages.length - 1];
+    return (
+      room.currentRound !== mark.roundNo ||
+      room.messages.length !== mark.messageCount ||
+      (lastMessage?.id ?? null) !== mark.lastMessageId ||
+      room.votes.length !== mark.voteCount
+    );
+  }
+
+  private clampAiNextCheckDelay(delayMs: number): number {
+    return Math.min(
+      AI_SPEECH_NEXT_CHECK_MAX_MS,
+      Math.max(AI_SPEECH_NEXT_CHECK_MIN_MS, delayMs),
+    );
+  }
+
+  private clampAiResponseDelay(delayMs: number): number {
+    return Math.min(
+      AI_SPEECH_RESPONSE_DELAY_MAX_MS,
+      Math.max(AI_SPEECH_RESPONSE_DELAY_MIN_MS, delayMs),
+    );
+  }
+
+  private randomAiStaleRetryDelay(): number {
+    return (
+      AI_SPEECH_STALE_RETRY_MIN_MS +
+      Math.random() *
+        (AI_SPEECH_STALE_RETRY_MAX_MS - AI_SPEECH_STALE_RETRY_MIN_MS)
+    );
+  }
+
+  private delay(delayMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, delayMs);
+    });
   }
 
   private scheduleAiVotes(room: Room) {

@@ -12,6 +12,12 @@ import {
 } from "./ai.types";
 import { loadPrompt, renderTemplate } from "./prompt-loader";
 
+const DEFAULT_AI_NEXT_CHECK_MS = 10_000;
+
+type ParsedSpeechContent =
+  | { type: "speak"; content: string }
+  | { type: "skip" };
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -61,7 +67,7 @@ export class AiService {
 
   async generateSpeech(context: GameContext): Promise<AiSpeechAction> {
     if (!this.config.apiKey) {
-      return { type: "skip" };
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
     }
 
     try {
@@ -102,7 +108,10 @@ export class AiService {
 
       const strategyAction = this.parseSpeechStrategyResult(strategyResult);
       if (strategyAction.type === "skip") {
-        return { type: "skip" };
+        return {
+          type: "skip",
+          nextCheckAfterMs: strategyAction.nextCheckAfterMs,
+        };
       }
 
       const expressionSystemPrompt = loadPrompt("system-speech-expression.txt");
@@ -148,12 +157,24 @@ export class AiService {
         templatePrompt: expressionTemplatePrompt,
       });
 
-      return this.parseSpeechResult(expressionResult, context);
+      const speechAction = this.parseSpeechResult(expressionResult, context);
+      if (speechAction.type === "speak") {
+        return {
+          ...speechAction,
+          targetResponseDelayMs: strategyAction.targetResponseDelayMs,
+          nextCheckAfterMs: strategyAction.nextCheckAfterMs,
+        };
+      }
+
+      return {
+        type: "skip",
+        nextCheckAfterMs: strategyAction.nextCheckAfterMs,
+      };
     } catch (error) {
       this.logger.warn(
         `Speech generation failed: ${error instanceof Error ? error.message : error}`,
       );
-      return { type: "skip" };
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
     }
   }
 
@@ -464,7 +485,7 @@ export class AiService {
   private parseSpeechResult(
     raw: string,
     context: GameContext,
-  ): AiSpeechAction {
+  ): ParsedSpeechContent {
     const parsed = this.extractJson(raw);
     if (!parsed) {
       return { type: "skip" };
@@ -490,13 +511,23 @@ export class AiService {
       this.logger.warn(
         `Speech strategy parse failed: invalid JSON. raw="${raw.slice(0, 500)}"`,
       );
-      return { type: "skip" };
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
     }
 
     if (parsed.type === "skip") {
+      const nextCheckAfterMs = this.readPositiveInteger(
+        parsed.nextCheckAfterMs,
+      );
+      if (!nextCheckAfterMs) {
+        this.logger.warn(
+          `Speech strategy parse failed: skip missing nextCheckAfterMs. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
+        );
+      }
+
       return {
         type: "skip",
         reason: this.readString(parsed.reason) ?? undefined,
+        nextCheckAfterMs: nextCheckAfterMs ?? DEFAULT_AI_NEXT_CHECK_MS,
       };
     }
 
@@ -504,16 +535,22 @@ export class AiService {
       this.logger.warn(
         `Speech strategy parse failed: unexpected type="${String(parsed.type)}"`,
       );
-      return { type: "skip" };
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
     }
 
     if (!this.isRecord(parsed.strategy)) {
       this.logger.warn(
         `Speech strategy parse failed: missing strategy object. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
       );
-      return { type: "skip" };
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
     }
 
+    const targetResponseDelayMs = this.readPositiveInteger(
+      parsed.targetResponseDelayMs,
+    );
+    const nextCheckAfterMs = this.readPositiveInteger(
+      parsed.nextCheckAfterMs,
+    );
     const replyTo = this.readString(parsed.strategy.replyTo);
     const speechAct = this.readString(parsed.strategy.speechAct);
     const publicPoint = this.readString(parsed.strategy.publicPoint);
@@ -531,6 +568,8 @@ export class AiService {
       publicPoint &&
       tone &&
       maxSentences &&
+      targetResponseDelayMs &&
+      nextCheckAfterMs &&
       constraints &&
       avoidPhrases
     ) {
@@ -545,13 +584,15 @@ export class AiService {
           constraints,
           avoidPhrases,
         },
+        targetResponseDelayMs,
+        nextCheckAfterMs,
       };
     }
 
     this.logger.warn(
       `Speech strategy parse failed: invalid strategy fields. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
     );
-    return { type: "skip" };
+    return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
   }
 
   private readPositiveInteger(value: unknown): number | null {
