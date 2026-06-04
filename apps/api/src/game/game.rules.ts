@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { AI_PERSONAS } from "../ai/ai.personas";
 import {
+  ACTIVE_ICEBREAKER_PERSONA_ID,
   AI_NAMES,
   AI_PLAYER_COUNT,
+  DEBUG_AUTO_AI_PLAYER_COUNT,
   DEFAULT_DISCUSSION_DURATION_MS,
   MAX_ROUNDS,
   MESSAGE_LIMIT,
@@ -20,6 +22,22 @@ import {
 
 export function countHumans(room: Room) {
   return room.players.filter((player) => player.type === "human").length;
+}
+
+export function countAi(room: Room) {
+  return room.players.filter((player) => player.type === "ai").length;
+}
+
+export function hasActiveIcebreaker(room: Room) {
+  return room.players.some(
+    (player) =>
+      player.type === "ai" &&
+      player.aiPersonaId === ACTIVE_ICEBREAKER_PERSONA_ID,
+  );
+}
+
+export function canStartDebugAutoAiRoom(room: Room) {
+  return countAi(room) >= 1 && hasActiveIcebreaker(room);
 }
 
 export function resolveElimination(room: Room): Player | null {
@@ -57,6 +75,19 @@ export function getWinner(room: Room): Winner {
   const aliveHumanCount = room.players.filter(
     (player) => player.type === "human" && player.status === "alive",
   ).length;
+  const totalHumanCount = countHumans(room);
+
+  if (room.debugAutoAi && totalHumanCount === 0) {
+    if (aliveAiCount <= 1) {
+      return "ai";
+    }
+
+    if (room.currentRound >= MAX_ROUNDS) {
+      return "ai";
+    }
+
+    return null;
+  }
 
   if (aliveAiCount === 0) {
     return "human";
@@ -175,6 +206,36 @@ export function createAiPlayers(
     connected: true,
     aiPersonaId: personas[index % personas.length]?.id,
   }));
+}
+
+export function createDebugAutoAiPlayers(
+  startSeatNo = 1,
+  count = DEBUG_AUTO_AI_PLAYER_COUNT,
+): Player[] {
+  const players: Player[] = [];
+  const safeCount = Math.max(1, Math.floor(count));
+
+  players.push(createAiPlayer(startSeatNo, ACTIVE_ICEBREAKER_PERSONA_ID));
+
+  const otherPersonaIds = AI_PERSONAS.filter(
+    (persona) => persona.id !== ACTIVE_ICEBREAKER_PERSONA_ID,
+  )
+    .sort(() => Math.random() - 0.5)
+    .map((persona) => persona.id);
+
+  while (players.length < safeCount) {
+    const personaId =
+      otherPersonaIds[players.length - 1] ?? randomItem(AI_PERSONAS)?.id;
+    players.push(
+      createAiPlayer(
+        startSeatNo + players.length,
+        personaId,
+        players.map((player) => player.name),
+      ),
+    );
+  }
+
+  return players;
 }
 
 export function createRoomId() {

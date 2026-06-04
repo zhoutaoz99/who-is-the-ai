@@ -8,7 +8,11 @@ import {
   VOTE_DURATION_MS,
 } from "./game.config";
 import { AI_PERSONAS, getAiPersonaById } from "../ai/ai.personas";
-import { countHumans } from "./game.rules";
+import {
+  canStartDebugAutoAiRoom,
+  countAi,
+  countHumans,
+} from "./game.rules";
 import {
   ChatMessage,
   PublicVoteResult,
@@ -19,7 +23,9 @@ import {
 export function toRoomSnapshot(room: Room): RoomSnapshot {
   const revealTypes = room.status === "finished";
   const showDebugWaitingAi = DEBUG && room.status === "waiting";
+  const showDebugAutoAi = DEBUG && room.debugAutoAi === true;
   const hideAi = room.status === "waiting" && !showDebugWaitingAi;
+  const aiPlayerCount = room.debugAutoAi ? countAi(room) : AI_PLAYER_COUNT;
 
   return {
     id: room.id,
@@ -30,7 +36,8 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
       .sort((a, b) => a.seatNo - b.seatNo)
       .filter((player) => !hideAi || player.type !== "ai")
       .map((player) => {
-        const exposeDebugAi = showDebugWaitingAi && player.type === "ai";
+        const exposeDebugAi =
+          player.type === "ai" && (showDebugWaitingAi || showDebugAutoAi);
         const persona = revealTypes || exposeDebugAi
           ? getAiPersonaById(player.aiPersonaId)
           : null;
@@ -61,7 +68,7 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
     pointAwards: room.pointAwards,
     config: {
       maxHumanPlayers: MAX_HUMAN_PLAYERS,
-      aiPlayerCount: AI_PLAYER_COUNT,
+      aiPlayerCount,
       aiPersonas: DEBUG
         ? AI_PERSONAS.map((persona) => ({
             id: persona.id,
@@ -74,8 +81,12 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
       speakCooldownMs: SPEAK_COOLDOWN_MS,
       rewardPool: REWARD_POOL,
     },
-    canStart: room.status === "waiting" && countHumans(room) >= 1,
+    canStart:
+      room.status === "waiting" &&
+      (countHumans(room) >= 1 ||
+        (showDebugAutoAi && canStartDebugAutoAiRoom(room))),
     debug: DEBUG || undefined,
+    debugAutoAi: showDebugAutoAi || undefined,
     updatedAt: room.updatedAt,
   };
 }
@@ -88,7 +99,10 @@ export function toPublicMessage(message: ChatMessage, room: Room) {
     playerName: message.playerName,
     content: message.content,
     createdAt: message.createdAt,
-    source: room.status === "finished" ? message.source : undefined,
+    source:
+      room.status === "finished" || (DEBUG && room.debugAutoAi)
+        ? message.source
+        : undefined,
   };
 }
 

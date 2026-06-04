@@ -59,6 +59,7 @@ export interface Room {
   id: string;
   status: RoomStatus;
   ownerPlayerId: string;
+  debugAutoAi?: boolean;
   players: Player[];
   discussionDurationMs: number;
   currentRound: number;
@@ -113,6 +114,7 @@ export interface RoomSnapshot {
   };
   canStart: boolean;
   debug?: boolean;
+  debugAutoAi?: boolean;
   updatedAt: string;
 }
 
@@ -171,9 +173,31 @@ export interface DebugAddAiPayload {
   personaId?: string;
 }
 
+export interface CreateDebugAutoAiRoomPayload {
+  discussionDurationMinutes?: number;
+}
+
+export interface DebugRemoveAiPayload {
+  roomId?: string;
+  playerId?: string;
+  aiPlayerId?: string;
+}
+
+export interface DebugDeleteAutoAiRoomPayload {
+  roomId?: string;
+  playerId?: string;
+}
+
+export interface UpdateDiscussionDurationPayload {
+  roomId?: string;
+  playerId?: string;
+  discussionDurationMinutes?: number;
+}
+
 export interface ActionResult {
   ok: boolean;
   error?: string;
   room?: RoomSnapshot;
   playerId?: string;
+  deletedRoomId?: string;
 }

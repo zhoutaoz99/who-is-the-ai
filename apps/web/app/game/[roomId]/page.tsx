@@ -299,9 +299,16 @@ export default function GamePage() {
   const [fetchAttempted, setFetchAttempted] = useState(false);
 
   const room = getRoom(roomId);
-  const playerId = getPlayerId(roomId);
+  const storedPlayerId = getPlayerId(roomId);
+  const playerId = room?.debugAutoAi ? null : storedPlayerId;
 
-  useRoomReconnect({ connected, roomId, getPlayerId, reconnectRoom });
+  useRoomReconnect({
+    connected,
+    disabled: !room || Boolean(room.debugAutoAi),
+    roomId,
+    getPlayerId,
+    reconnectRoom,
+  });
 
   useEffect(() => {
     if (room || fetchAttempted) return;
@@ -345,7 +352,7 @@ export default function GamePage() {
   }, [refreshMe, room]);
 
   const currentPlayer = useMemo(() => {
-    if (!room || !playerId) {
+    if (!room || !playerId || room.debugAutoAi) {
       return null;
     }
     return room.players.find((player) => player.id === playerId) ?? null;
@@ -401,6 +408,7 @@ export default function GamePage() {
   const selectedVotePlayer =
     alivePlayers.find((player) => player.id === selectedVoteTarget) ?? null;
   const transcriptItems = buildTranscriptItems(room);
+  const isObserverMode = Boolean(room.debugAutoAi);
 
   const phaseTotalMs =
     room.phase === "discussion"
@@ -515,14 +523,18 @@ export default function GamePage() {
             </div>
             <div>
               <h2>
-                {room.winner === "human"
+                {isObserverMode
+                  ? "全 AI 自动对局结束"
+                  : room.winner === "human"
                   ? "真人玩家获胜"
                   : room.winner === "ai"
                     ? "人类玩家失败"
                     : "游戏已中止"}
               </h2>
               <p>
-                {room.winner === "human"
+                {isObserverMode
+                  ? "可返回大厅进入复盘查看 AI 行为记录。"
+                  : room.winner === "human"
                   ? formatPointAwardSummary(room)
                   : room.winner === "ai"
                     ? "4 轮结束后仍有 AI 模拟玩家在场，本局挑战失败。"
@@ -662,33 +674,37 @@ export default function GamePage() {
             <div ref={messagesEndRef} />
           </div>
 
-          <form
-            className="composer immersive-composer"
-            onSubmit={handleSendChat}
-          >
-            <input
-              value={chatDraft}
-              maxLength={240}
-              disabled={!canSpeak || pending}
-              placeholder={
-                canSpeak
-                  ? "输入发言，15 秒冷却..."
-                  : speakCooldownRemainingMs > 0
-                    ? `发言冷却中，还剩 ${formatCooldownSeconds(
-                        speakCooldownRemainingMs,
-                      )} 秒`
-                    : "当前不可发言"
-              }
-              onChange={(event) => setChatDraft(event.target.value)}
-            />
-            <button
-              disabled={!canSpeak || pending || !chatDraft.trim()}
-              aria-label="发送"
-              className="send-btn"
+          {isObserverMode ? (
+            <div className="observer-note">全 AI 自动发言中</div>
+          ) : (
+            <form
+              className="composer immersive-composer"
+              onSubmit={handleSendChat}
             >
-              <IconSend />
-            </button>
-          </form>
+              <input
+                value={chatDraft}
+                maxLength={240}
+                disabled={!canSpeak || pending}
+                placeholder={
+                  canSpeak
+                    ? "输入发言，15 秒冷却..."
+                    : speakCooldownRemainingMs > 0
+                      ? `发言冷却中，还剩 ${formatCooldownSeconds(
+                          speakCooldownRemainingMs,
+                        )} 秒`
+                      : "当前不可发言"
+                }
+                onChange={(event) => setChatDraft(event.target.value)}
+              />
+              <button
+                disabled={!canSpeak || pending || !chatDraft.trim()}
+                aria-label="发送"
+                className="send-btn"
+              >
+                <IconSend />
+              </button>
+            </form>
+          )}
         </section>
 
         {/* --- Right: Action --- */}
@@ -719,7 +735,21 @@ export default function GamePage() {
             </div>
           )}
 
-          {room.phase === "voting" && (
+          {room.phase === "voting" && isObserverMode && (
+            <div className="phase-hint">
+              <div className="phase-hint-title">
+                <IconTarget
+                  width="16"
+                  height="16"
+                  style={{ color: "#2dd4bf" }}
+                />
+                <strong>AI 自动投票中</strong>
+              </div>
+              <p>等待所有存活 AI 完成本轮投票。</p>
+            </div>
+          )}
+
+          {room.phase === "voting" && !isObserverMode && (
             <>
               {votedTarget ? (
                 <div className="phase-hint voted-hint">

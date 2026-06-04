@@ -5,6 +5,7 @@ import { ActionResult } from "./game-types";
 
 type UseRoomReconnectOptions = {
   connected: boolean;
+  disabled?: boolean;
   roomId: string;
   getPlayerId: (roomId: string) => string | null;
   reconnectRoom: (roomId: string) => Promise<ActionResult>;
@@ -12,6 +13,7 @@ type UseRoomReconnectOptions = {
 
 export function useRoomReconnect({
   connected,
+  disabled = false,
   roomId,
   getPlayerId,
   reconnectRoom,
@@ -25,7 +27,7 @@ export function useRoomReconnect({
   }, [connected]);
 
   useEffect(() => {
-    if (!connected || reconnectAttempted.current) {
+    if (disabled || !connected || reconnectAttempted.current) {
       return;
     }
 
@@ -36,5 +38,5 @@ export function useRoomReconnect({
 
     reconnectAttempted.current = true;
     void reconnectRoom(roomId);
-  }, [connected, roomId, getPlayerId, reconnectRoom]);
+  }, [connected, disabled, roomId, getPlayerId, reconnectRoom]);
 }

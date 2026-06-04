@@ -13,16 +13,21 @@ import { AuthService } from "../auth/auth.service";
 import { AuthenticatedAccount } from "../auth/auth.types";
 import {
   CastVotePayload,
+  CreateDebugAutoAiRoomPayload,
   CreateRoomPayload,
   DebugAddAiPayload,
+  DebugDeleteAutoAiRoomPayload,
+  DebugRemoveAiPayload,
   JoinRoomPayload,
   LeaveRoomPayload,
   ReconnectPayload,
   SendChatPayload,
   StartGamePayload,
   StopGamePayload,
+  UpdateDiscussionDurationPayload,
 } from "./game.types";
 import { PostgresService } from "../data/postgres.service";
+import { DEBUG } from "./game.config";
 import { GameService } from "./game.service";
 
 @WebSocketGateway({
@@ -49,6 +54,7 @@ export class GameGateway
 
   async handleConnection(client: Socket) {
     client.emit("server.ready", {
+      debug: DEBUG,
       socketId: client.id,
       rooms: await this.gameService.listRooms(),
     });
@@ -65,6 +71,7 @@ export class GameGateway
   async handleListRooms() {
     return {
       ok: true,
+      debug: DEBUG,
       rooms: await this.gameService.listRooms(),
     };
   }
@@ -84,6 +91,19 @@ export class GameGateway
       payload ?? {},
       authResult.account,
     );
+    if (result.room) {
+      client.join(result.room.id);
+      this.server.to(result.room.id).emit("room.updated", result.room);
+    }
+    return result;
+  }
+
+  @SubscribeMessage("debug.ai-room.create")
+  async handleCreateDebugAutoAiRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: CreateDebugAutoAiRoomPayload,
+  ) {
+    const result = await this.gameService.createDebugAutoAiRoom(payload ?? {});
     if (result.room) {
       client.join(result.room.id);
       this.server.to(result.room.id).emit("room.updated", result.room);
@@ -176,6 +196,25 @@ export class GameGateway
   @SubscribeMessage("debug.ai.add")
   async handleDebugAddAi(@MessageBody() payload: DebugAddAiPayload) {
     return this.gameService.addDebugAi(payload ?? {});
+  }
+
+  @SubscribeMessage("debug.ai.remove")
+  async handleDebugRemoveAi(@MessageBody() payload: DebugRemoveAiPayload) {
+    return this.gameService.removeDebugAi(payload ?? {});
+  }
+
+  @SubscribeMessage("debug.ai-room.delete")
+  async handleDebugDeleteAutoAiRoom(
+    @MessageBody() payload: DebugDeleteAutoAiRoomPayload,
+  ) {
+    return this.gameService.deleteDebugAutoAiRoom(payload ?? {});
+  }
+
+  @SubscribeMessage("room.duration.update")
+  async handleUpdateDiscussionDuration(
+    @MessageBody() payload: UpdateDiscussionDurationPayload,
+  ) {
+    return this.gameService.updateDiscussionDuration(payload ?? {});
   }
 
   private async getAccount(authToken: string | undefined): Promise<

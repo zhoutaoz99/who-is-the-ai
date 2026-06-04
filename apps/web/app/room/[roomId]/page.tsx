@@ -191,6 +191,28 @@ function IconDoorOpen(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function IconTrash(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 16H6L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  );
+}
+
 function IconSettings(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -294,36 +316,96 @@ export default function WaitingRoomPage() {
     reconnectRoom,
     startGame,
     addDebugAi,
+    removeDebugAi,
+    deleteDebugAutoAiRoom,
+    updateDiscussionDuration,
   } = useGameClient();
 
   const room = getRoom(roomId);
   const playerId = getPlayerId(roomId);
+  const isDebugAutoAiRoom = Boolean(room?.debugAutoAi);
   const personaOptions = room?.config.aiPersonas ?? [];
   const usedAiPersonaIds = new Set(
     room?.players.flatMap((player) =>
       player.aiPersonaId ? [player.aiPersonaId] : [],
     ) ?? [],
   );
+  const debugAiPlayers =
+    room?.players.filter((player) => player.revealedType === "ai") ?? [];
   const debugAiCount =
-    room?.players.filter((player) => player.revealedType === "ai").length ?? 0;
-  const canAddDebugAi = debugAiCount < (room?.config.aiPlayerCount ?? 0);
+    debugAiPlayers.length;
+  const canAddDebugAi =
+    isDebugAutoAiRoom || debugAiCount < (room?.config.aiPlayerCount ?? 0);
   const isOwner = Boolean(
     room && playerId && room.ownerPlayerId === playerId,
   );
-  const isJoined = Boolean(playerId);
+  const canControlRoom = Boolean(
+    room && (isOwner || (room.debug && isDebugAutoAiRoom)),
+  );
+  const canEditDiscussionDuration = Boolean(
+    room?.status === "waiting" && canControlRoom,
+  );
+  const canManageDebugAi = Boolean(
+    room?.debug && room.status === "waiting" && canControlRoom,
+  );
+  const isJoined = Boolean(playerId && !isDebugAutoAiRoom);
   const isDisconnected = Boolean(
-    playerId && room?.players.find((p) => p.id === playerId && !p.connected),
+    playerId &&
+      !isDebugAutoAiRoom &&
+      room?.players.find((p) => p.id === playerId && !p.connected),
   );
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
-  const availablePersonaOptions = personaOptions.filter(
-    (persona) => !usedAiPersonaIds.has(persona.id),
-  );
+  const availablePersonaOptions = isDebugAutoAiRoom
+    ? personaOptions
+    : personaOptions.filter((persona) => !usedAiPersonaIds.has(persona.id));
   const selectedDebugPersonaId =
     canAddDebugAi &&
     selectedPersonaId &&
-    !usedAiPersonaIds.has(selectedPersonaId)
+    (isDebugAutoAiRoom || !usedAiPersonaIds.has(selectedPersonaId))
       ? selectedPersonaId
       : (canAddDebugAi ? (availablePersonaOptions[0]?.id ?? "") : "");
+  const [discussionMinutesDraft, setDiscussionMinutesDraft] = useState(1);
+  const lastSyncedDiscussionMinutesRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!room) {
+      return;
+    }
+
+    const minutes = Math.max(
+      1,
+      Math.round(room.config.discussionDurationMs / 60_000),
+    );
+    lastSyncedDiscussionMinutesRef.current = minutes;
+    setDiscussionMinutesDraft(minutes);
+  }, [room?.id, room?.config.discussionDurationMs]);
+
+  useEffect(() => {
+    const targetRoomId = room?.id;
+    if (!targetRoomId || !canEditDiscussionDuration) {
+      return;
+    }
+
+    const minutes = Math.max(1, Math.floor(discussionMinutesDraft));
+    if (lastSyncedDiscussionMinutesRef.current === minutes) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void updateDiscussionDuration(targetRoomId, minutes).then((result) => {
+        if (result.ok) {
+          lastSyncedDiscussionMinutesRef.current = minutes;
+        }
+      });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    canEditDiscussionDuration,
+    discussionMinutesDraft,
+    room?.id,
+    updateDiscussionDuration,
+  ]);
 
   useEffect(() => {
     if (room?.status === "playing") {
@@ -337,7 +419,13 @@ export default function WaitingRoomPage() {
     }
   }, [setPlayerName, user]);
 
-  useRoomReconnect({ connected, roomId, getPlayerId, reconnectRoom });
+  useRoomReconnect({
+    connected,
+    disabled: !room || isDebugAutoAiRoom,
+    roomId,
+    getPlayerId,
+    reconnectRoom,
+  });
 
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -374,8 +462,10 @@ export default function WaitingRoomPage() {
     }
   }
 
-  async function handleLeaveRoom() {
-    if (isJoined) {
+  async function handleReturnToLobby() {
+    if (room?.debugAutoAi && room.status === "waiting") {
+      await deleteDebugAutoAiRoom(room.id);
+    } else if (isJoined && !room?.debugAutoAi) {
       await leaveRoom(roomId);
     }
     router.push("/");
@@ -398,13 +488,20 @@ export default function WaitingRoomPage() {
     await addDebugAi(room.id, selectedDebugPersonaId);
   }
 
+  async function handleRemoveDebugAi(aiPlayerId: string) {
+    if (!room) {
+      return;
+    }
+    await removeDebugAi(room.id, aiPlayerId);
+  }
+
   return (
     <main className="shell waiting-shell">
       <header className="lobby-header">
         <div className="lobby-brand">
           <button
             className="logo-back"
-            onClick={() => router.push("/")}
+            onClick={handleReturnToLobby}
             aria-label="返回大厅"
           >
             <svg
@@ -566,7 +663,9 @@ export default function WaitingRoomPage() {
                 />
                 <span>真人玩家</span>
                 <strong>
-                  {humanCount(room)}/{room.config.maxHumanPlayers}
+                  {room.debugAutoAi
+                    ? humanCount(room)
+                    : `${humanCount(room)}/${room.config.maxHumanPlayers}`}
                 </strong>
               </div>
               <div className="stat-card">
@@ -607,7 +706,7 @@ export default function WaitingRoomPage() {
               </div>
             )}
 
-            {!isJoined && !isDisconnected && (
+            {!isJoined && !isDisconnected && !isDebugAutoAiRoom && (
               <div className="waiting-actions-group">
                 <label className="field">
                   <span>昵称</span>
@@ -637,7 +736,7 @@ export default function WaitingRoomPage() {
               </div>
             )}
 
-            {isJoined && isOwner && (
+            {canControlRoom && (
               <div className="waiting-actions-group">
                 <button
                   className="primary-action start-game-btn"
@@ -653,15 +752,38 @@ export default function WaitingRoomPage() {
                 </button>
                 {!room.canStart && (
                   <p className="muted-text canstart-hint">
-                    等待更多玩家加入后才能开始
+                    {isDebugAutoAiRoom
+                      ? "需要至少 1 个主动破冰型 AI"
+                      : "等待更多玩家加入后才能开始"}
                   </p>
                 )}
-                {room.debug && personaOptions.length > 0 && (
+                {canEditDiscussionDuration && (
+                  <div className="debug-room-settings">
+                    <label className="field">
+                      <span>每轮发言时间（分钟）</span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={discussionMinutesDraft}
+                        disabled={pending}
+                        onChange={(event) =>
+                          setDiscussionMinutesDraft(
+                            Math.max(1, Number(event.target.value) || 1),
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
+                )}
+                {canManageDebugAi && personaOptions.length > 0 && (
                   <div className="debug-ai-controls">
                     <div className="debug-ai-header">
                       <span>调试 AI</span>
                       <strong>
-                        {debugAiCount}/{room.config.aiPlayerCount}
+                        {isDebugAutoAiRoom
+                          ? `${debugAiCount} 个`
+                          : `${debugAiCount}/${room.config.aiPlayerCount}`}
                       </strong>
                     </div>
                     <div className="debug-ai-row">
@@ -670,7 +792,7 @@ export default function WaitingRoomPage() {
                         value={selectedDebugPersonaId}
                         disabled={
                           pending ||
-                          !canAddDebugAi ||
+                          (!isDebugAutoAiRoom && !canAddDebugAi) ||
                           availablePersonaOptions.length === 0
                         }
                         onChange={(event) =>
@@ -685,7 +807,9 @@ export default function WaitingRoomPage() {
                             <option value="">人格已添加完</option>
                           )}
                         {personaOptions.map((persona) => {
-                          const used = usedAiPersonaIds.has(persona.id);
+                          const used =
+                            !isDebugAutoAiRoom &&
+                            usedAiPersonaIds.has(persona.id);
                           return (
                             <option
                               disabled={used}
@@ -701,7 +825,9 @@ export default function WaitingRoomPage() {
                       <button
                         className="secondary debug-ai-add-btn"
                         disabled={
-                          pending || !canAddDebugAi || !selectedDebugPersonaId
+                          pending ||
+                          (!isDebugAutoAiRoom && !canAddDebugAi) ||
+                          !selectedDebugPersonaId
                         }
                         onClick={handleAddDebugAi}
                       >
@@ -725,7 +851,7 @@ export default function WaitingRoomPage() {
             <button
               className="secondary leave-btn"
               disabled={pending}
-              onClick={handleLeaveRoom}
+              onClick={handleReturnToLobby}
             >
               <IconArrowLeft
                 width="16"
@@ -821,6 +947,17 @@ export default function WaitingRoomPage() {
                         )}
                       </div>
                     </div>
+                    {canManageDebugAi && isAi && (
+                      <button
+                        className="debug-ai-remove-btn"
+                        disabled={pending}
+                        onClick={() => handleRemoveDebugAi(player.id)}
+                        aria-label={`删除 ${player.name}`}
+                      >
+                        <IconTrash />
+                        删除
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -828,7 +965,9 @@ export default function WaitingRoomPage() {
               {Array.from({
                 length: Math.max(
                   0,
-                  room.config.maxHumanPlayers - humanCount(room),
+                  room.debugAutoAi
+                    ? 0
+                    : room.config.maxHumanPlayers - humanCount(room),
                 ),
               }).map((_, i) => (
                 <div

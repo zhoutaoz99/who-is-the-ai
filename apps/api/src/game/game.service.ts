@@ -28,10 +28,13 @@ import {
 import { GameRoomRepository } from "./game-room.repository";
 import {
   addChatMessage,
+  canStartDebugAutoAiRoom,
   chooseFallbackVoteTarget,
+  countAi,
   countHumans,
   createAiPlayer,
   createAiPlayers,
+  createDebugAutoAiPlayers,
   createHumanPlayer,
   createRoomId,
   futureIso,
@@ -48,8 +51,11 @@ import { toPublicMessage, toRoomSnapshot } from "./game.snapshot";
 import {
   ActionResult,
   CastVotePayload,
+  CreateDebugAutoAiRoomPayload,
   CreateRoomPayload,
   DebugAddAiPayload,
+  DebugDeleteAutoAiRoomPayload,
+  DebugRemoveAiPayload,
   GameAccount,
   JoinRoomPayload,
   LeaveRoomPayload,
@@ -61,6 +67,7 @@ import {
   SendChatPayload,
   StartGamePayload,
   StopGamePayload,
+  UpdateDiscussionDurationPayload,
   Winner,
 } from "./game.types";
 
@@ -132,6 +139,42 @@ export class GameService {
     };
   }
 
+  async createDebugAutoAiRoom(
+    payload: CreateDebugAutoAiRoomPayload,
+  ): Promise<ActionResult> {
+    if (!DEBUG) {
+      return this.fail("调试模式未开启");
+    }
+
+    const now = new Date().toISOString();
+    const aiPlayers = createDebugAutoAiPlayers(1);
+    const room: Room = {
+      id: createRoomId(),
+      status: "waiting",
+      ownerPlayerId: aiPlayers[0].id,
+      debugAutoAi: true,
+      players: aiPlayers,
+      discussionDurationMs: normalizeDiscussionDuration(payload),
+      currentRound: 0,
+      phase: "waiting",
+      phaseEndsAt: null,
+      winner: null,
+      messages: [],
+      votes: [],
+      pointAwards: [],
+      rewardSettledAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await this.roomRepository.save(room);
+    return {
+      ok: true,
+      room: toRoomSnapshot(room),
+      playerId: room.ownerPlayerId,
+    };
+  }
+
   async joinRoom(
     socketId: string,
     payload: JoinRoomPayload,
@@ -160,6 +203,11 @@ export class GameService {
 
       if (latest.status !== "waiting") {
         failure = "游戏已开始，暂时不能加入";
+        return false;
+      }
+
+      if (latest.debugAutoAi) {
+        failure = "全 AI 自动对局不能加入真人玩家";
         return false;
       }
 
@@ -238,7 +286,7 @@ export class GameService {
     if (shouldDelete) {
       this.clearTimers(room.id);
       await this.roomRepository.delete(room.id);
-      return { ok: true };
+      return { ok: true, deletedRoomId: room.id };
     }
 
     return {
@@ -387,17 +435,28 @@ export class GameService {
     const roomId = normalizeRoomId(payload.roomId);
     let failure = "房间不存在或操作冲突";
     const room = await this.applyWithLock(roomId, (latest) => {
+      const isDebugAutoAiRoom = DEBUG && latest.debugAutoAi === true;
       if (latest.status !== "waiting") {
         failure = "游戏已经开始";
         return false;
       }
 
-      if (payload.playerId !== latest.ownerPlayerId) {
+      if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
         failure = "只有房主可以开始游戏";
         return false;
       }
 
-      if (countHumans(latest) < 1) {
+      if (isDebugAutoAiRoom) {
+        if (countAi(latest) < 1) {
+          failure = "至少需要 1 名 AI 玩家";
+          return false;
+        }
+
+        if (!canStartDebugAutoAiRoom(latest)) {
+          failure = "全 AI 自动对局至少需要 1 个主动破冰型 AI";
+          return false;
+        }
+      } else if (countHumans(latest) < 1) {
         failure = "至少需要 1 名真人玩家";
         return false;
       }
@@ -417,23 +476,25 @@ export class GameService {
         player.eliminatedRound = undefined;
       }
 
-      const existingAiPlayers = latest.players.filter(
-        (player) => player.type === "ai",
-      );
-      const missingAiCount = Math.max(
-        0,
-        AI_PLAYER_COUNT - existingAiPlayers.length,
-      );
-      if (missingAiCount > 0) {
-        const existingAiPersonaIds = existingAiPlayers.flatMap((player) =>
-          player.aiPersonaId ? [player.aiPersonaId] : [],
+      if (!isDebugAutoAiRoom) {
+        const existingAiPlayers = latest.players.filter(
+          (player) => player.type === "ai",
         );
-        const aiPlayers = createAiPlayers(
-          latest.players.length + 1,
-          missingAiCount,
-          existingAiPersonaIds,
+        const missingAiCount = Math.max(
+          0,
+          AI_PLAYER_COUNT - existingAiPlayers.length,
         );
-        latest.players.push(...aiPlayers);
+        if (missingAiCount > 0) {
+          const existingAiPersonaIds = existingAiPlayers.flatMap((player) =>
+            player.aiPersonaId ? [player.aiPersonaId] : [],
+          );
+          const aiPlayers = createAiPlayers(
+            latest.players.length + 1,
+            missingAiCount,
+            existingAiPersonaIds,
+          );
+          latest.players.push(...aiPlayers);
+        }
       }
 
       latest.players.sort(() => Math.random() - 0.5);
@@ -532,18 +593,21 @@ export class GameService {
     const roomId = normalizeRoomId(payload.roomId);
     let failure = "房间不存在或操作冲突";
     const room = await this.applyWithLock(roomId, (latest) => {
+      const isDebugAutoAiRoom = latest.debugAutoAi === true;
       if (latest.status !== "playing") {
         failure = "游戏未在进行中";
         return false;
       }
 
-      const player = latest.players.find(
-        (candidate) =>
-          candidate.id === payload.playerId && candidate.type === "human",
-      );
-      if (!player) {
-        failure = "你不在该房间中";
-        return false;
+      if (!isDebugAutoAiRoom) {
+        const player = latest.players.find(
+          (candidate) =>
+            candidate.id === payload.playerId && candidate.type === "human",
+        );
+        if (!player) {
+          failure = "你不在该房间中";
+          return false;
+        }
       }
 
       latest.status = "finished";
@@ -578,12 +642,13 @@ export class GameService {
     let failure = "房间不存在或操作冲突";
 
     const room = await this.applyWithLock(roomId, (latest) => {
+      const isDebugAutoAiRoom = latest.debugAutoAi === true;
       if (latest.status !== "waiting") {
         failure = "只能在等待房间添加 AI";
         return false;
       }
 
-      if (payload.playerId !== latest.ownerPlayerId) {
+      if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
         failure = "只有房主可以添加 AI";
         return false;
       }
@@ -591,7 +656,7 @@ export class GameService {
       const existingAiCount = latest.players.filter(
         (player) => player.type === "ai",
       ).length;
-      if (existingAiCount >= AI_PLAYER_COUNT) {
+      if (!isDebugAutoAiRoom && existingAiCount >= AI_PLAYER_COUNT) {
         failure = "AI 名额已满";
         return false;
       }
@@ -603,26 +668,153 @@ export class GameService {
       );
       const selectedPersona = payload.personaId
         ? getAiPersonaById(payload.personaId)
-        : (AI_PERSONAS.find((persona) => !usedPersonaIds.has(persona.id)) ??
-            AI_PERSONAS[0]);
+        : isDebugAutoAiRoom
+          ? randomItem(AI_PERSONAS)
+          : (AI_PERSONAS.find((persona) => !usedPersonaIds.has(persona.id)) ??
+              AI_PERSONAS[0]);
       if (!selectedPersona) {
         failure = "AI 人格不存在";
         return false;
       }
-      if (usedPersonaIds.has(selectedPersona.id)) {
+      if (!isDebugAutoAiRoom && usedPersonaIds.has(selectedPersona.id)) {
         failure = "该 AI 人格已在房间中";
         return false;
       }
 
       const nextSeatNo =
         Math.max(0, ...latest.players.map((player) => player.seatNo)) + 1;
-      latest.players.push(
-        createAiPlayer(
-          nextSeatNo,
-          selectedPersona.id,
-          latest.players.map((player) => player.name),
-        ),
+      const player = createAiPlayer(
+        nextSeatNo,
+        selectedPersona.id,
+        latest.players.map((candidate) => candidate.name),
       );
+      latest.players.push(player);
+      if (
+        isDebugAutoAiRoom &&
+        !latest.players.some((candidate) => candidate.id === latest.ownerPlayerId)
+      ) {
+        latest.ownerPlayerId = player.id;
+      }
+      touch(latest);
+      return true;
+    });
+
+    if (!room) {
+      return this.fail(failure);
+    }
+
+    this.broadcastRoom(room);
+    return {
+      ok: true,
+      room: toRoomSnapshot(room),
+    };
+  }
+
+  async removeDebugAi(payload: DebugRemoveAiPayload): Promise<ActionResult> {
+    if (!DEBUG) {
+      return this.fail("调试模式未开启");
+    }
+
+    const roomId = normalizeRoomId(payload.roomId);
+    let failure = "房间不存在或操作冲突";
+
+    const room = await this.applyWithLock(roomId, (latest) => {
+      const isDebugAutoAiRoom = latest.debugAutoAi === true;
+      if (latest.status !== "waiting") {
+        failure = "只能在等待房间删除 AI";
+        return false;
+      }
+
+      if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
+        failure = "只有房主可以删除 AI";
+        return false;
+      }
+
+      const target = latest.players.find(
+        (player) => player.id === payload.aiPlayerId && player.type === "ai",
+      );
+      if (!target) {
+        failure = "AI 玩家不存在";
+        return false;
+      }
+
+      latest.players = latest.players.filter((player) => player.id !== target.id);
+      if (latest.ownerPlayerId === target.id) {
+        latest.ownerPlayerId = latest.players[0]?.id ?? target.id;
+      }
+      latest.players
+        .slice()
+        .sort((a, b) => a.seatNo - b.seatNo)
+        .forEach((player, index) => {
+          player.seatNo = index + 1;
+        });
+      touch(latest);
+      return true;
+    });
+
+    if (!room) {
+      return this.fail(failure);
+    }
+
+    this.broadcastRoom(room);
+    return {
+      ok: true,
+      room: toRoomSnapshot(room),
+    };
+  }
+
+  async deleteDebugAutoAiRoom(
+    payload: DebugDeleteAutoAiRoomPayload,
+  ): Promise<ActionResult> {
+    if (!DEBUG) {
+      return this.fail("调试模式未开启");
+    }
+
+    const room = await this.getRoom(payload.roomId);
+    if (!room) {
+      return this.fail("房间不存在");
+    }
+
+    if (!room.debugAutoAi) {
+      return this.fail("只能删除全 AI 自动对局");
+    }
+
+    if (room.status !== "waiting") {
+      return this.fail("只能删除未开局的全 AI 自动对局");
+    }
+
+    this.clearTimers(room.id);
+    await this.roomRepository.delete(room.id);
+    return {
+      ok: true,
+      deletedRoomId: room.id,
+    };
+  }
+
+  async updateDiscussionDuration(
+    payload: UpdateDiscussionDurationPayload,
+  ): Promise<ActionResult> {
+    const roomId = normalizeRoomId(payload.roomId);
+    let failure = "房间不存在或操作冲突";
+
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (latest.status !== "waiting") {
+        failure = "只能在开局前修改每轮发言时间";
+        return false;
+      }
+
+      const isDebugAutoAiRoom = latest.debugAutoAi === true;
+      if (isDebugAutoAiRoom && !DEBUG) {
+        failure = "调试模式未开启";
+        return false;
+      }
+
+      if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
+        failure = "只有房主可以修改每轮发言时间";
+        return false;
+      }
+
+      latest.discussionDurationMs = normalizeDiscussionDuration(payload);
       touch(latest);
       return true;
     });

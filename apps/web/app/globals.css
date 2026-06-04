@@ -1328,6 +1328,17 @@ p {
   color: #fcd34d;
 }
 
+.observer-note {
+  background: rgba(15, 118, 110, 0.18);
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  border-radius: 8px;
+  color: #99f6e4;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 12px;
+  text-align: center;
+}
+
 .phase-hint {
   border: 1px solid rgba(148, 163, 184, 0.25);
   border-radius: 8px;
@@ -1505,10 +1516,24 @@ p {
   color: #7c3aed;
 }
 
+.debug-ai-icon {
+  background: #fffbeb;
+  color: #b54708;
+}
+
 .lobby-divider {
   background: var(--line);
   height: 1px;
   margin: 4px 0;
+}
+
+.debug-auto-ai-entry {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
 }
 
 /* Refresh button */
@@ -2048,6 +2073,21 @@ p {
   padding: 10px;
 }
 
+.debug-room-settings {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+.debug-room-settings button {
+  align-self: end;
+  min-height: 40px;
+}
+
 .debug-ai-header {
   align-items: center;
   color: var(--muted);
@@ -2082,6 +2122,23 @@ p {
 .debug-ai-add-btn {
   min-height: 40px;
   padding: 0 14px;
+}
+
+.debug-ai-remove-btn {
+  align-items: center;
+  background: #fee2e2;
+  color: #b42318;
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: 12px;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.debug-ai-remove-btn:hover:not(:disabled) {
+  background: #fecaca;
+  color: #991b1b;
 }
 
 /* Waiting hint box */
@@ -2304,6 +2361,14 @@ p {
 
   .debug-ai-row {
     grid-template-columns: 1fr;
+  }
+
+  .debug-room-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .debug-ai-remove-btn {
+    justify-content: center;
   }
 
   .player-avatar {

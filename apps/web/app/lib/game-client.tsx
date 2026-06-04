@@ -21,26 +21,32 @@ import {
 } from "./game-types";
 
 type GameClientContextValue = {
+  debug: boolean;
   connected: boolean;
   pending: boolean;
   error: string;
   rooms: RoomSnapshot[];
   playerName: string;
   roomCode: string;
-  discussionMinutes: number;
   setPlayerName: (value: string) => void;
   setRoomCode: (value: string) => void;
-  setDiscussionMinutes: (value: number) => void;
   setError: (value: string) => void;
   getRoom: (roomId: string) => RoomSnapshot | null;
   getPlayerId: (roomId: string) => string | null;
   refreshRooms: (silent?: boolean) => Promise<{ ok: boolean; error?: string }>;
   createRoom: () => Promise<ActionResult>;
+  createDebugAutoAiRoom: () => Promise<ActionResult>;
   joinRoom: (roomId?: string) => Promise<ActionResult>;
   leaveRoom: (roomId: string) => Promise<ActionResult>;
   reconnectRoom: (roomId: string) => Promise<ActionResult>;
   startGame: (roomId: string) => Promise<ActionResult>;
   addDebugAi: (roomId: string, personaId?: string) => Promise<ActionResult>;
+  removeDebugAi: (roomId: string, aiPlayerId: string) => Promise<ActionResult>;
+  deleteDebugAutoAiRoom: (roomId: string) => Promise<ActionResult>;
+  updateDiscussionDuration: (
+    roomId: string,
+    discussionDurationMinutes: number,
+  ) => Promise<ActionResult>;
   sendChat: (roomId: string, content: string) => Promise<ActionResult>;
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
   stopGame: (roomId: string) => Promise<ActionResult>;
@@ -60,6 +66,7 @@ const GameClientContext = createContext<GameClientContextValue | null>(null);
 export function GameClientProvider({ children }: { children: ReactNode }) {
   const { token, user } = useAuth();
   const socketRef = useRef<Socket | null>(null);
+  const [debug, setDebug] = useState(false);
   const [connected, setConnected] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -67,7 +74,6 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
   const [playerIds, setPlayerIds] = useState<Record<string, string>>({});
   const [playerName, setPlayerName] = useState("");
   const [roomCode, setRoomCode] = useState("");
-  const [discussionMinutes, setDiscussionMinutes] = useState(5);
 
   const upsertRoom = useCallback((snapshot: RoomSnapshot) => {
     setRooms((current) => {
@@ -129,6 +135,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
     socket.on("server.ready", (payload: ServerReadyPayload) => {
+      setDebug(Boolean(payload.debug));
       setRooms(payload.rooms);
     });
 
@@ -208,6 +215,12 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
               setRoomCode(result.room.id);
             }
 
+            if (result.deletedRoomId) {
+              setRooms((current) =>
+                current.filter((room) => room.id !== result.deletedRoomId),
+              );
+            }
+
             if (result.room && result.playerId) {
               rememberPlayer(result.room.id, result.playerId);
             }
@@ -223,16 +236,15 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     const normalizedName = (user?.displayName ?? playerName).trim();
 
     return {
+      debug,
       connected,
       pending,
       error,
       rooms,
       playerName,
       roomCode,
-      discussionMinutes,
       setPlayerName,
       setRoomCode,
-      setDiscussionMinutes,
       setError,
       getRoom: (roomId: string) =>
         rooms.find((room) => room.id === roomId.toUpperCase()) ?? null,
@@ -258,7 +270,12 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
               {},
               (
                 err: Error | null,
-                result?: { ok: boolean; error?: string; rooms?: RoomSnapshot[] },
+                result?: {
+                  ok: boolean;
+                  debug?: boolean;
+                  error?: string;
+                  rooms?: RoomSnapshot[];
+                },
               ) => {
                 if (!silent) setPending(false);
                 if (err) {
@@ -281,6 +298,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
                   return;
                 }
 
+                setDebug(Boolean(result.debug));
                 setRooms((current) => {
                   const next = result.rooms ?? [];
                   if (
@@ -309,9 +327,10 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
         return emitAction("room.create", {
           authToken: token || undefined,
           playerName: normalizedName,
-          discussionDurationMinutes: Math.max(1, Math.floor(discussionMinutes)),
         });
       },
+      createDebugAutoAiRoom: async () =>
+        emitAction("debug.ai-room.create", {}),
       joinRoom: async (roomId?: string) => {
         const targetRoomId = (roomId ?? roomCode).trim().toUpperCase();
         if (!normalizedName) {
@@ -363,6 +382,26 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           playerId: playerIds[roomId.toUpperCase()],
           personaId,
         }),
+      removeDebugAi: (roomId: string, aiPlayerId: string) =>
+        emitAction("debug.ai.remove", {
+          roomId,
+          playerId: playerIds[roomId.toUpperCase()],
+          aiPlayerId,
+        }),
+      deleteDebugAutoAiRoom: (roomId: string) =>
+        emitAction("debug.ai-room.delete", {
+          roomId,
+          playerId: playerIds[roomId.toUpperCase()],
+        }),
+      updateDiscussionDuration: (
+        roomId: string,
+        discussionDurationMinutes: number,
+      ) =>
+        emitAction("room.duration.update", {
+          roomId,
+          playerId: playerIds[roomId.toUpperCase()],
+          discussionDurationMinutes,
+        }),
       sendChat: (roomId: string, content: string) =>
         emitAction("chat.send", {
           roomId,
@@ -400,7 +439,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     };
   }, [
     connected,
-    discussionMinutes,
+    debug,
     emitAction,
     error,
     forgetPlayer,

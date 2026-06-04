@@ -74,6 +74,7 @@ export type RoomSnapshot = {
   };
   canStart: boolean;
   debug?: boolean;
+  debugAutoAi?: boolean;
   updatedAt: string;
 };
 
@@ -82,9 +83,11 @@ export type ActionResult = {
   error?: string;
   room?: RoomSnapshot;
   playerId?: string;
+  deletedRoomId?: string;
 };
 
 export type ServerReadyPayload = {
+  debug?: boolean;
   socketId: string;
   rooms: RoomSnapshot[];
 };

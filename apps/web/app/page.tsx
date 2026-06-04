@@ -249,19 +249,19 @@ export default function Home() {
   const router = useRouter();
   const { user, pending: authPending, logout } = useAuth();
   const {
+    debug,
     connected,
     pending,
     error,
     rooms,
     playerName,
     roomCode,
-    discussionMinutes,
     setPlayerName,
     setRoomCode,
-    setDiscussionMinutes,
     setError,
     refreshRooms,
     createRoom,
+    createDebugAutoAiRoom,
     joinRoom,
   } = useGameClient();
   const lobbyDisabled = pending || authPending || !user;
@@ -291,11 +291,13 @@ export default function Home() {
     };
   }, [connected]);
 
-  const sortedRooms = [...rooms].sort((a, b) => {
+  const sortedRooms = rooms
+    .filter((room) => !(room.debugAutoAi && room.status === "waiting"))
+    .sort((a, b) => {
     if (a.status === "finished" && b.status !== "finished") return 1;
     if (a.status !== "finished" && b.status === "finished") return -1;
     return 0;
-  });
+    });
 
   const totalPages = Math.max(1, Math.ceil(sortedRooms.length / ROOMS_PER_PAGE));
   const paginatedRooms = sortedRooms.slice(
@@ -340,6 +342,13 @@ export default function Home() {
     }
 
     const result = await createRoom();
+    if (result.ok && result.room) {
+      router.push(`/room/${result.room.id}`);
+    }
+  }
+
+  async function handleCreateDebugAutoAiRoom() {
+    const result = await createDebugAutoAiRoom();
     if (result.ok && result.room) {
       router.push(`/room/${result.room.id}`);
     }
@@ -479,22 +488,33 @@ export default function Home() {
             </button>
           )}
 
-          <label className="field">
-            <span>每轮发言时间（分钟）</span>
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={discussionMinutes}
-              onChange={(event) =>
-                setDiscussionMinutes(Math.max(1, Number(event.target.value) || 1))
-              }
-            />
-          </label>
-
           <button disabled={lobbyDisabled} onClick={handleCreateRoom}>
             创建房间
           </button>
+
+          {debug && (
+            <div className="debug-auto-ai-entry">
+              <div className="lobby-card-header">
+                <div className="lobby-icon debug-ai-icon" aria-hidden="true">
+                  <IconBot width="20" height="20" />
+                </div>
+                <div>
+                  <p className="eyebrow">Debug Auto AI</p>
+                  <h2>全 AI 自动对局</h2>
+                </div>
+              </div>
+              <p className="muted-text">
+                默认 3 个 AI，包含 1 个主动破冰型。
+              </p>
+              <button
+                className="secondary"
+                disabled={pending || authPending}
+                onClick={handleCreateDebugAutoAiRoom}
+              >
+                创建全 AI 对局
+              </button>
+            </div>
+          )}
 
           <div className="lobby-divider" />
 
@@ -568,6 +588,7 @@ export default function Home() {
                   const humans = humanCount(room);
                   const maxHumans = room.config.maxHumanPlayers;
                   const aiCount = room.config.aiPlayerCount;
+                  const isDebugAutoAiRoom = Boolean(room.debugAutoAi);
                   const fillPercent =
                     maxHumans > 0 ? (humans / maxHumans) * 100 : 0;
                   return (
@@ -575,10 +596,17 @@ export default function Home() {
                       className="room-row"
                       key={room.id}
                       data-status={room.status}
-                      disabled={room.status === "playing" || lobbyDisabled}
+                      disabled={
+                        (room.status === "playing" && !isDebugAutoAiRoom) ||
+                        (!isDebugAutoAiRoom && lobbyDisabled)
+                      }
                       onClick={() => {
                         if (room.status === "finished") {
                           router.push(`/game/${room.id}`);
+                        } else if (room.status === "playing" && isDebugAutoAiRoom) {
+                          router.push(`/game/${room.id}`);
+                        } else if (isDebugAutoAiRoom) {
+                          router.push(`/room/${room.id}`);
                         } else {
                           handleJoinRoom(room.id);
                         }
@@ -617,7 +645,12 @@ export default function Home() {
                           </div>
                         </div>
                         {room.status === "waiting" && (
-                          <span className="room-join-hint">加入 →</span>
+                          <span className="room-join-hint">
+                            {isDebugAutoAiRoom ? "管理 →" : "加入 →"}
+                          </span>
+                        )}
+                        {room.status === "playing" && isDebugAutoAiRoom && (
+                          <span className="room-join-hint">观察 →</span>
                         )}
                         {room.status === "finished" && (
                           <div className="replay-room-actions">
