@@ -175,7 +175,7 @@ debug.ai-room.create:
 | `slow_observer` | 慢热观察型 | 谨慎，只接自己看得清的点 |
 | `casual_questioner` | 随口追问型 | 轻问题、口语化接话 |
 | `active_icebreaker` | 主动破冰型 | 冷场时先抛轻话题 |
-| `active_topic_starter` | 主动话题挑起型 | 主动提出一个具体讨论角度，让房间围绕单个话题继续聊 |
+| `active_topic_starter` | 主动挑起话题型 | 冷场时主动提出具体生活或兴趣话题，例如爱好、电影、游戏、运动、吃饭或周末安排 |
 | `defensive_blunt` | 直白防守型 | 被质疑时短防守、语气直 |
 
 ---
