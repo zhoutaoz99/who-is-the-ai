@@ -14,8 +14,8 @@ async function bootstrap() {
   });
 
   const port = Number(process.env.PORT ?? 3001);
-  await app.listen(port);
-  console.log(`Who's the AI API listening on http://localhost:${port}`);
+  await app.listen(port, "0.0.0.0");
+  console.log(`Who's the AI API listening on http://0.0.0.0:${port}`);
 }
 
 void bootstrap();
