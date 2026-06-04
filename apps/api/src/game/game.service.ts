@@ -2,10 +2,11 @@ import { Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 import { AiService } from "../ai/ai.service";
-import { getAiPersonaById } from "../ai/ai.personas";
+import { AI_PERSONAS, getAiPersonaById } from "../ai/ai.personas";
 import { GameContext, RoundVoteSummary, VoteRecord } from "../ai/ai.types";
 import { AuthService } from "../auth/auth.service";
 import {
+  AI_PLAYER_COUNT,
   AI_SPEECH_INITIAL_CHECK_MS,
   AI_SPEECH_NEXT_CHECK_MAX_MS,
   AI_SPEECH_NEXT_CHECK_MIN_MS,
@@ -29,6 +30,7 @@ import {
   addChatMessage,
   chooseFallbackVoteTarget,
   countHumans,
+  createAiPlayer,
   createAiPlayers,
   createHumanPlayer,
   createRoomId,
@@ -47,6 +49,7 @@ import {
   ActionResult,
   CastVotePayload,
   CreateRoomPayload,
+  DebugAddAiPayload,
   GameAccount,
   JoinRoomPayload,
   LeaveRoomPayload,
@@ -414,8 +417,24 @@ export class GameService {
         player.eliminatedRound = undefined;
       }
 
-      const aiPlayers = createAiPlayers(latest.players.length + 1);
-      latest.players.push(...aiPlayers);
+      const existingAiPlayers = latest.players.filter(
+        (player) => player.type === "ai",
+      );
+      const missingAiCount = Math.max(
+        0,
+        AI_PLAYER_COUNT - existingAiPlayers.length,
+      );
+      if (missingAiCount > 0) {
+        const existingAiPersonaIds = existingAiPlayers.flatMap((player) =>
+          player.aiPersonaId ? [player.aiPersonaId] : [],
+        );
+        const aiPlayers = createAiPlayers(
+          latest.players.length + 1,
+          missingAiCount,
+          existingAiPersonaIds,
+        );
+        latest.players.push(...aiPlayers);
+      }
 
       latest.players.sort(() => Math.random() - 0.5);
       latest.players.forEach((player, index) => {
@@ -547,6 +566,75 @@ export class GameService {
     return {
       ok: true,
       room: snapshot,
+    };
+  }
+
+  async addDebugAi(payload: DebugAddAiPayload): Promise<ActionResult> {
+    if (!DEBUG) {
+      return this.fail("调试模式未开启");
+    }
+
+    const roomId = normalizeRoomId(payload.roomId);
+    let failure = "房间不存在或操作冲突";
+
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (latest.status !== "waiting") {
+        failure = "只能在等待房间添加 AI";
+        return false;
+      }
+
+      if (payload.playerId !== latest.ownerPlayerId) {
+        failure = "只有房主可以添加 AI";
+        return false;
+      }
+
+      const existingAiCount = latest.players.filter(
+        (player) => player.type === "ai",
+      ).length;
+      if (existingAiCount >= AI_PLAYER_COUNT) {
+        failure = "AI 名额已满";
+        return false;
+      }
+
+      const usedPersonaIds = new Set(
+        latest.players.flatMap((player) =>
+          player.aiPersonaId ? [player.aiPersonaId] : [],
+        ),
+      );
+      const selectedPersona = payload.personaId
+        ? getAiPersonaById(payload.personaId)
+        : (AI_PERSONAS.find((persona) => !usedPersonaIds.has(persona.id)) ??
+            AI_PERSONAS[0]);
+      if (!selectedPersona) {
+        failure = "AI 人格不存在";
+        return false;
+      }
+      if (usedPersonaIds.has(selectedPersona.id)) {
+        failure = "该 AI 人格已在房间中";
+        return false;
+      }
+
+      const nextSeatNo =
+        Math.max(0, ...latest.players.map((player) => player.seatNo)) + 1;
+      latest.players.push(
+        createAiPlayer(
+          nextSeatNo,
+          selectedPersona.id,
+          latest.players.map((player) => player.name),
+        ),
+      );
+      touch(latest);
+      return true;
+    });
+
+    if (!room) {
+      return this.fail(failure);
+    }
+
+    this.broadcastRoom(room);
+    return {
+      ok: true,
+      room: toRoomSnapshot(room),
     };
   }
 

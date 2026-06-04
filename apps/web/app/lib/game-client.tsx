@@ -40,6 +40,7 @@ type GameClientContextValue = {
   leaveRoom: (roomId: string) => Promise<ActionResult>;
   reconnectRoom: (roomId: string) => Promise<ActionResult>;
   startGame: (roomId: string) => Promise<ActionResult>;
+  addDebugAi: (roomId: string, personaId?: string) => Promise<ActionResult>;
   sendChat: (roomId: string, content: string) => Promise<ActionResult>;
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
   stopGame: (roomId: string) => Promise<ActionResult>;
@@ -355,6 +356,12 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
         emitAction("game.start", {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
+        }),
+      addDebugAi: (roomId: string, personaId?: string) =>
+        emitAction("debug.ai.add", {
+          roomId,
+          playerId: playerIds[roomId.toUpperCase()],
+          personaId,
         }),
       sendChat: (roomId: string, content: string) =>
         emitAction("chat.send", {

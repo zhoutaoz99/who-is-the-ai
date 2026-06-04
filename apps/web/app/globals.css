@@ -2039,6 +2039,51 @@ p {
   text-align: center;
 }
 
+.debug-ai-controls {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.debug-ai-header {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  font-weight: 800;
+  justify-content: space-between;
+}
+
+.debug-ai-header strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.debug-ai-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.debug-ai-select {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  min-height: 40px;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.debug-ai-add-btn {
+  min-height: 40px;
+  padding: 0 14px;
+}
+
 /* Waiting hint box */
 .waiting-hint-box {
   align-items: center;
@@ -2114,6 +2159,15 @@ p {
   background: #d1fae5;
 }
 
+.waiting-player-row.is-ai {
+  background: #fffbeb;
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.waiting-player-row.is-ai:hover {
+  background: #fef3c7;
+}
+
 .waiting-player-row.is-offline {
   opacity: 0.65;
 }
@@ -2182,6 +2236,15 @@ p {
   padding: 3px 8px;
 }
 
+.waiting-persona-tag {
+  background: #f1f5f9;
+  border-radius: 4px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+}
+
 .player-row-status {
   align-items: center;
   display: flex;
@@ -2237,6 +2300,10 @@ p {
   .waiting-player-row {
     gap: 10px;
     padding: 10px;
+  }
+
+  .debug-ai-row {
+    grid-template-columns: 1fr;
   }
 
   .player-avatar {

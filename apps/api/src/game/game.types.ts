@@ -101,6 +101,10 @@ export interface RoomSnapshot {
   config: {
     maxHumanPlayers: number;
     aiPlayerCount: number;
+    aiPersonas?: Array<{
+      id: string;
+      name: string;
+    }>;
     maxRounds: number;
     discussionDurationMs: number;
     voteDurationMs: number;
@@ -159,6 +163,12 @@ export interface ReconnectPayload {
 export interface StopGamePayload {
   roomId?: string;
   playerId?: string;
+}
+
+export interface DebugAddAiPayload {
+  roomId?: string;
+  playerId?: string;
+  personaId?: string;
 }
 
 export interface ActionResult {

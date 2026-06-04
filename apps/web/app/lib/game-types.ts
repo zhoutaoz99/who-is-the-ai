@@ -44,6 +44,11 @@ export type PointAward = {
   points: number;
 };
 
+export type AiPersonaOption = {
+  id: string;
+  name: string;
+};
+
 export type RoomSnapshot = {
   id: string;
   status: RoomStatus;
@@ -60,6 +65,7 @@ export type RoomSnapshot = {
   config: {
     maxHumanPlayers: number;
     aiPlayerCount: number;
+    aiPersonas?: AiPersonaOption[];
     maxRounds: number;
     discussionDurationMs: number;
     voteDurationMs: number;

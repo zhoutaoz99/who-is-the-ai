@@ -6,6 +6,10 @@ export function humanCount(room: RoomSnapshot) {
   }
 
   if (room.status === "waiting") {
+    if (room.players.some((player) => player.revealedType === "ai")) {
+      return room.players.filter((player) => player.revealedType !== "ai")
+        .length;
+    }
     return room.players.length;
   }
 

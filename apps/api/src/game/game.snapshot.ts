@@ -7,7 +7,7 @@ import {
   SPEAK_COOLDOWN_MS,
   VOTE_DURATION_MS,
 } from "./game.config";
-import { getAiPersonaById } from "../ai/ai.personas";
+import { AI_PERSONAS, getAiPersonaById } from "../ai/ai.personas";
 import { countHumans } from "./game.rules";
 import {
   ChatMessage,
@@ -18,7 +18,8 @@ import {
 
 export function toRoomSnapshot(room: Room): RoomSnapshot {
   const revealTypes = room.status === "finished";
-  const hideAi = room.status === "waiting";
+  const showDebugWaitingAi = DEBUG && room.status === "waiting";
+  const hideAi = room.status === "waiting" && !showDebugWaitingAi;
 
   return {
     id: room.id,
@@ -29,7 +30,8 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
       .sort((a, b) => a.seatNo - b.seatNo)
       .filter((player) => !hideAi || player.type !== "ai")
       .map((player) => {
-        const persona = revealTypes
+        const exposeDebugAi = showDebugWaitingAi && player.type === "ai";
+        const persona = revealTypes || exposeDebugAi
           ? getAiPersonaById(player.aiPersonaId)
           : null;
         return {
@@ -39,7 +41,11 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
           seatNo: player.seatNo,
           connected: player.connected,
           eliminatedRound: player.eliminatedRound,
-          revealedType: revealTypes ? player.type : undefined,
+          revealedType: revealTypes
+            ? player.type
+            : exposeDebugAi
+              ? player.type
+              : undefined,
           aiPersonaId: persona?.id,
           aiPersonaName: persona?.name,
         };
@@ -56,6 +62,12 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
     config: {
       maxHumanPlayers: MAX_HUMAN_PLAYERS,
       aiPlayerCount: AI_PLAYER_COUNT,
+      aiPersonas: DEBUG
+        ? AI_PERSONAS.map((persona) => ({
+            id: persona.id,
+            name: persona.name,
+          }))
+        : undefined,
       maxRounds: MAX_ROUNDS,
       discussionDurationMs: room.discussionDurationMs,
       voteDurationMs: VOTE_DURATION_MS,

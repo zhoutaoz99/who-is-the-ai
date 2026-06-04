@@ -293,10 +293,20 @@ export default function WaitingRoomPage() {
     leaveRoom,
     reconnectRoom,
     startGame,
+    addDebugAi,
   } = useGameClient();
 
   const room = getRoom(roomId);
   const playerId = getPlayerId(roomId);
+  const personaOptions = room?.config.aiPersonas ?? [];
+  const usedAiPersonaIds = new Set(
+    room?.players.flatMap((player) =>
+      player.aiPersonaId ? [player.aiPersonaId] : [],
+    ) ?? [],
+  );
+  const debugAiCount =
+    room?.players.filter((player) => player.revealedType === "ai").length ?? 0;
+  const canAddDebugAi = debugAiCount < (room?.config.aiPlayerCount ?? 0);
   const isOwner = Boolean(
     room && playerId && room.ownerPlayerId === playerId,
   );
@@ -304,6 +314,16 @@ export default function WaitingRoomPage() {
   const isDisconnected = Boolean(
     playerId && room?.players.find((p) => p.id === playerId && !p.connected),
   );
+  const [selectedPersonaId, setSelectedPersonaId] = useState("");
+  const availablePersonaOptions = personaOptions.filter(
+    (persona) => !usedAiPersonaIds.has(persona.id),
+  );
+  const selectedDebugPersonaId =
+    canAddDebugAi &&
+    selectedPersonaId &&
+    !usedAiPersonaIds.has(selectedPersonaId)
+      ? selectedPersonaId
+      : (canAddDebugAi ? (availablePersonaOptions[0]?.id ?? "") : "");
 
   useEffect(() => {
     if (room?.status === "playing") {
@@ -369,6 +389,13 @@ export default function WaitingRoomPage() {
     if (result.ok && result.room) {
       router.replace(`/game/${result.room.id}`);
     }
+  }
+
+  async function handleAddDebugAi() {
+    if (!room || !selectedDebugPersonaId) {
+      return;
+    }
+    await addDebugAi(room.id, selectedDebugPersonaId);
   }
 
   return (
@@ -629,6 +656,60 @@ export default function WaitingRoomPage() {
                     等待更多玩家加入后才能开始
                   </p>
                 )}
+                {room.debug && personaOptions.length > 0 && (
+                  <div className="debug-ai-controls">
+                    <div className="debug-ai-header">
+                      <span>调试 AI</span>
+                      <strong>
+                        {debugAiCount}/{room.config.aiPlayerCount}
+                      </strong>
+                    </div>
+                    <div className="debug-ai-row">
+                      <select
+                        className="debug-ai-select"
+                        value={selectedDebugPersonaId}
+                        disabled={
+                          pending ||
+                          !canAddDebugAi ||
+                          availablePersonaOptions.length === 0
+                        }
+                        onChange={(event) =>
+                          setSelectedPersonaId(event.target.value)
+                        }
+                      >
+                        {!canAddDebugAi && (
+                          <option value="">AI 名额已满</option>
+                        )}
+                        {canAddDebugAi &&
+                          availablePersonaOptions.length === 0 && (
+                            <option value="">人格已添加完</option>
+                          )}
+                        {personaOptions.map((persona) => {
+                          const used = usedAiPersonaIds.has(persona.id);
+                          return (
+                            <option
+                              disabled={used}
+                              key={persona.id}
+                              value={persona.id}
+                            >
+                              {persona.name}
+                              {used ? "（已添加）" : ""}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <button
+                        className="secondary debug-ai-add-btn"
+                        disabled={
+                          pending || !canAddDebugAi || !selectedDebugPersonaId
+                        }
+                        onClick={handleAddDebugAi}
+                      >
+                        添加 AI
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -675,6 +756,7 @@ export default function WaitingRoomPage() {
               {room.players.map((player, index) => {
                 const isSelf = player.id === playerId;
                 const isRoomOwner = player.id === room.ownerPlayerId;
+                const isAi = player.revealedType === "ai";
                 const seatBgColors = [
                   "#0f766e",
                   "#2563eb",
@@ -690,7 +772,7 @@ export default function WaitingRoomPage() {
 
                 return (
                   <div
-                    className={`player-row waiting-player-row ${isSelf ? "is-self" : ""} ${!player.connected ? "is-offline" : ""}`}
+                    className={`player-row waiting-player-row ${isSelf ? "is-self" : ""} ${isAi ? "is-ai" : ""} ${!player.connected ? "is-offline" : ""}`}
                     key={player.id}
                     style={{ animationDelay: `${index * 0.05}s` }}
                   >
@@ -704,6 +786,12 @@ export default function WaitingRoomPage() {
                       <div className="player-row-name">
                         <strong>{player.name}</strong>
                         {isSelf && <span className="self">你</span>}
+                        {isAi && <span className="identity-tag ai">AI</span>}
+                        {player.aiPersonaName && (
+                          <span className="waiting-persona-tag">
+                            {player.aiPersonaName}
+                          </span>
+                        )}
                         {isRoomOwner && (
                           <span className="owner-badge">
                             <IconCrown
@@ -740,8 +828,7 @@ export default function WaitingRoomPage() {
               {Array.from({
                 length: Math.max(
                   0,
-                  room.config.maxHumanPlayers -
-                    room.players.length,
+                  room.config.maxHumanPlayers - humanCount(room),
                 ),
               }).map((_, i) => (
                 <div

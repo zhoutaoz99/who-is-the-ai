@@ -14,6 +14,7 @@ import { AuthenticatedAccount } from "../auth/auth.types";
 import {
   CastVotePayload,
   CreateRoomPayload,
+  DebugAddAiPayload,
   JoinRoomPayload,
   LeaveRoomPayload,
   ReconnectPayload,
@@ -170,6 +171,11 @@ export class GameGateway
   @SubscribeMessage("game.stop")
   async handleStopGame(@MessageBody() payload: StopGamePayload) {
     return this.gameService.stopGame(payload ?? {});
+  }
+
+  @SubscribeMessage("debug.ai.add")
+  async handleDebugAddAi(@MessageBody() payload: DebugAddAiPayload) {
+    return this.gameService.addDebugAi(payload ?? {});
   }
 
   private async getAccount(authToken: string | undefined): Promise<

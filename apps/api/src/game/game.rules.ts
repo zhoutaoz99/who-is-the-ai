@@ -130,10 +130,42 @@ export function createHumanPlayer(
   };
 }
 
-export function createAiPlayers(startSeatNo: number): Player[] {
+export function createAiPlayer(
+  seatNo: number,
+  personaId?: string,
+  usedNames: string[] = [],
+): Player {
+  const names = AI_NAMES.filter((name) => !usedNames.includes(name));
+  const selectedPersona =
+    AI_PERSONAS.find((persona) => persona.id === personaId) ??
+    randomItem(AI_PERSONAS);
+
+  return {
+    id: randomUUID(),
+    name: randomItem(names.length > 0 ? names : AI_NAMES) ?? `玩家${seatNo}`,
+    type: "ai" as PlayerType,
+    status: "alive" as const,
+    seatNo,
+    lastSpokeAt: 0,
+    connected: true,
+    aiPersonaId: selectedPersona?.id,
+  };
+}
+
+export function createAiPlayers(
+  startSeatNo: number,
+  count = AI_PLAYER_COUNT,
+  excludedPersonaIds: string[] = [],
+): Player[] {
   const names = [...AI_NAMES].sort(() => Math.random() - 0.5);
-  const personas = [...AI_PERSONAS].sort(() => Math.random() - 0.5);
-  return Array.from({ length: AI_PLAYER_COUNT }, (_, index) => ({
+  const preferredPersonas = AI_PERSONAS.filter(
+    (persona) => !excludedPersonaIds.includes(persona.id),
+  ).sort(() => Math.random() - 0.5);
+  const fallbackPersonas = [...AI_PERSONAS].sort(() => Math.random() - 0.5);
+  const personas =
+    preferredPersonas.length > 0 ? preferredPersonas : fallbackPersonas;
+
+  return Array.from({ length: count }, (_, index) => ({
     id: randomUUID(),
     name: names[index] ?? `玩家${startSeatNo + index}`,
     type: "ai" as PlayerType,
