@@ -17,11 +17,13 @@ export type AiSpeechAction =
   | { type: "skip" };
 
 export interface AiSpeechStrategy {
-  goal: string;
-  reason: string;
-  intensity: string;
-  length: string;
+  replyTo: string;
+  speechAct: string;
+  publicPoint: string;
+  tone: string;
+  maxSentences: number;
   constraints: string[];
+  avoidPhrases: string[];
 }
 
 export type AiSpeechStrategyAction =

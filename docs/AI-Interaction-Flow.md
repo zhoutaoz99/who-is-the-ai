@@ -46,7 +46,7 @@ generateSpeech(context):
   ├─ callModel(strategySystemPrompt, strategyUserPrompt, speechStrategyConfig) → 生成结构化发言策略
   ├─ parseSpeechStrategyResult(raw) → 解析策略 JSON
   │   ├─ skip: return { type: "skip" }
-  │   └─ speak: 得到 goal / reason / intensity / length / constraints
+  │   └─ speak: 得到 replyTo / speechAct / publicPoint / tone / maxSentences / constraints / avoidPhrases
   ├─ buildSpeechExpressionPrompt(context, strategy) → 拼装表达转换 Prompt
   ├─ callModel(expressionSystemPrompt, expressionUserPrompt, speechExpressionConfig) → 生成最终发言
   ├─ parseSpeechResult(raw) → 解析最终发言 JSON
@@ -141,7 +141,7 @@ generateVote(context, aiPlayerId):
 你的任务不是写最终发言，而是决定本次是否发言，以及如果发言，给表达层一份结构化策略。
 
 必须输出 JSON：
-{"type":"speak","strategy":{"goal":"本次发言目标","reason":"可公开使用的理由","intensity":"策略强度","length":"长度要求","constraints":["表达限制1"]}}
+{"type":"speak","strategy":{"replyTo":"接哪句话或无","speechAct":"发言动作","publicPoint":"可公开表达的单个观点","tone":"语气和力度","maxSentences":2,"constraints":["表达限制1"],"avoidPhrases":["禁用话术1"]}}
 或：
 {"type":"skip","reason":"跳过原因"}
 ```
@@ -194,11 +194,13 @@ generateVote(context, aiPlayerId):
 
 策略层输出：
 {
-  "goal": "轻踩 7 号，保护 3 号，不暴露自己对 5 号的真实判断",
-  "reason": "7 号多次跟随他人观点，缺少独立判断",
-  "intensity": "轻微怀疑，不要强打",
-  "length": "3-4 句",
-  "constraints": ["不要说这是策略", "不要直接暴露保护意图"]
+  "replyTo": "7号连续跟着别人投票",
+  "speechAct": "轻踩",
+  "publicPoint": "7号一直跟着别人观点走，缺少自己的判断",
+  "tone": "轻微怀疑，不要强打",
+  "maxSentences": 2,
+  "constraints": ["不要说这是策略", "不要同时点评多人"],
+  "avoidPhrases": ["带节奏", "有点可疑", "先看看"]
 }
 
 请把策略层输出转换成最终发言，输出 JSON。

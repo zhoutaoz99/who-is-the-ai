@@ -310,8 +310,8 @@ export class AiService {
       voteHistory: "无",
       currentVoteInfo: "无",
       voteTargets: targets
-        .map((p) => `${p.seatNo}号位(ID:${p.id})`)
-        .join("、"),
+        .map((p) => `${p.seatNo}号位 - ID: ${p.id}`)
+        .join("\n"),
     };
 
     if (context.recentMessages.length > 0) {
@@ -514,28 +514,62 @@ export class AiService {
       return { type: "skip" };
     }
 
-    const goal = this.readString(parsed.strategy.goal);
-    const reason = this.readString(parsed.strategy.reason);
-    const intensity = this.readString(parsed.strategy.intensity);
-    const length = this.readString(parsed.strategy.length);
+    const replyTo = this.readString(parsed.strategy.replyTo);
+    const speechAct = this.readString(parsed.strategy.speechAct);
+    const publicPoint = this.readString(parsed.strategy.publicPoint);
+    const tone = this.readString(parsed.strategy.tone);
+    const maxSentences = this.readPositiveInteger(
+      parsed.strategy.maxSentences,
+    );
     const constraints = this.readRequiredStringArray(parsed.strategy.constraints);
-    if (!goal || !reason || !intensity || !length || !constraints) {
-      this.logger.warn(
-        `Speech strategy parse failed: invalid strategy fields. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
-      );
-      return { type: "skip" };
+    const avoidPhrases = this.readRequiredStringArray(
+      parsed.strategy.avoidPhrases,
+    );
+    if (
+      replyTo &&
+      speechAct &&
+      publicPoint &&
+      tone &&
+      maxSentences &&
+      constraints &&
+      avoidPhrases
+    ) {
+      return {
+        type: "speak",
+        strategy: {
+          replyTo,
+          speechAct,
+          publicPoint,
+          tone,
+          maxSentences,
+          constraints,
+          avoidPhrases,
+        },
+      };
     }
 
-    return {
-      type: "speak",
-      strategy: {
-        goal,
-        reason,
-        intensity,
-        length,
-        constraints,
-      },
-    };
+    this.logger.warn(
+      `Speech strategy parse failed: invalid strategy fields. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
+    );
+    return { type: "skip" };
+  }
+
+  private readPositiveInteger(value: unknown): number | null {
+    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const match = value.match(/\d+/);
+      if (match) {
+        const parsed = Number(match[0]);
+        if (Number.isInteger(parsed) && parsed > 0) {
+          return parsed;
+        }
+      }
+    }
+
+    return null;
   }
 
   private parseVoteResult(
