@@ -799,6 +799,10 @@ export class GameService {
             return;
           }
 
+          if (action.type === "skip") {
+            this.aiService.recordCalls(action.callRecords);
+          }
+
           if (action.type === "speak") {
             const elapsedMs = Date.now() - decisionStartedAt;
             const targetDelayMs = this.clampAiResponseDelay(
@@ -844,6 +848,7 @@ export class GameService {
             }
 
             if (saved) {
+              this.aiService.recordCalls(action.callRecords);
               this.broadcastRoom(saved);
             }
           }

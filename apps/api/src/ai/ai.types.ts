@@ -18,8 +18,9 @@ export type AiSpeechAction =
       content: string;
       targetResponseDelayMs: number;
       nextCheckAfterMs: number;
+      callRecords: AiCallRecord[];
     }
-  | { type: "skip"; nextCheckAfterMs: number };
+  | { type: "skip"; nextCheckAfterMs: number; callRecords: AiCallRecord[] };
 
 export interface AiSpeechStrategy {
   replyTo: string;

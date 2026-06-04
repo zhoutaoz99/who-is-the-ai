@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import {
+  AiCallRecord,
   AiCallRecorder,
   AiConfig,
   AiModelCallConfig,
@@ -26,6 +27,12 @@ export class AiService {
 
   setRecorder(recorder: AiCallRecorder) {
     this.recorder = recorder;
+  }
+
+  recordCalls(records: AiCallRecord[]) {
+    for (const record of records) {
+      this.recorder?.record(record);
+    }
   }
 
   constructor() {
@@ -67,10 +74,11 @@ export class AiService {
 
   async generateSpeech(context: GameContext): Promise<AiSpeechAction> {
     if (!this.config.apiKey) {
-      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords: [] };
     }
 
     try {
+      const callRecords: AiCallRecord[] = [];
       const strategySystemPrompt = loadPrompt("system-speech-strategy.txt");
       const strategyUserPrompt = this.buildSpeechStrategyPrompt(context);
       this.logger.log(
@@ -93,7 +101,7 @@ export class AiService {
           strategyResult.slice(0, 500),
         ),
       );
-      this.recorder?.record({
+      callRecords.push({
         roomId: context.roomId,
         roundNo: context.roundNo,
         callType: "speech-strategy",
@@ -113,6 +121,7 @@ export class AiService {
         return {
           type: "skip",
           nextCheckAfterMs: strategyAction.nextCheckAfterMs,
+          callRecords,
         };
       }
 
@@ -145,7 +154,7 @@ export class AiService {
         context,
         null,
       );
-      this.recorder?.record({
+      callRecords.push({
         roomId: context.roomId,
         roundNo: context.roundNo,
         callType: "speech-expression",
@@ -167,18 +176,20 @@ export class AiService {
           ...speechAction,
           targetResponseDelayMs: strategyAction.targetResponseDelayMs,
           nextCheckAfterMs: strategyAction.nextCheckAfterMs,
+          callRecords,
         };
       }
 
       return {
         type: "skip",
         nextCheckAfterMs: strategyAction.nextCheckAfterMs,
+        callRecords,
       };
     } catch (error) {
       this.logger.warn(
         `Speech generation failed: ${error instanceof Error ? error.message : error}`,
       );
-      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords: [] };
     }
   }
 
