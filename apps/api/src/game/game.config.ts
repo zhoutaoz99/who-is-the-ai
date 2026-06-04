@@ -20,6 +20,7 @@ export const AI_SPEECH_RESPONSE_DELAY_MIN_MS = 800;
 export const AI_SPEECH_RESPONSE_DELAY_MAX_MS = 20_000;
 export const AI_SPEECH_STALE_RETRY_MIN_MS = 500;
 export const AI_SPEECH_STALE_RETRY_MAX_MS = 1_500;
+export const AI_SPEECH_SKIP_BACKOFF_MS = 8_000;
 export const AI_VOTE_DELAY_MS = 1_500;
 export const AI_VOTE_STAGGER_MS = 1_200;
 export const AUTO_RESOLVE_DELAY_MS = 500;

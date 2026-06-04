@@ -21,6 +21,9 @@ export interface Player {
   connected: boolean;
   eliminatedRound?: number;
   aiPersonaId?: string;
+  aiLastConsideredRound?: number;
+  aiLastConsideredAt?: number;
+  aiSkipBackoffUntil?: number;
 }
 
 export interface ChatMessage {

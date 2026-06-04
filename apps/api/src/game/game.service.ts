@@ -12,6 +12,7 @@ import {
   AI_SPEECH_NEXT_CHECK_MIN_MS,
   AI_SPEECH_RESPONSE_DELAY_MAX_MS,
   AI_SPEECH_RESPONSE_DELAY_MIN_MS,
+  AI_SPEECH_SKIP_BACKOFF_MS,
   AI_SPEECH_STALE_RETRY_MAX_MS,
   AI_SPEECH_STALE_RETRY_MIN_MS,
   AI_VOTE_DELAY_MS,
@@ -474,6 +475,9 @@ export class GameService {
         player.status = "alive";
         player.lastSpokeAt = 0;
         player.eliminatedRound = undefined;
+        player.aiLastConsideredRound = undefined;
+        player.aiLastConsideredAt = undefined;
+        player.aiSkipBackoffUntil = undefined;
       }
 
       if (!isDebugAutoAiRoom) {
@@ -863,6 +867,11 @@ export class GameService {
       latest.currentRound += 1;
       latest.phase = "discussion";
       latest.phaseEndsAt = futureIso(latest.discussionDurationMs);
+      for (const player of latest.players) {
+        if (player.type === "ai") {
+          player.aiSkipBackoffUntil = undefined;
+        }
+      }
       touch(latest);
       return true;
     });
@@ -1041,19 +1050,12 @@ export class GameService {
           return;
         }
 
-        const aiPlayers = room.players.filter(
-          (player) => player.type === "ai" && player.status === "alive",
-        );
-        const candidates = aiPlayers.filter(
-          (player) => Date.now() - player.lastSpokeAt >= SPEAK_COOLDOWN_MS,
-        );
-
-        if (candidates.length === 0) {
+        const aiPlayer = this.selectAiSpeechPlayer(room);
+        if (!aiPlayer) {
           scheduleNext(AI_SPEECH_NEXT_CHECK_MIN_MS);
           return;
         }
 
-        const aiPlayer = randomItem(candidates);
         const contextMark = this.markAiSpeechContext(room);
         const decisionStartedAt = Date.now();
         let nextDelayMs: number | null = AI_SPEECH_NEXT_CHECK_MIN_MS;
@@ -1080,6 +1082,11 @@ export class GameService {
           }
 
           if (action.type === "skip") {
+            await this.markAiSpeechSkipped(
+              room.id,
+              aiPlayer.id,
+              contextMark.roundNo,
+            );
             this.aiService.recordCalls(action.callRecords);
           }
 
@@ -1118,6 +1125,9 @@ export class GameService {
                 return false;
               }
 
+              freshAiPlayer.aiLastConsideredRound = contextMark.roundNo;
+              freshAiPlayer.aiLastConsideredAt = Date.now();
+              freshAiPlayer.aiSkipBackoffUntil = undefined;
               this.addMessage(latest, freshAiPlayer, action.content, false);
               return true;
             });
@@ -1145,6 +1155,85 @@ export class GameService {
     };
 
     scheduleNext();
+  }
+
+  private selectAiSpeechPlayer(room: Room): Player | null {
+    const now = Date.now();
+    const candidates = room.players.filter(
+      (player) =>
+        player.type === "ai" &&
+        player.status === "alive" &&
+        now - player.lastSpokeAt >= SPEAK_COOLDOWN_MS &&
+        (player.aiSkipBackoffUntil ?? 0) <= now,
+    );
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    const unspokenAndUnconsidered = candidates.filter(
+      (player) =>
+        !this.hasAiSpokenThisRound(room, player.id) &&
+        player.aiLastConsideredRound !== room.currentRound,
+    );
+    if (unspokenAndUnconsidered.length > 0) {
+      return randomItem(unspokenAndUnconsidered);
+    }
+
+    const unspoken = candidates.filter(
+      (player) => !this.hasAiSpokenThisRound(room, player.id),
+    );
+    if (unspoken.length > 0) {
+      return randomItem(unspoken);
+    }
+
+    const unconsidered = candidates.filter(
+      (player) => player.aiLastConsideredRound !== room.currentRound,
+    );
+    if (unconsidered.length > 0) {
+      return randomItem(unconsidered);
+    }
+
+    return randomItem(candidates);
+  }
+
+  private hasAiSpokenThisRound(room: Room, playerId: string): boolean {
+    return room.messages.some(
+      (message) =>
+        message.roundNo === room.currentRound && message.playerId === playerId,
+    );
+  }
+
+  private async markAiSpeechSkipped(
+    roomId: string,
+    aiPlayerId: string,
+    roundNo: number,
+  ) {
+    await this.applyWithLock(roomId, (latest) => {
+      if (
+        latest.status !== "playing" ||
+        latest.phase !== "discussion" ||
+        latest.currentRound !== roundNo
+      ) {
+        return false;
+      }
+
+      const player = latest.players.find(
+        (candidate) =>
+          candidate.id === aiPlayerId &&
+          candidate.type === "ai" &&
+          candidate.status === "alive",
+      );
+      if (!player) {
+        return false;
+      }
+
+      player.aiLastConsideredRound = roundNo;
+      player.aiLastConsideredAt = Date.now();
+      player.aiSkipBackoffUntil = Date.now() + AI_SPEECH_SKIP_BACKOFF_MS;
+      touch(latest);
+      return true;
+    });
   }
 
   private markAiSpeechContext(room: Room): AiSpeechContextMark {
