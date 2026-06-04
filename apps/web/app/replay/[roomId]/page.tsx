@@ -56,7 +56,18 @@ function winnerLabel(winner: string | null) {
 
 type TimelineItem =
   | { type: "message"; msg: PublicMessage; aiCalls: AiCallLog[] }
-  | { type: "voteRound"; roundNo: number; votes: PublicVoteResult[]; aiCalls: AiCallLog[] };
+  | { type: "voteRound"; roundNo: number; votes: PublicVoteResult[]; aiCalls: AiCallLog[] }
+  | { type: "skip"; call: AiCallLog };
+
+function isSkipCall(call: AiCallLog): boolean {
+  if (call.callType !== "speech-strategy") return false;
+  try {
+    const parsed = JSON.parse(call.rawResponse);
+    return parsed.type === "skip";
+  } catch {
+    return false;
+  }
+}
 
 function buildTimeline(
   messages: PublicMessage[],
@@ -67,11 +78,12 @@ function buildTimeline(
   const items: TimelineItem[] = [];
 
   // Separate strategy and expression calls per player+round, keep chronological order
+  // Skip strategy calls are excluded from matching — they produce no message
   const strategyCalls = new Map<string, AiCallLog[]>();
   const expressionCalls = new Map<string, AiCallLog[]>();
   for (const call of aiCalls) {
     const key = `${call.aiPlayerId}:${call.roundNo}`;
-    if (call.callType === "speech-strategy") {
+    if (call.callType === "speech-strategy" && !isSkipCall(call)) {
       const list = strategyCalls.get(key) ?? [];
       list.push(call);
       strategyCalls.set(key, list);
@@ -84,6 +96,8 @@ function buildTimeline(
 
   // Track how many messages each AI player has sent per round (for index-based matching)
   const aiMsgIndex = new Map<string, number>();
+  // Track which strategy calls were consumed (matched to messages)
+  const consumedCallIds = new Set<string>();
 
   // Build lookup: vote calls per round
   const voteCallsByRound = new Map<number, AiCallLog[]>();
@@ -94,6 +108,9 @@ function buildTimeline(
       voteCallsByRound.set(call.roundNo, list);
     }
   }
+
+  // Identify skip calls (unconsumed strategy calls with type:"skip")
+  const skipCalls = aiCalls.filter((c) => isSkipCall(c));
 
   // Merge messages and votes into a single timeline
   const voteRoundMap = new Map<number, PublicVoteResult[]>();
@@ -118,8 +135,8 @@ function buildTimeline(
 
       const expr = expressionCalls.get(key)?.[idx];
       const strat = strategyCalls.get(key)?.[idx];
-      if (strat) msgCalls.push(strat);
-      if (expr) msgCalls.push(expr);
+      if (strat) { msgCalls.push(strat); consumedCallIds.add(strat.id); }
+      if (expr) { msgCalls.push(expr); consumedCallIds.add(expr.id); }
     }
 
     items.push({ type: "message", msg, aiCalls: msgCalls });
@@ -150,6 +167,47 @@ function buildTimeline(
         votes: roundVotes,
         aiCalls: voteCallsByRound.get(roundNo) ?? [],
       });
+    }
+  }
+
+  // Add skip items for unconsumed skip calls, interleaved chronologically with messages
+  const unconsumedSkips = skipCalls.filter((c) => !consumedCallIds.has(c.id));
+  for (const skipCall of unconsumedSkips) {
+    const skipTime = new Date(skipCall.createdAt).getTime();
+    const skipItem: TimelineItem = { type: "skip", call: skipCall };
+
+    // Find insertion point: first item in the same round whose time is after the skip
+    let insertIdx = -1;
+    for (let j = 0; j < items.length; j++) {
+      const item = items[j];
+      // Skip items in different rounds
+      const itemRound = item.type === "message" ? item.msg.roundNo
+        : item.type === "voteRound" ? item.roundNo
+        : item.call.roundNo;
+      if (itemRound !== skipCall.roundNo) continue;
+
+      const itemTime = item.type === "message"
+        ? new Date(item.msg.createdAt).getTime()
+        : item.type === "voteRound"
+          ? skipTime + 1 // votes go after all skip/message items in the round
+          : new Date(item.call.createdAt).getTime();
+
+      if (itemTime > skipTime) {
+        insertIdx = j;
+        break;
+      }
+    }
+
+    if (insertIdx >= 0) {
+      items.splice(insertIdx, 0, skipItem);
+    } else {
+      // No later item in this round found; insert before the vote round
+      const voteIdx = items.findIndex((item) => item.type === "voteRound" && item.roundNo === skipCall.roundNo);
+      if (voteIdx >= 0) {
+        items.splice(voteIdx, 0, skipItem);
+      } else {
+        items.push(skipItem);
+      }
     }
   }
 
@@ -354,6 +412,7 @@ export default function ReplayPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [localPrompts, setLocalPrompts] = useState<Record<string, string>>({});
+  const [showSkips, setShowSkips] = useState(false);
 
   useEffect(() => {
     fetch(`${API_URL}/replay/${roomId}`)
@@ -419,6 +478,7 @@ export default function ReplayPage() {
   function handleExport(
     room: NonNullable<ReplayData["room"]>,
     aiCallLogs: AiCallLog[],
+    includeSkips: boolean,
   ) {
     const stripAiCall = (call: AiCallLog) => ({
       callType: call.callType,
@@ -458,7 +518,20 @@ export default function ReplayPage() {
               createdAt: item.msg.createdAt,
               aiCalls: item.aiCalls.map(stripAiCall),
             });
-          } else {
+          } else if (item.type === "skip" && includeSkips) {
+            let reason = "";
+            try {
+              const parsed = JSON.parse(item.call.rawResponse);
+              reason = parsed.reason ?? "";
+            } catch { /* ignore */ }
+            messages.push({
+              type: "skip",
+              seatNo: item.call.aiPlayerSeatNo,
+              playerName: item.call.aiPlayerName,
+              reason,
+              createdAt: item.call.createdAt,
+            });
+          } else if (item.type === "voteRound") {
             voteRounds.push({
               votes: item.votes.map((v) => ({
                 voterSeatNo: seatMap.get(v.voterPlayerId) ?? "?",
@@ -500,7 +573,16 @@ export default function ReplayPage() {
           </span>
         </div>
         <div className="replay-header-actions">
-          <button className="secondary" onClick={() => handleExport(room, aiCallLogs)}>
+          <label className="replay-toggle-switch">
+            <input
+              type="checkbox"
+              checked={showSkips}
+              onChange={(e) => setShowSkips(e.target.checked)}
+            />
+            <span className="replay-toggle-slider" />
+            <span className="replay-toggle-label">显示 Skip 记录</span>
+          </label>
+          <button className="secondary" onClick={() => handleExport(room, aiCallLogs, showSkips)}>
             导出 JSON
           </button>
           <button className="secondary" onClick={() => router.push("/")}>
@@ -557,6 +639,36 @@ export default function ReplayPage() {
 
             <div className="replay-timeline">
               {timeline.map((item, idx) => {
+                if (item.type === "skip") {
+                  if (!showSkips) return null;
+                  let reason = "";
+                  try {
+                    const parsed = JSON.parse(item.call.rawResponse);
+                    reason = parsed.reason ?? "";
+                  } catch { /* ignore */ }
+                  return (
+                    <div key={`skip-${item.call.id}`} className="replay-timeline-item replay-skip-item">
+                      <div className="replay-skip-row">
+                        <span
+                          className="replay-msg-avatar"
+                          style={{ backgroundColor: getSeatColor(item.call.aiPlayerSeatNo) }}
+                        >
+                          {item.call.aiPlayerSeatNo}
+                        </span>
+                        <div className="replay-skip-body">
+                          <strong>{item.call.aiPlayerName}</strong>
+                          <span className="replay-skip-badge">Skip</span>
+                          {reason && <span className="replay-skip-reason">{reason}</span>}
+                        </div>
+                        <span className="replay-skip-time">{new Date(item.call.createdAt).toLocaleTimeString()}</span>
+                      </div>
+                      <div className="replay-msg-ai-calls">
+                        <AiCallInline call={item.call} systemPrompt={localPrompts[item.call.callType] ?? ""} />
+                      </div>
+                    </div>
+                  );
+                }
+
                 if (item.type === "message") {
                   const seatNo = seatMap.get(item.msg.playerId) ?? "?";
                   const isAi = playerMap.get(item.msg.playerId)?.revealedType === "ai";
@@ -578,6 +690,7 @@ export default function ReplayPage() {
                           )}
                           <p>{item.msg.content}</p>
                         </div>
+                        <span className="replay-msg-time">{new Date(item.msg.createdAt).toLocaleTimeString()}</span>
                       </div>
                       {isAi && item.aiCalls.length > 0 && (
                         <AiCallGroup calls={item.aiCalls} systemPrompts={localPrompts} />

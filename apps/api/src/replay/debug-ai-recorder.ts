@@ -22,7 +22,7 @@ export class DebugAiRecorder implements AiCallRecorder, OnModuleInit {
     void this.replayService.saveAiCallLog({
       id: randomUUID(),
       ...call,
-      createdAt: new Date().toISOString(),
+      createdAt: call.createdAt ?? new Date().toISOString(),
     });
   }
 }

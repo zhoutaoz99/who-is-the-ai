@@ -80,6 +80,7 @@ export class AiService {
           strategyUserPrompt,
         ),
       );
+      const strategyStartedAt = new Date().toISOString();
       const strategyResult = await this.callModel(
         strategySystemPrompt,
         strategyUserPrompt,
@@ -104,6 +105,7 @@ export class AiService {
         modelName: this.config.speechStrategy.model,
         temperature: this.config.speechStrategy.temperature,
         reasoningEffort: this.config.speechStrategy.reasoningEffort,
+        createdAt: strategyStartedAt,
       });
 
       const strategyAction = this.parseSpeechStrategyResult(strategyResult);
@@ -126,6 +128,7 @@ export class AiService {
           expressionUserPrompt,
         ),
       );
+      const expressionStartedAt = new Date().toISOString();
       const expressionResult = await this.callModel(
         expressionSystemPrompt,
         expressionUserPrompt,
@@ -155,6 +158,7 @@ export class AiService {
         temperature: this.config.speechExpression.temperature,
         reasoningEffort: this.config.speechExpression.reasoningEffort,
         templatePrompt: expressionTemplatePrompt,
+        createdAt: expressionStartedAt,
       });
 
       const speechAction = this.parseSpeechResult(expressionResult, context);
@@ -192,6 +196,7 @@ export class AiService {
       this.logger.log(
         this.formatAiLog(context.myName, "Vote Prompt", userPrompt),
       );
+      const voteStartedAt = new Date().toISOString();
       const result = await this.callModel(systemPrompt, userPrompt, this.config);
       this.logger.log(
         this.formatAiLog(
@@ -212,6 +217,7 @@ export class AiService {
         modelName: this.config.model,
         temperature: this.config.temperature,
         reasoningEffort: this.config.reasoningEffort,
+        createdAt: voteStartedAt,
       });
       return this.parseVoteResult(result, context);
     } catch (error) {

@@ -3118,6 +3118,14 @@ p {
   font-size: 13px;
 }
 
+.replay-msg-time {
+  font-size: 11px;
+  color: #94a3b8;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
 .replay-msg-body p {
   margin: 2px 0 0;
   font-size: 13px;
@@ -3405,6 +3413,98 @@ p {
 .replay-header-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+/* Skip toggle switch */
+.replay-toggle-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
+.replay-toggle-switch input {
+  display: none;
+}
+
+.replay-toggle-slider {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: #cbd5e1;
+  border-radius: 10px;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.replay-toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.replay-toggle-switch input:checked + .replay-toggle-slider {
+  background: var(--accent);
+}
+
+.replay-toggle-switch input:checked + .replay-toggle-slider::after {
+  transform: translateX(16px);
+}
+
+.replay-toggle-label {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Skip timeline items */
+.replay-skip-item {
+  opacity: 0.7;
+}
+
+.replay-skip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.replay-skip-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.replay-skip-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #94a3b8;
+  border: 1px dashed #cbd5e1;
+}
+
+.replay-skip-reason {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.replay-skip-time {
+  font-size: 11px;
+  color: #94a3b8;
+  flex-shrink: 0;
 }
 
 @media (max-width: 600px) {
