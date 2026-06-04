@@ -501,6 +501,8 @@ export default function ReplayPage() {
           seatNo: p.seatNo,
           name: p.name,
           revealedType: p.revealedType ?? null,
+          aiPersonaId: p.aiPersonaId ?? null,
+          aiPersonaName: p.aiPersonaName ?? null,
           status: p.status,
           eliminatedRound: p.eliminatedRound ?? null,
         })),
@@ -615,6 +617,11 @@ export default function ReplayPage() {
                     {player.revealedType && (
                       <span className={`identity-tag ${player.revealedType}`}>
                         {player.revealedType === "ai" ? "AI" : "真人"}
+                      </span>
+                    )}
+                    {player.aiPersonaName && (
+                      <span className="replay-persona-tag">
+                        {player.aiPersonaName}
                       </span>
                     )}
                     {player.status === "eliminated" ? (

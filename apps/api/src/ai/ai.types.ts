@@ -31,6 +31,16 @@ export interface AiSpeechStrategy {
   avoidPhrases: string[];
 }
 
+export interface AiPersonaContext {
+  id: string;
+  name: string;
+  speechStyle: string;
+  sentenceStyle: string;
+  responseBias: string;
+  toneRules: string[];
+  avoidPhrases: string[];
+}
+
 export type AiSpeechStrategyAction =
   | {
       type: "speak";
@@ -71,6 +81,7 @@ export interface GameContext {
   myName: string;
   myPlayerId: string;
   mySeatNo: number;
+  myPersona: AiPersonaContext | null;
   alivePlayers: Array<{ id: string; seatNo: number }>;
   recentMessages: ChatMessageInput[];
   historicalMessages: Array<ChatMessageInput & { roundNo: number }>;

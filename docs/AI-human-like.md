@@ -171,15 +171,19 @@ AI 策略层已开始返回：
 
 目标：让不同 AI 的发言节奏、句式和攻击性有差异。
 
-建议给每个 AI 分配一个 `persona`：
+第一版已落地：创建 AI 玩家时随机分配一个 `aiPersonaId`，构建 `GameContext` 时解析成完整 persona，并注入发言策略、表达转换和投票 prompt。游戏结束后的 replay 快照会揭示 AI 的人格名称，方便复盘。
+
+当前 persona 结构：
 
 ```ts
 type AiPersona = {
-  style: "short_skeptic" | "slow_observer" | "casual_questioner" | "defensive";
-  sentenceBias: "very_short" | "short" | "mixed";
-  aggression: "low" | "medium";
-  fillerWords: string[];
-  avoidWords: string[];
+  id: string;
+  name: string;
+  speechStyle: string;
+  sentenceStyle: string;
+  responseBias: string;
+  toneRules: string[];
+  avoidPhrases: string[];
 };
 ```
 
@@ -187,23 +191,31 @@ type AiPersona = {
 
 ```json
 {
-  "style": "short_skeptic",
-  "sentenceBias": "very_short",
-  "aggression": "medium",
-  "fillerWords": ["啊", "不是", "这"],
-  "avoidWords": ["先看看", "观察一下"]
+  "id": "short_skeptic",
+  "name": "短句怀疑型",
+  "speechStyle": "话少，直接，常用短反问，不喜欢铺垫。",
+  "sentenceStyle": "多数时候 1 句，最多 2 句；少用连接词。",
+  "responseBias": "被点名或看到过快下结论时更愿意接话，平时不主动长篇分析。",
+  "toneRules": ["可以有一点不服", "不要太礼貌圆滑", "不要完整论证自己"],
+  "avoidPhrases": ["先看看", "观察一下", "不站死", "有点可疑"]
 }
 ```
 
-实现步骤：
+已实现文件：
 
-1. 在 `game.rules.ts#createAiPlayers()` 创建 AI 时分配 `personaId`。
-2. 在 `Player` 类型上增加可选 `personaId`。
-3. 在 `buildGameContext()` 中把当前 AI 的 persona 传给 prompt。
-4. 在策略层和表达层 prompt 中加入 persona 说明。
-5. replay 页面展示 AI persona，方便复盘。
+- `apps/api/src/ai/ai.personas.ts`
+- `apps/api/src/game/game.rules.ts`
+- `apps/api/src/game/game.types.ts`
+- `apps/api/src/game/game.service.ts`
+- `apps/api/src/ai/prompts/user-speech-strategy-template.txt`
+- `apps/api/src/ai/prompts/user-speech-expression-template.txt`
+- `apps/api/src/ai/prompts/user-vote-template.txt`
 
-优先级：`P1`。当前 prompt 优化先于 persona。
+后续可继续做：
+
+1. 根据 replay 结果调整 persona 文案。
+2. 给不同 persona 设置不同 `targetResponseDelayMs` 偏好。
+3. persona 与 AI 名字做稳定搭配，减少割裂感。
 
 ### 阶段 3：发言记忆与立场连续性
 

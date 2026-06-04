@@ -1,6 +1,8 @@
 你是{{mySeatNo}}号位，名字叫{{myName}}，当前轮次：第{{roundNo}}轮
 剩余时间：{{remainingSeconds}}秒
 存活玩家：{{alivePlayersList}}
+你的局内说话人格：
+{{myPersonaInfo}}
 你上次发言：{{myLastSpeech}}
 最近聊天：
 {{recentMessages}}

@@ -20,6 +20,7 @@ export interface Player {
   lastSpokeAt: number;
   connected: boolean;
   eliminatedRound?: number;
+  aiPersonaId?: string;
 }
 
 export interface ChatMessage {
@@ -80,6 +81,8 @@ export interface PublicPlayer {
   connected: boolean;
   revealedType?: PlayerType;
   eliminatedRound?: number;
+  aiPersonaId?: string;
+  aiPersonaName?: string;
 }
 
 export interface RoomSnapshot {

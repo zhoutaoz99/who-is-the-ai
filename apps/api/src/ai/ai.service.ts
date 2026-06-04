@@ -271,6 +271,7 @@ export class AiService {
       roundNo: String(context.roundNo),
       remainingSeconds: String(Math.ceil(context.remainingTimeMs / 1000)),
       myLastSpeech: context.myLastSpeech || "无",
+      myPersonaInfo: this.formatPersonaInfo(context),
       recentMessages: "无",
       historicalMessages: "无",
       voteHistory: "无",
@@ -332,6 +333,7 @@ export class AiService {
       mySeatNo: String(context.mySeatNo),
       myName: context.myName,
       roundNo: String(context.roundNo),
+      myPersonaInfo: this.formatPersonaInfo(context),
       recentMessages: "无",
       historicalMessages: "无",
       voteHistory: "无",
@@ -381,6 +383,22 @@ export class AiService {
     }
 
     return renderTemplate("user-vote-template.txt", vars);
+  }
+
+  private formatPersonaInfo(context: GameContext): string {
+    const persona = context.myPersona;
+    if (!persona) {
+      return "无固定人格，保持自然、短句、不要模板化。";
+    }
+
+    return [
+      `人格：${persona.name}`,
+      `说话风格：${persona.speechStyle}`,
+      `句式偏好：${persona.sentenceStyle}`,
+      `回应倾向：${persona.responseBias}`,
+      `语气规则：${persona.toneRules.join("；")}`,
+      `额外避免：${persona.avoidPhrases.join("、")}`,
+    ].join("\n");
   }
 
   private formatHistoricalMessages(

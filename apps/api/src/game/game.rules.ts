@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AI_PERSONAS } from "../ai/ai.personas";
 import {
   AI_NAMES,
   AI_PLAYER_COUNT,
@@ -131,6 +132,7 @@ export function createHumanPlayer(
 
 export function createAiPlayers(startSeatNo: number): Player[] {
   const names = [...AI_NAMES].sort(() => Math.random() - 0.5);
+  const personas = [...AI_PERSONAS].sort(() => Math.random() - 0.5);
   return Array.from({ length: AI_PLAYER_COUNT }, (_, index) => ({
     id: randomUUID(),
     name: names[index] ?? `玩家${startSeatNo + index}`,
@@ -139,6 +141,7 @@ export function createAiPlayers(startSeatNo: number): Player[] {
     seatNo: startSeatNo + index,
     lastSpokeAt: 0,
     connected: true,
+    aiPersonaId: personas[index % personas.length]?.id,
   }));
 }
 

@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 import { AiService } from "../ai/ai.service";
+import { getAiPersonaById } from "../ai/ai.personas";
 import { GameContext, RoundVoteSummary, VoteRecord } from "../ai/ai.types";
 import { AuthService } from "../auth/auth.service";
 import {
@@ -1026,6 +1027,7 @@ export class GameService {
       myName: aiPlayer.name,
       myPlayerId: aiPlayer.id,
       mySeatNo: aiPlayer.seatNo,
+      myPersona: getAiPersonaById(aiPlayer.aiPersonaId),
       alivePlayers,
       recentMessages,
       historicalMessages,

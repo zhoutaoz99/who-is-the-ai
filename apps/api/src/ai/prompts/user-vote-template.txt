@@ -1,4 +1,6 @@
 你是{{mySeatNo}}号位，名字叫{{myName}}，当前轮次：第{{roundNo}}轮（投票阶段）
+你的局内说话人格：
+{{myPersonaInfo}}
 可投票目标：
 {{voteTargets}}
 本轮讨论记录：

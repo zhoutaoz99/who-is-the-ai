@@ -7,6 +7,7 @@ import {
   SPEAK_COOLDOWN_MS,
   VOTE_DURATION_MS,
 } from "./game.config";
+import { getAiPersonaById } from "../ai/ai.personas";
 import { countHumans } from "./game.rules";
 import {
   ChatMessage,
@@ -27,15 +28,22 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
       .slice()
       .sort((a, b) => a.seatNo - b.seatNo)
       .filter((player) => !hideAi || player.type !== "ai")
-      .map((player) => ({
-        id: player.id,
-        name: player.name,
-        status: player.status,
-        seatNo: player.seatNo,
-        connected: player.connected,
-        eliminatedRound: player.eliminatedRound,
-        revealedType: revealTypes ? player.type : undefined,
-      })),
+      .map((player) => {
+        const persona = revealTypes
+          ? getAiPersonaById(player.aiPersonaId)
+          : null;
+        return {
+          id: player.id,
+          name: player.name,
+          status: player.status,
+          seatNo: player.seatNo,
+          connected: player.connected,
+          eliminatedRound: player.eliminatedRound,
+          revealedType: revealTypes ? player.type : undefined,
+          aiPersonaId: persona?.id,
+          aiPersonaName: persona?.name,
+        };
+      }),
     currentRound: room.currentRound,
     phase: room.phase,
     phaseEndsAt: room.phaseEndsAt,

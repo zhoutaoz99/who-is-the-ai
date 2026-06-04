@@ -121,6 +121,7 @@ generateVote(context, aiPlayerId):
 | `myPlayerId` | AI 自己的玩家 ID |
 | `myName` | AI 自己的昵称（如"林舟"） |
 | `mySeatNo` | AI 自己的座位号（如 3） |
+| `myPersona` | AI 自己的局内说话人格（风格、句式偏好、回应倾向、禁用话术） |
 | `roundNo` | 当前轮次 |
 | `phase` | 当前阶段（discussion / voting） |
 | `remainingTimeMs` | 剩余时间（毫秒） |

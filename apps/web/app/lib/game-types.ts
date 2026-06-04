@@ -16,6 +16,8 @@ export type PublicPlayer = {
   connected: boolean;
   revealedType?: "human" | "ai";
   eliminatedRound?: number;
+  aiPersonaId?: string;
+  aiPersonaName?: string;
 };
 
 export type PublicMessage = {
