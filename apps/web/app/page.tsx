@@ -500,18 +500,18 @@ export default function Home() {
                 </div>
                 <div>
                   <p className="eyebrow">Debug Auto AI</p>
-                  <h2>全 AI 自动对局</h2>
+                  <h2>AI 自动对抗</h2>
                 </div>
               </div>
               <p className="muted-text">
-                默认 3 个 AI，包含 1 个主动破冰型。
+                默认 2 个 AI 和 3 个模拟真人，用于调试对抗。
               </p>
               <button
                 className="secondary"
                 disabled={pending || authPending}
                 onClick={handleCreateDebugAutoAiRoom}
               >
-                创建全 AI 对局
+                创建自动对抗
               </button>
             </div>
           )}

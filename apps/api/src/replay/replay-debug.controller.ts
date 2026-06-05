@@ -13,6 +13,8 @@ export class ReplayDebugController {
       "speech-strategy": readFileSync(join(dir, "system-speech-strategy.txt"), "utf-8").trim(),
       "speech-expression": readFileSync(join(dir, "system-speech-expression.txt"), "utf-8").trim(),
       vote: readFileSync(join(dir, "system-vote.txt"), "utf-8").trim(),
+      "sim-human-speech": readFileSync(join(dir, "system-sim-human-speech.txt"), "utf-8").trim(),
+      "sim-human-vote": readFileSync(join(dir, "system-sim-human-vote.txt"), "utf-8").trim(),
     };
   }
 

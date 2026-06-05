@@ -15,6 +15,7 @@ export interface Player {
   socketId?: string;
   name: string;
   type: PlayerType;
+  simulated?: boolean;
   status: PlayerStatus;
   seatNo: number;
   lastSpokeAt: number;
@@ -84,6 +85,7 @@ export interface PublicPlayer {
   seatNo: number;
   connected: boolean;
   revealedType?: PlayerType;
+  simulated?: boolean;
   eliminatedRound?: number;
   aiPersonaId?: string;
   aiPersonaName?: string;
@@ -173,6 +175,7 @@ export interface StopGamePayload {
 export interface DebugAddAiPayload {
   roomId?: string;
   playerId?: string;
+  playerType?: PlayerType;
   personaId?: string;
 }
 
@@ -184,6 +187,7 @@ export interface DebugRemoveAiPayload {
   roomId?: string;
   playerId?: string;
   aiPlayerId?: string;
+  targetPlayerId?: string;
 }
 
 export interface DebugDeleteAutoAiRoomPayload {

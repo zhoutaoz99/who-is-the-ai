@@ -5,11 +5,13 @@ import {
   AI_NAMES,
   AI_PLAYER_COUNT,
   DEBUG_AUTO_AI_PLAYER_COUNT,
+  DEBUG_AUTO_SIMULATED_HUMAN_COUNT,
   DEFAULT_DISCUSSION_DURATION_MS,
   MAX_ROUNDS,
   MESSAGE_LIMIT,
   MIN_DISCUSSION_DURATION_MS,
   SPEAK_COOLDOWN_MS,
+  SIMULATED_HUMAN_NAMES,
 } from "./game.config";
 import {
   ChatMessage,
@@ -28,6 +30,18 @@ export function countAi(room: Room) {
   return room.players.filter((player) => player.type === "ai").length;
 }
 
+export function isSimulatedHuman(player: Player) {
+  return player.type === "human" && player.simulated === true;
+}
+
+export function countSimulatedHumans(room: Room) {
+  return room.players.filter((player) => isSimulatedHuman(player)).length;
+}
+
+export function isModelDrivenPlayer(player: Player) {
+  return player.type === "ai" || isSimulatedHuman(player);
+}
+
 export function hasActiveIcebreaker(room: Room) {
   return room.players.some(
     (player) =>
@@ -37,7 +51,7 @@ export function hasActiveIcebreaker(room: Room) {
 }
 
 export function canStartDebugAutoAiRoom(room: Room) {
-  return countAi(room) >= 1 && hasActiveIcebreaker(room);
+  return countAi(room) >= 1 && countSimulatedHumans(room) >= 1;
 }
 
 export function resolveElimination(room: Room): Player | null {
@@ -75,20 +89,6 @@ export function getWinner(room: Room): Winner {
   const aliveHumanCount = room.players.filter(
     (player) => player.type === "human" && player.status === "alive",
   ).length;
-  const totalHumanCount = countHumans(room);
-
-  if (room.debugAutoAi && totalHumanCount === 0) {
-    if (aliveAiCount <= 1) {
-      return "ai";
-    }
-
-    if (room.currentRound >= MAX_ROUNDS) {
-      return "ai";
-    }
-
-    return null;
-  }
-
   if (aliveAiCount === 0) {
     return "human";
   }
@@ -154,7 +154,26 @@ export function createHumanPlayer(
     socketId,
     name: normalizePlayerName(playerName),
     type: "human",
+    simulated: false,
     status: "alive",
+    seatNo,
+    lastSpokeAt: 0,
+    connected: true,
+  };
+}
+
+export function createSimulatedHumanPlayer(
+  seatNo: number,
+  usedNames: string[] = [],
+): Player {
+  const names = SIMULATED_HUMAN_NAMES.filter((name) => !usedNames.includes(name));
+
+  return {
+    id: randomUUID(),
+    name: randomItem(names.length > 0 ? names : SIMULATED_HUMAN_NAMES) ?? `玩家${seatNo}`,
+    type: "human" as PlayerType,
+    simulated: true,
+    status: "alive" as const,
     seatNo,
     lastSpokeAt: 0,
     connected: true,
@@ -210,10 +229,12 @@ export function createAiPlayers(
 
 export function createDebugAutoAiPlayers(
   startSeatNo = 1,
-  count = DEBUG_AUTO_AI_PLAYER_COUNT,
+  aiCount = DEBUG_AUTO_AI_PLAYER_COUNT,
+  simulatedHumanCount = DEBUG_AUTO_SIMULATED_HUMAN_COUNT,
 ): Player[] {
   const players: Player[] = [];
-  const safeCount = Math.max(1, Math.floor(count));
+  const safeAiCount = Math.max(1, Math.floor(aiCount));
+  const safeSimulatedHumanCount = Math.max(1, Math.floor(simulatedHumanCount));
 
   players.push(createAiPlayer(startSeatNo, ACTIVE_ICEBREAKER_PERSONA_ID));
 
@@ -223,13 +244,22 @@ export function createDebugAutoAiPlayers(
     .sort(() => Math.random() - 0.5)
     .map((persona) => persona.id);
 
-  while (players.length < safeCount) {
-    const personaId =
-      otherPersonaIds[players.length - 1] ?? randomItem(AI_PERSONAS)?.id;
+  while (players.filter((player) => player.type === "ai").length < safeAiCount) {
+    const aiIndex = players.filter((player) => player.type === "ai").length;
+    const personaId = otherPersonaIds[aiIndex - 1] ?? randomItem(AI_PERSONAS)?.id;
     players.push(
       createAiPlayer(
         startSeatNo + players.length,
         personaId,
+        players.map((player) => player.name),
+      ),
+    );
+  }
+
+  while (players.filter((player) => isSimulatedHuman(player)).length < safeSimulatedHumanCount) {
+    players.push(
+      createSimulatedHumanPlayer(
+        startSeatNo + players.length,
         players.map((player) => player.name),
       ),
     );
@@ -266,19 +296,47 @@ export function normalizeDiscussionDuration(payload: CreateRoomPayload) {
 
 export function chooseFallbackVoteTarget(
   room: Room,
-  aiPlayer: Player,
+  voter: Player,
 ): Player | null {
-  const aliveHumans = room.players.filter(
-    (player) => player.type === "human" && player.status === "alive",
+  const fallbackTargets = room.players.filter(
+    (player) => player.id !== voter.id && player.status === "alive",
   );
-  if (aliveHumans.length > 0) {
-    return randomItem(aliveHumans);
+  if (fallbackTargets.length === 0) {
+    return null;
   }
 
-  const fallbackTargets = room.players.filter(
-    (player) => player.id !== aiPlayer.id && player.status === "alive",
-  );
-  return fallbackTargets.length > 0 ? randomItem(fallbackTargets) : null;
+  if (voter.type === "ai") {
+    const aliveHumans = fallbackTargets.filter((player) => player.type === "human");
+    if (aliveHumans.length > 0) {
+      return randomItem(aliveHumans);
+    }
+  }
+
+  const voteCounts = new Map<string, number>();
+  for (const vote of room.votes) {
+    if (vote.roundNo !== room.currentRound || vote.targetPlayerId === voter.id) {
+      continue;
+    }
+    voteCounts.set(vote.targetPlayerId, (voteCounts.get(vote.targetPlayerId) ?? 0) + 1);
+  }
+
+  const rankedTargets = fallbackTargets
+    .map((player) => ({
+      player,
+      count: voteCounts.get(player.id) ?? 0,
+    }))
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  if (rankedTargets.length > 0) {
+    const topCount = rankedTargets[0].count;
+    const topTargets = rankedTargets
+      .filter((item) => item.count === topCount)
+      .map((item) => item.player);
+    return randomItem(topTargets);
+  }
+
+  return randomItem(fallbackTargets);
 }
 
 export function futureIso(durationMs: number) {

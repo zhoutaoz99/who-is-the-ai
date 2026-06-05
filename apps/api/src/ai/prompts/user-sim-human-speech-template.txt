@@ -1,8 +1,6 @@
 你是{{mySeatNo}}号位，名字叫{{myName}}，当前轮次：第{{roundNo}}轮
 剩余时间：{{remainingSeconds}}秒
 存活玩家：{{alivePlayersList}}
-你的局内说话人格：
-{{myPersonaInfo}}
 你上次发言：{{myLastSpeech}}
 最近聊天：
 {{recentMessages}}
@@ -11,8 +9,4 @@
 历史公开投票结果（只包含投票方向，不包含投票理由）：
 {{voteHistory}}
 当前投票情况（同时盲投，投票阶段看不到其他玩家当前投票）：{{currentVoteInfo}}
-
-策略层输出：
-{{speechStrategy}}
-
-请把策略层输出转换成最终发言，输出 JSON。
+请决定现在是否发言、目标反应时间和下次观察时间；如果发言，直接输出最终发言。

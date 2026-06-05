@@ -38,6 +38,10 @@ function callTypeLabel(type: string) {
       return "发言表达";
     case "vote":
       return "投票决策";
+    case "sim-human-speech":
+      return "模拟真人发言";
+    case "sim-human-vote":
+      return "模拟真人投票";
     default:
       return type;
   }
@@ -60,7 +64,7 @@ type TimelineItem =
   | { type: "skip"; call: AiCallLog };
 
 function isSkipCall(call: AiCallLog): boolean {
-  if (call.callType !== "speech-strategy") return false;
+  if (call.callType !== "speech-strategy" && call.callType !== "sim-human-speech") return false;
   try {
     const parsed = JSON.parse(call.rawResponse);
     return parsed.type === "skip";
@@ -81,6 +85,7 @@ function buildTimeline(
   // Skip strategy calls are excluded from matching — they produce no message
   const strategyCalls = new Map<string, AiCallLog[]>();
   const expressionCalls = new Map<string, AiCallLog[]>();
+  const simHumanSpeechCalls = new Map<string, AiCallLog[]>();
   for (const call of aiCalls) {
     const key = `${call.aiPlayerId}:${call.roundNo}`;
     if (call.callType === "speech-strategy" && !isSkipCall(call)) {
@@ -91,6 +96,10 @@ function buildTimeline(
       const list = expressionCalls.get(key) ?? [];
       list.push(call);
       expressionCalls.set(key, list);
+    } else if (call.callType === "sim-human-speech" && !isSkipCall(call)) {
+      const list = simHumanSpeechCalls.get(key) ?? [];
+      list.push(call);
+      simHumanSpeechCalls.set(key, list);
     }
   }
 
@@ -102,7 +111,7 @@ function buildTimeline(
   // Build lookup: vote calls per round
   const voteCallsByRound = new Map<number, AiCallLog[]>();
   for (const call of aiCalls) {
-    if (call.callType === "vote") {
+    if (call.callType === "vote" || call.callType === "sim-human-vote") {
       const list = voteCallsByRound.get(call.roundNo) ?? [];
       list.push(call);
       voteCallsByRound.set(call.roundNo, list);
@@ -125,18 +134,25 @@ function buildTimeline(
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    const isAi = playerMap.get(msg.playerId)?.revealedType === "ai";
+    const player = playerMap.get(msg.playerId);
+    const isAi = player?.revealedType === "ai";
+    const isSimulatedHuman = player?.revealedType === "human" && player.simulated;
     let msgCalls: AiCallLog[] = [];
 
-    if (isAi) {
+    if (isAi || isSimulatedHuman) {
       const key = `${msg.playerId}:${msg.roundNo}`;
       const idx = aiMsgIndex.get(key) ?? 0;
       aiMsgIndex.set(key, idx + 1);
 
-      const expr = expressionCalls.get(key)?.[idx];
-      const strat = strategyCalls.get(key)?.[idx];
-      if (strat) { msgCalls.push(strat); consumedCallIds.add(strat.id); }
-      if (expr) { msgCalls.push(expr); consumedCallIds.add(expr.id); }
+      if (isAi) {
+        const expr = expressionCalls.get(key)?.[idx];
+        const strat = strategyCalls.get(key)?.[idx];
+        if (strat) { msgCalls.push(strat); consumedCallIds.add(strat.id); }
+        if (expr) { msgCalls.push(expr); consumedCallIds.add(expr.id); }
+      } else {
+        const speech = simHumanSpeechCalls.get(key)?.[idx];
+        if (speech) { msgCalls.push(speech); consumedCallIds.add(speech.id); }
+      }
     }
 
     items.push({ type: "message", msg, aiCalls: msgCalls });
@@ -413,6 +429,7 @@ export default function ReplayPage() {
   const [error, setError] = useState<string | null>(null);
   const [localPrompts, setLocalPrompts] = useState<Record<string, string>>({});
   const [showSkips, setShowSkips] = useState(false);
+  const [includeUserPrompt, setIncludeUserPrompt] = useState(false);
 
   useEffect(() => {
     fetch(`${API_URL}/replay/${roomId}`)
@@ -479,15 +496,22 @@ export default function ReplayPage() {
     room: NonNullable<ReplayData["room"]>,
     aiCallLogs: AiCallLog[],
     includeSkips: boolean,
+    includeUserPrompt: boolean,
   ) {
-    const stripAiCall = (call: AiCallLog) => ({
-      callType: call.callType,
-      aiPlayerName: call.aiPlayerName,
-      aiPlayerSeatNo: call.aiPlayerSeatNo,
-      modelName: call.modelName,
-      rawResponse: call.rawResponse,
-      createdAt: call.createdAt,
-    });
+    const stripAiCall = (call: AiCallLog) => {
+      const base = {
+        callType: call.callType,
+        aiPlayerName: call.aiPlayerName,
+        aiPlayerSeatNo: call.aiPlayerSeatNo,
+        modelName: call.modelName,
+        rawResponse: call.rawResponse,
+        createdAt: call.createdAt,
+      };
+      if (includeUserPrompt) {
+        return { ...base, userPrompt: call.userPrompt };
+      }
+      return base;
+    };
 
     const exportData = {
       roomId: room.id,
@@ -501,6 +525,7 @@ export default function ReplayPage() {
           seatNo: p.seatNo,
           name: p.name,
           revealedType: p.revealedType ?? null,
+          simulated: p.simulated ?? false,
           aiPersonaId: p.aiPersonaId ?? null,
           aiPersonaName: p.aiPersonaName ?? null,
           status: p.status,
@@ -534,21 +559,26 @@ export default function ReplayPage() {
               createdAt: item.call.createdAt,
             });
           } else if (item.type === "voteRound") {
+            const voteCallMap = new Map(item.aiCalls.map((c) => [c.aiPlayerId, c.id]));
             voteRounds.push({
-              votes: item.votes.map((v) => ({
-                voterSeatNo: seatMap.get(v.voterPlayerId) ?? "?",
-                voterName: playerMap.get(v.voterPlayerId)?.name ?? "?",
-                targetSeatNo: seatMap.get(v.targetPlayerId) ?? "?",
-                targetName: playerMap.get(v.targetPlayerId)?.name ?? "?",
-              })),
-              aiCalls: item.aiCalls.map(stripAiCall),
+              votes: item.votes.map((v) => {
+                const voterCallId = voteCallMap.get(v.voterPlayerId);
+                const voterCall = voterCallId ? item.aiCalls.find((c) => c.id === voterCallId) : undefined;
+                return {
+                  voterSeatNo: seatMap.get(v.voterPlayerId) ?? "?",
+                  voterName: playerMap.get(v.voterPlayerId)?.name ?? "?",
+                  targetSeatNo: seatMap.get(v.targetPlayerId) ?? "?",
+                  targetName: playerMap.get(v.targetPlayerId)?.name ?? "?",
+                  ...(voterCall ? { aiCall: stripAiCall(voterCall) } : {}),
+                };
+              }),
             });
           }
         }
         return {
           roundNo: r.roundNo,
           messages,
-          votes: voteRounds[0] ?? { votes: [], aiCalls: [] },
+          votes: voteRounds[0] ?? { votes: [] },
         };
       }),
     };
@@ -584,7 +614,16 @@ export default function ReplayPage() {
             <span className="replay-toggle-slider" />
             <span className="replay-toggle-label">显示 Skip 记录</span>
           </label>
-          <button className="secondary" onClick={() => handleExport(room, aiCallLogs, showSkips)}>
+          <label className="replay-toggle-switch">
+            <input
+              type="checkbox"
+              checked={includeUserPrompt}
+              onChange={(e) => setIncludeUserPrompt(e.target.checked)}
+            />
+            <span className="replay-toggle-slider" />
+            <span className="replay-toggle-label">导出用户提示词</span>
+          </label>
+          <button className="secondary" onClick={() => handleExport(room, aiCallLogs, showSkips, includeUserPrompt)}>
             导出 JSON
           </button>
           <button className="secondary" onClick={() => router.push("/")}>
@@ -678,7 +717,7 @@ export default function ReplayPage() {
 
                 if (item.type === "message") {
                   const seatNo = seatMap.get(item.msg.playerId) ?? "?";
-                  const isAi = playerMap.get(item.msg.playerId)?.revealedType === "ai";
+                  const player = playerMap.get(item.msg.playerId);
                   return (
                     <div key={`msg-${item.msg.id}`} className="replay-timeline-item">
                       <div className="replay-message">
@@ -691,15 +730,15 @@ export default function ReplayPage() {
                         <div className="replay-msg-body">
                           <strong>{item.msg.playerName}</strong>
                           {item.msg.source && (
-                            <span className={`identity-tag mini ${item.msg.source}`}>
-                              {item.msg.source === "ai" ? "AI" : "真人"}
+                            <span className={`identity-tag mini ${item.msg.source}${player?.simulated ? " simulated" : ""}`}>
+                              {item.msg.source === "ai" ? "AI" : player?.simulated ? "模拟真人" : "真人"}
                             </span>
                           )}
                           <p>{item.msg.content}</p>
                         </div>
                         <span className="replay-msg-time">{new Date(item.msg.createdAt).toLocaleTimeString()}</span>
                       </div>
-                      {isAi && item.aiCalls.length > 0 && (
+                      {item.aiCalls.length > 0 && (
                         <AiCallGroup calls={item.aiCalls} systemPrompts={localPrompts} />
                       )}
                     </div>
@@ -707,6 +746,7 @@ export default function ReplayPage() {
                 }
 
                 // voteRound
+                const voteCallMap = new Map(item.aiCalls.map((c) => [c.aiPlayerId, c]));
                 return (
                   <div key={`vote-${item.roundNo}-${idx}`} className="replay-timeline-item">
                     <div className="replay-votes">
@@ -715,38 +755,39 @@ export default function ReplayPage() {
                         const targetSeat = seatMap.get(vote.targetPlayerId) ?? "?";
                         const voter = playerMap.get(vote.voterPlayerId);
                         const target = playerMap.get(vote.targetPlayerId);
+                        const voterCall = voteCallMap.get(vote.voterPlayerId);
                         return (
-                          <div key={vote.id} className="replay-vote">
-                            <span className="replay-vote-voter">
-                              <span
-                                className="replay-msg-avatar"
-                                style={{ backgroundColor: getSeatColor(Number(voterSeat)) }}
-                              >
-                                {voterSeat}
+                          <div key={vote.id}>
+                            <div className="replay-vote">
+                              <span className="replay-vote-voter">
+                                <span
+                                  className="replay-msg-avatar"
+                                  style={{ backgroundColor: getSeatColor(Number(voterSeat)) }}
+                                >
+                                  {voterSeat}
+                                </span>
+                                {voter?.name ?? voterSeat}号
                               </span>
-                              {voter?.name ?? voterSeat}号
-                            </span>
-                            <span className="replay-vote-arrow">→</span>
-                            <span className="replay-vote-target">
-                              <span
-                                className="replay-msg-avatar"
-                                style={{ backgroundColor: getSeatColor(Number(targetSeat)) }}
-                              >
-                                {targetSeat}
+                              <span className="replay-vote-arrow">→</span>
+                              <span className="replay-vote-target">
+                                <span
+                                  className="replay-msg-avatar"
+                                  style={{ backgroundColor: getSeatColor(Number(targetSeat)) }}
+                                >
+                                  {targetSeat}
+                                </span>
+                                {target?.name ?? targetSeat}号
                               </span>
-                              {target?.name ?? targetSeat}号
-                            </span>
+                            </div>
+                            {voterCall && (
+                              <div className="replay-msg-ai-calls">
+                                <AiCallInline call={voterCall} systemPrompt={localPrompts[voterCall.callType] ?? ""} />
+                              </div>
+                            )}
                           </div>
                         );
                       })}
                     </div>
-                    {item.aiCalls.length > 0 && (
-                      <div className="replay-msg-ai-calls">
-                        {item.aiCalls.map((call) => (
-                          <AiCallInline key={call.id} call={call} systemPrompt={localPrompts[call.callType] ?? ""} />
-                        ))}
-                      </div>
-                    )}
                   </div>
                 );
               })}

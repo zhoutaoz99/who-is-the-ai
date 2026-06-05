@@ -524,7 +524,7 @@ export default function GamePage() {
             <div>
               <h2>
                 {isObserverMode
-                  ? "全 AI 自动对局结束"
+                  ? "AI 自动对抗结束"
                   : room.winner === "human"
                   ? "真人玩家获胜"
                   : room.winner === "ai"
@@ -533,11 +533,11 @@ export default function GamePage() {
               </h2>
               <p>
                 {isObserverMode
-                  ? "可返回大厅进入复盘查看 AI 行为记录。"
+                  ? "可返回大厅进入复盘查看模型行为记录。"
                   : room.winner === "human"
                   ? formatPointAwardSummary(room)
                   : room.winner === "ai"
-                    ? "4 轮结束后仍有 AI 模拟玩家在场，本局挑战失败。"
+                    ? "4 轮结束后仍有 AI 玩家在场，本局挑战失败。"
                     : "游戏被调试模式中止。"}
               </p>
             </div>
@@ -586,9 +586,13 @@ export default function GamePage() {
                       {isSelf && <span className="self">你</span>}
                       {player.revealedType && (
                         <span
-                          className={`identity-tag ${player.revealedType}`}
+                          className={`identity-tag ${player.revealedType}${player.simulated ? " simulated" : ""}`}
                         >
-                          {player.revealedType === "ai" ? "AI" : "真人"}
+                          {player.revealedType === "ai"
+                            ? "AI"
+                            : player.simulated
+                              ? "模拟真人"
+                              : "真人"}
                         </span>
                       )}
                     </div>
@@ -663,7 +667,7 @@ export default function GamePage() {
                     <span>ROUND {item.roundNo}</span>
                     <strong>发言开始</strong>
                     <p>
-                      请根据编号玩家的发言、逻辑和投票倾向判断谁是 AI 模拟玩家。
+                      请根据编号玩家的发言、逻辑和投票倾向判断谁是 AI 玩家。
                     </p>
                   </div>
                 ) : (
@@ -675,7 +679,7 @@ export default function GamePage() {
           </div>
 
           {isObserverMode ? (
-            <div className="observer-note">全 AI 自动发言中</div>
+            <div className="observer-note">AI 自动对抗进行中</div>
           ) : (
             <form
               className="composer immersive-composer"
@@ -931,6 +935,9 @@ function renderTranscriptItem(
 
   const seatNo = getPlayerSeatNo(room, item.message.playerId);
   const isAi = item.message.source === "ai";
+  const messagePlayer = room.players.find(
+    (player) => player.id === item.message.playerId,
+  );
   const isSelf = item.message.playerId === currentPlayerId;
 
   return (
@@ -949,8 +956,8 @@ function renderTranscriptItem(
           <strong>#{seatNo}</strong>
           <span>第 {item.message.roundNo} 轮</span>
           {item.message.source && (
-            <span className={`msg-source ${isAi ? "ai" : "human"}`}>
-              {isAi ? "AI" : "真人"}
+            <span className={`msg-source ${isAi ? "ai" : "human"}${messagePlayer?.simulated ? " simulated" : ""}`}>
+              {isAi ? "AI" : messagePlayer?.simulated ? "模拟真人" : "真人"}
             </span>
           )}
         </div>

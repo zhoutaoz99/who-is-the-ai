@@ -1,6 +1,11 @@
 import { RoomSnapshot } from "../game/game.types";
 
-export type AiCallType = "speech-strategy" | "speech-expression" | "vote";
+export type AiCallType =
+  | "speech-strategy"
+  | "speech-expression"
+  | "vote"
+  | "sim-human-speech"
+  | "sim-human-vote";
 
 export interface AiCallLog {
   id: string;

@@ -81,6 +81,8 @@ export interface GameContext {
   remainingTimeMs: number;
   myName: string;
   myPlayerId: string;
+  myPlayerType: "human" | "ai";
+  mySimulated: boolean;
   mySeatNo: number;
   myPersona: AiPersonaContext | null;
   alivePlayers: Array<{ id: string; seatNo: number }>;
@@ -91,7 +93,12 @@ export interface GameContext {
   voteHistory: RoundVoteSummary[];
 }
 
-export type AiCallType = "speech-strategy" | "speech-expression" | "vote";
+export type AiCallType =
+  | "speech-strategy"
+  | "speech-expression"
+  | "vote"
+  | "sim-human-speech"
+  | "sim-human-vote";
 
 export interface AiCallRecord {
   roomId: string;

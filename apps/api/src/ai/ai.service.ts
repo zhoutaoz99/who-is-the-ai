@@ -77,6 +77,10 @@ export class AiService {
       return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords: [] };
     }
 
+    if (this.isSimulatedHumanContext(context)) {
+      return this.generateSimulatedHumanSpeech(context);
+    }
+
     try {
       const callRecords: AiCallRecord[] = [];
       const strategySystemPrompt = loadPrompt("system-speech-strategy.txt");
@@ -193,6 +197,69 @@ export class AiService {
     }
   }
 
+  private async generateSimulatedHumanSpeech(
+    context: GameContext,
+  ): Promise<AiSpeechAction> {
+    try {
+      const systemPrompt = loadPrompt("system-sim-human-speech.txt");
+      const userPrompt = this.buildSimulatedHumanSpeechPrompt(context);
+      this.logger.log(
+        this.formatAiLog(
+          context.myName,
+          "Simulated Human Speech Prompt",
+          userPrompt,
+        ),
+      );
+      const startedAt = new Date().toISOString();
+      const result = await this.callModel(
+        systemPrompt,
+        userPrompt,
+        this.config.speechStrategy,
+      );
+      this.logger.log(
+        this.formatAiLog(
+          context.myName,
+          "Raw Simulated Human Speech Response",
+          result.slice(0, 500),
+        ),
+      );
+
+      const callRecords: AiCallRecord[] = [{
+        roomId: context.roomId,
+        roundNo: context.roundNo,
+        callType: "sim-human-speech",
+        aiPlayerId: context.myPlayerId,
+        aiPlayerName: context.myName,
+        aiPlayerSeatNo: context.mySeatNo,
+        userPrompt,
+        rawResponse: result,
+        modelName: this.config.speechStrategy.model,
+        temperature: this.config.speechStrategy.temperature,
+        reasoningEffort: this.config.speechStrategy.reasoningEffort,
+        createdAt: startedAt,
+      }];
+
+      const action = this.parseSimulatedHumanSpeechResult(result);
+      if (action.type === "speak") {
+        return {
+          ...action,
+          callRecords,
+        };
+      }
+
+      return {
+        type: "skip",
+        nextCheckAfterMs: action.nextCheckAfterMs,
+        callRecords,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Simulated human speech generation failed: ${error instanceof Error ? error.message : error}`,
+      );
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords: [] };
+    }
+  }
+
   async generateVote(
     context: GameContext,
     aiPlayerId: string,
@@ -202,8 +269,13 @@ export class AiService {
     }
 
     try {
-      const systemPrompt = loadPrompt("system-vote.txt");
-      const userPrompt = this.buildVotePrompt(context, aiPlayerId);
+      const isSimulatedHuman = this.isSimulatedHumanContext(context);
+      const systemPrompt = loadPrompt(
+        isSimulatedHuman ? "system-sim-human-vote.txt" : "system-vote.txt",
+      );
+      const userPrompt = isSimulatedHuman
+        ? this.buildSimulatedHumanVotePrompt(context, aiPlayerId)
+        : this.buildVotePrompt(context, aiPlayerId);
       this.logger.log(
         this.formatAiLog(context.myName, "Vote Prompt", userPrompt),
       );
@@ -219,7 +291,7 @@ export class AiService {
       this.recorder?.record({
         roomId: context.roomId,
         roundNo: context.roundNo,
-        callType: "vote",
+        callType: isSimulatedHuman ? "sim-human-vote" : "vote",
         aiPlayerId: context.myPlayerId,
         aiPlayerName: context.myName,
         aiPlayerSeatNo: context.mySeatNo,
@@ -242,6 +314,13 @@ export class AiService {
   private buildSpeechStrategyPrompt(context: GameContext): string {
     return renderTemplate(
       "user-speech-strategy-template.txt",
+      this.buildSpeechVars(context),
+    );
+  }
+
+  private buildSimulatedHumanSpeechPrompt(context: GameContext): string {
+    return renderTemplate(
+      "user-sim-human-speech-template.txt",
       this.buildSpeechVars(context),
     );
   }
@@ -293,12 +372,7 @@ export class AiService {
     };
 
     if (context.recentMessages.length > 0) {
-      vars.recentMessages = context.recentMessages
-        .map((msg) => {
-          const prefix = msg.isSelf ? "你" : msg.playerName;
-          return `  ${prefix}：${msg.content}`;
-        })
-        .join("\n");
+      vars.recentMessages = this.formatChatMessages(context.recentMessages, "  ");
     }
 
     if (context.historicalMessages.length > 0) {
@@ -348,19 +422,14 @@ export class AiService {
       recentMessages: "无",
       historicalMessages: "无",
       voteHistory: "无",
-      currentVoteInfo: "无",
+      currentVoteInfo: "同时盲投，当前票数不可见",
       voteTargets: targets
         .map((p) => `${p.seatNo}号位 - ID: ${p.id}`)
         .join("\n"),
     };
 
     if (context.recentMessages.length > 0) {
-      vars.recentMessages = context.recentMessages
-        .map((msg) => {
-          const prefix = msg.isSelf ? "你" : msg.playerName;
-          return `  ${prefix}：${msg.content}`;
-        })
-        .join("\n");
+      vars.recentMessages = this.formatChatMessages(context.recentMessages, "  ");
     }
 
     if (context.historicalMessages.length > 0) {
@@ -384,16 +453,54 @@ export class AiService {
         .join("\n");
     }
 
-    if (Object.keys(context.currentVoteCounts).length > 0) {
-      vars.currentVoteInfo = Object.entries(context.currentVoteCounts)
-        .map(([id, count]) => {
-          const player = context.alivePlayers.find((p) => p.id === id);
-          return `${player?.seatNo ?? id}号位:${count}票`;
-        })
-        .join("、");
+    return renderTemplate("user-vote-template.txt", vars);
+  }
+
+  private buildSimulatedHumanVotePrompt(
+    context: GameContext,
+    playerId: string,
+  ): string {
+    const targets = context.alivePlayers.filter((p) => p.id !== playerId);
+
+    const vars: Record<string, string> = {
+      mySeatNo: String(context.mySeatNo),
+      myName: context.myName,
+      roundNo: String(context.roundNo),
+      recentMessages: "无",
+      historicalMessages: "无",
+      voteHistory: "无",
+      currentVoteInfo: "同时盲投，当前票数不可见",
+      voteTargets: targets
+        .map((p) => `${p.seatNo}号位 - ID: ${p.id}`)
+        .join("\n"),
+    };
+
+    if (context.recentMessages.length > 0) {
+      vars.recentMessages = this.formatChatMessages(context.recentMessages, "  ");
     }
 
-    return renderTemplate("user-vote-template.txt", vars);
+    if (context.historicalMessages.length > 0) {
+      vars.historicalMessages = this.formatHistoricalMessages(
+        context.historicalMessages,
+      );
+    }
+
+    if (context.voteHistory.length > 0) {
+      vars.voteHistory = context.voteHistory
+        .map((round) => {
+          const voteDesc = round.votes
+            .map((v) => `${v.voterSeatNo}号→${v.targetSeatNo}号`)
+            .join("、");
+          const eliminated =
+            round.eliminatedSeatNo != null
+              ? ` → ${round.eliminatedSeatNo}号被淘汰`
+              : ` → 平票，无人淘汰`;
+          return `  第${round.roundNo}轮：${voteDesc}${eliminated}`;
+        })
+        .join("\n");
+    }
+
+    return renderTemplate("user-sim-human-vote-template.txt", vars);
   }
 
   private formatPersonaInfo(context: GameContext): string {
@@ -415,16 +522,32 @@ export class AiService {
   private formatHistoricalMessages(
     messages: Array<ChatMessageInput & { roundNo: number }>,
   ): string {
-    const grouped = new Map<number, string[]>();
+    const grouped = new Map<number, ChatMessageInput[]>();
     for (const msg of messages) {
-      const prefix = msg.isSelf ? "你" : msg.playerName;
       const lines = grouped.get(msg.roundNo) ?? [];
-      lines.push(`    ${prefix}：${msg.content}`);
+      lines.push(msg);
       grouped.set(msg.roundNo, lines);
     }
 
     return [...grouped.entries()]
-      .map(([roundNo, lines]) => [`  第${roundNo}轮：`, ...lines].join("\n"))
+      .map(([roundNo, lines]) =>
+        [
+          `  第${roundNo}轮：`,
+          ...this.formatChatMessages(lines, "    ").split("\n"),
+        ].join("\n"),
+      )
+      .join("\n");
+  }
+
+  private formatChatMessages(
+    messages: ChatMessageInput[],
+    indent: string,
+  ): string {
+    return messages
+      .map((msg, index) => {
+        const prefix = msg.isSelf ? "你" : msg.playerName;
+        return `${indent}[${index + 1}] ${prefix}：${msg.content}`;
+      })
       .join("\n");
   }
 
@@ -538,6 +661,46 @@ export class AiService {
     }
 
     return { type: "skip" };
+  }
+
+  private parseSimulatedHumanSpeechResult(raw: string):
+    | {
+        type: "speak";
+        content: string;
+        targetResponseDelayMs: number;
+        nextCheckAfterMs: number;
+      }
+    | { type: "skip"; nextCheckAfterMs: number } {
+    const parsed = this.extractJson(raw);
+    if (!parsed) {
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
+    }
+
+    if (parsed.type === "skip") {
+      return {
+        type: "skip",
+        nextCheckAfterMs:
+          this.readPositiveInteger(parsed.nextCheckAfterMs) ??
+          DEFAULT_AI_NEXT_CHECK_MS,
+      };
+    }
+
+    if (parsed.type === "speak" && typeof parsed.content === "string") {
+      const content = parsed.content.trim().slice(0, 240);
+      if (content.length > 0) {
+        return {
+          type: "speak",
+          content,
+          targetResponseDelayMs:
+            this.readPositiveInteger(parsed.targetResponseDelayMs) ?? 4_000,
+          nextCheckAfterMs:
+            this.readPositiveInteger(parsed.nextCheckAfterMs) ??
+            DEFAULT_AI_NEXT_CHECK_MS,
+        };
+      }
+    }
+
+    return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
   }
 
   private parseSpeechStrategyResult(raw: string): AiSpeechStrategyAction {
@@ -729,5 +892,9 @@ export class AiService {
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
     return items.length === value.length ? items : null;
+  }
+
+  private isSimulatedHumanContext(context: GameContext): boolean {
+    return context.myPlayerType === "human" && context.mySimulated;
   }
 }

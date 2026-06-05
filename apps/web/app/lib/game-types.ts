@@ -15,6 +15,7 @@ export type PublicPlayer = {
   seatNo: number;
   connected: boolean;
   revealedType?: "human" | "ai";
+  simulated?: boolean;
   eliminatedRound?: number;
   aiPersonaId?: string;
   aiPersonaName?: string;

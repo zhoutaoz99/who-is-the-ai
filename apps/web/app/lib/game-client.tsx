@@ -40,7 +40,11 @@ type GameClientContextValue = {
   leaveRoom: (roomId: string) => Promise<ActionResult>;
   reconnectRoom: (roomId: string) => Promise<ActionResult>;
   startGame: (roomId: string) => Promise<ActionResult>;
-  addDebugAi: (roomId: string, personaId?: string) => Promise<ActionResult>;
+  addDebugAi: (
+    roomId: string,
+    playerType?: "human" | "ai",
+    personaId?: string,
+  ) => Promise<ActionResult>;
   removeDebugAi: (roomId: string, aiPlayerId: string) => Promise<ActionResult>;
   deleteDebugAutoAiRoom: (roomId: string) => Promise<ActionResult>;
   updateDiscussionDuration: (
@@ -376,10 +380,15 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
         }),
-      addDebugAi: (roomId: string, personaId?: string) =>
+      addDebugAi: (
+        roomId: string,
+        playerType: "human" | "ai" = "ai",
+        personaId?: string,
+      ) =>
         emitAction("debug.ai.add", {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
+          playerType,
           personaId,
         }),
       removeDebugAi: (roomId: string, aiPlayerId: string) =>

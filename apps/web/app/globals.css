@@ -2635,6 +2635,12 @@ p {
   color: #34d399;
 }
 
+.identity-tag.human.simulated {
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #fbbf24;
+}
+
 .game-player-status {
   align-items: center;
   display: flex;
@@ -2756,6 +2762,11 @@ p {
 .msg-source.human {
   background: rgba(52, 211, 153, 0.15);
   color: #6ee7b7;
+}
+
+.msg-source.human.simulated {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
 }
 
 .msg-content {
@@ -3186,6 +3197,11 @@ p {
   color: #2563eb;
 }
 
+.identity-tag.human.simulated {
+  background: #fffbeb;
+  color: #b45309;
+}
+
 .identity-tag.ai {
   background: #fef3c7;
   color: #b54708;
@@ -3276,12 +3292,12 @@ p {
 
 .replay-votes {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .replay-vote {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 13px;
@@ -3289,6 +3305,7 @@ p {
   background: #f8fafc;
   border-radius: 6px;
   border: 1px solid var(--line);
+  width: fit-content;
 }
 
 .replay-vote-voter,

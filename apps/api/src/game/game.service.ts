@@ -23,6 +23,10 @@ import {
   MAX_HUMAN_PLAYERS,
   NEXT_ROUND_DELAY_MS,
   REWARD_POOL,
+  SIM_HUMAN_SPEECH_COOLDOWN_MS,
+  SIM_HUMAN_SPEECH_NEXT_CHECK_MAX_MS,
+  SIM_HUMAN_SPEECH_RESPONSE_DELAY_MAX_MS,
+  SIM_HUMAN_SPEECH_SKIP_BACKOFF_MS,
   SPEAK_COOLDOWN_MS,
   VOTE_DURATION_MS,
 } from "./game.config";
@@ -33,13 +37,17 @@ import {
   chooseFallbackVoteTarget,
   countAi,
   countHumans,
+  countSimulatedHumans,
   createAiPlayer,
   createAiPlayers,
   createDebugAutoAiPlayers,
   createHumanPlayer,
+  createSimulatedHumanPlayer,
   createRoomId,
   futureIso,
   getWinner,
+  isModelDrivenPlayer,
+  isSimulatedHuman,
   normalizeContent,
   normalizeDiscussionDuration,
   normalizeRoomId,
@@ -52,6 +60,7 @@ import { toPublicMessage, toRoomSnapshot } from "./game.snapshot";
 import {
   ActionResult,
   CastVotePayload,
+  ChatMessage,
   CreateDebugAutoAiRoomPayload,
   CreateRoomPayload,
   DebugAddAiPayload,
@@ -208,7 +217,7 @@ export class GameService {
       }
 
       if (latest.debugAutoAi) {
-        failure = "全 AI 自动对局不能加入真人玩家";
+        failure = "自动对抗调试房不能加入真人玩家";
         return false;
       }
 
@@ -453,8 +462,13 @@ export class GameService {
           return false;
         }
 
+        if (countSimulatedHumans(latest) < 1) {
+          failure = "至少需要 1 名模拟真人玩家";
+          return false;
+        }
+
         if (!canStartDebugAutoAiRoom(latest)) {
-          failure = "全 AI 自动对局至少需要 1 个主动破冰型 AI";
+          failure = "自动对局至少需要 1 名 AI 和 1 名模拟真人";
           return false;
         }
       } else if (countHumans(latest) < 1) {
@@ -475,9 +489,11 @@ export class GameService {
         player.status = "alive";
         player.lastSpokeAt = 0;
         player.eliminatedRound = undefined;
-        player.aiLastConsideredRound = undefined;
-        player.aiLastConsideredAt = undefined;
-        player.aiSkipBackoffUntil = undefined;
+        if (isModelDrivenPlayer(player)) {
+          player.aiLastConsideredRound = undefined;
+          player.aiLastConsideredAt = undefined;
+          player.aiSkipBackoffUntil = undefined;
+        }
       }
 
       if (!isDebugAutoAiRoom) {
@@ -647,51 +663,65 @@ export class GameService {
 
     const room = await this.applyWithLock(roomId, (latest) => {
       const isDebugAutoAiRoom = latest.debugAutoAi === true;
+      const playerType = payload.playerType === "human" ? "human" : "ai";
       if (latest.status !== "waiting") {
-        failure = "只能在等待房间添加 AI";
+        failure = "只能在等待房间添加调试玩家";
         return false;
       }
 
       if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
-        failure = "只有房主可以添加 AI";
+        failure = "只有房主可以添加调试玩家";
+        return false;
+      }
+
+      if (!isDebugAutoAiRoom && playerType !== "ai") {
+        failure = "普通房间只能添加 AI 玩家";
         return false;
       }
 
       const existingAiCount = latest.players.filter(
         (player) => player.type === "ai",
       ).length;
-      if (!isDebugAutoAiRoom && existingAiCount >= AI_PLAYER_COUNT) {
+      if (playerType === "ai" && !isDebugAutoAiRoom && existingAiCount >= AI_PLAYER_COUNT) {
         failure = "AI 名额已满";
-        return false;
-      }
-
-      const usedPersonaIds = new Set(
-        latest.players.flatMap((player) =>
-          player.aiPersonaId ? [player.aiPersonaId] : [],
-        ),
-      );
-      const selectedPersona = payload.personaId
-        ? getAiPersonaById(payload.personaId)
-        : isDebugAutoAiRoom
-          ? randomItem(AI_PERSONAS)
-          : (AI_PERSONAS.find((persona) => !usedPersonaIds.has(persona.id)) ??
-              AI_PERSONAS[0]);
-      if (!selectedPersona) {
-        failure = "AI 人格不存在";
-        return false;
-      }
-      if (!isDebugAutoAiRoom && usedPersonaIds.has(selectedPersona.id)) {
-        failure = "该 AI 人格已在房间中";
         return false;
       }
 
       const nextSeatNo =
         Math.max(0, ...latest.players.map((player) => player.seatNo)) + 1;
-      const player = createAiPlayer(
-        nextSeatNo,
-        selectedPersona.id,
-        latest.players.map((candidate) => candidate.name),
-      );
+      let player: Player;
+      if (playerType === "ai") {
+        const usedPersonaIds = new Set(
+          latest.players.flatMap((player) =>
+            player.aiPersonaId ? [player.aiPersonaId] : [],
+          ),
+        );
+        const selectedPersona = payload.personaId
+          ? getAiPersonaById(payload.personaId)
+          : isDebugAutoAiRoom
+            ? randomItem(AI_PERSONAS)
+            : (AI_PERSONAS.find((persona) => !usedPersonaIds.has(persona.id)) ??
+                AI_PERSONAS[0]);
+        if (!selectedPersona) {
+          failure = "AI 人格不存在";
+          return false;
+        }
+        if (!isDebugAutoAiRoom && usedPersonaIds.has(selectedPersona.id)) {
+          failure = "该 AI 人格已在房间中";
+          return false;
+        }
+
+        player = createAiPlayer(
+          nextSeatNo,
+          selectedPersona.id,
+          latest.players.map((candidate) => candidate.name),
+        );
+      } else {
+        player = createSimulatedHumanPlayer(
+          nextSeatNo,
+          latest.players.map((candidate) => candidate.name),
+        );
+      }
       latest.players.push(player);
       if (
         isDebugAutoAiRoom &&
@@ -725,20 +755,23 @@ export class GameService {
     const room = await this.applyWithLock(roomId, (latest) => {
       const isDebugAutoAiRoom = latest.debugAutoAi === true;
       if (latest.status !== "waiting") {
-        failure = "只能在等待房间删除 AI";
+        failure = "只能在等待房间删除调试玩家";
         return false;
       }
 
       if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
-        failure = "只有房主可以删除 AI";
+        failure = "只有房主可以删除调试玩家";
         return false;
       }
 
+      const targetPlayerId = payload.targetPlayerId ?? payload.aiPlayerId;
       const target = latest.players.find(
-        (player) => player.id === payload.aiPlayerId && player.type === "ai",
+        (player) =>
+          player.id === targetPlayerId &&
+          (isDebugAutoAiRoom ? isModelDrivenPlayer(player) : player.type === "ai"),
       );
       if (!target) {
-        failure = "AI 玩家不存在";
+        failure = "调试玩家不存在";
         return false;
       }
 
@@ -780,11 +813,11 @@ export class GameService {
     }
 
     if (!room.debugAutoAi) {
-      return this.fail("只能删除全 AI 自动对局");
+      return this.fail("只能删除自动对抗调试房");
     }
 
     if (room.status !== "waiting") {
-      return this.fail("只能删除未开局的全 AI 自动对局");
+      return this.fail("只能删除未开局的自动对抗调试房");
     }
 
     this.clearTimers(room.id);
@@ -868,7 +901,7 @@ export class GameService {
       latest.phase = "discussion";
       latest.phaseEndsAt = futureIso(latest.discussionDurationMs);
       for (const player of latest.players) {
-        if (player.type === "ai") {
+        if (isModelDrivenPlayer(player)) {
           player.aiSkipBackoffUntil = undefined;
         }
       }
@@ -886,7 +919,7 @@ export class GameService {
     this.broadcastRoom(room);
     this.server?.to(room.id).emit("round.started", toRoomSnapshot(room));
     this.startTick(room);
-    this.startAiSpeech(room.id);
+    this.startAiSpeech(room);
 
     this.getTimers(room.id).phase = setTimeout(() => {
       void this.startVotingById(room.id);
@@ -1032,8 +1065,9 @@ export class GameService {
     }, 1_000);
   }
 
-  private startAiSpeech(roomId: string) {
-    const scheduleNext = (delayMs = AI_SPEECH_INITIAL_CHECK_MS) => {
+  private startAiSpeech(room: Room) {
+    const roomId = room.id;
+    const scheduleNext = (delayMs: number) => {
       this.getTimers(roomId).aiSpeech = setTimeout(async () => {
         const room = await this.getRoom(roomId);
         if (!room) {
@@ -1063,7 +1097,10 @@ export class GameService {
         try {
           const context = this.buildGameContext(room, aiPlayer);
           const action = await this.aiService.generateSpeech(context);
-          nextDelayMs = this.clampAiNextCheckDelay(action.nextCheckAfterMs);
+          nextDelayMs = this.clampModelNextCheckDelay(
+            action.nextCheckAfterMs,
+            aiPlayer,
+          );
 
           const latestAfterModel = await this.getRoom(room.id);
           if (
@@ -1092,8 +1129,9 @@ export class GameService {
 
           if (action.type === "speak") {
             const elapsedMs = Date.now() - decisionStartedAt;
-            const targetDelayMs = this.clampAiResponseDelay(
+            const targetDelayMs = this.clampModelResponseDelay(
               action.targetResponseDelayMs,
+              aiPlayer,
             );
             const remainingDelayMs = Math.max(0, targetDelayMs - elapsedMs);
             if (remainingDelayMs > 0) {
@@ -1113,7 +1151,7 @@ export class GameService {
               const freshAiPlayer = latest.players.find(
                 (player) =>
                   player.id === aiPlayer.id &&
-                  player.type === "ai" &&
+                  isModelDrivenPlayer(player) &&
                   player.status === "alive",
               );
               if (!freshAiPlayer) {
@@ -1140,6 +1178,12 @@ export class GameService {
             if (saved) {
               this.aiService.recordCalls(action.callRecords);
               this.broadcastRoom(saved);
+              if (aiPlayer.type === "ai" && this.hasAliveSimulatedHuman(saved)) {
+                nextDelayMs = Math.min(
+                  nextDelayMs,
+                  this.randomSimulatedHumanFollowupDelay(),
+                );
+              }
             }
           }
         } finally {
@@ -1154,16 +1198,16 @@ export class GameService {
       }, delayMs);
     };
 
-    scheduleNext();
+    scheduleNext(AI_SPEECH_INITIAL_CHECK_MS);
   }
 
   private selectAiSpeechPlayer(room: Room): Player | null {
     const now = Date.now();
     const candidates = room.players.filter(
       (player) =>
-        player.type === "ai" &&
+        isModelDrivenPlayer(player) &&
         player.status === "alive" &&
-        now - player.lastSpokeAt >= SPEAK_COOLDOWN_MS &&
+        now - player.lastSpokeAt >= this.modelSpeechCooldownMs(player) &&
         (player.aiSkipBackoffUntil ?? 0) <= now,
     );
 
@@ -1171,6 +1215,27 @@ export class GameService {
       return null;
     }
 
+    const lastMessage = this.lastCurrentRoundMessage(room);
+    const shouldPressureLatestAi =
+      lastMessage &&
+      room.players.some(
+        (player) =>
+          player.id === lastMessage.playerId &&
+          player.type === "ai",
+      );
+    if (shouldPressureLatestAi) {
+      const simulatedHumanCandidates = candidates.filter((player) =>
+        isSimulatedHuman(player),
+      );
+      if (simulatedHumanCandidates.length > 0) {
+        return this.selectByRoundFreshness(room, simulatedHumanCandidates);
+      }
+    }
+
+    return this.selectByRoundFreshness(room, candidates);
+  }
+
+  private selectByRoundFreshness(room: Room, candidates: Player[]): Player {
     const unspokenAndUnconsidered = candidates.filter(
       (player) =>
         !this.hasAiSpokenThisRound(room, player.id) &&
@@ -1221,7 +1286,7 @@ export class GameService {
       const player = latest.players.find(
         (candidate) =>
           candidate.id === aiPlayerId &&
-          candidate.type === "ai" &&
+          isModelDrivenPlayer(candidate) &&
           candidate.status === "alive",
       );
       if (!player) {
@@ -1230,7 +1295,8 @@ export class GameService {
 
       player.aiLastConsideredRound = roundNo;
       player.aiLastConsideredAt = Date.now();
-      player.aiSkipBackoffUntil = Date.now() + AI_SPEECH_SKIP_BACKOFF_MS;
+      player.aiSkipBackoffUntil =
+        Date.now() + this.modelSpeechSkipBackoffMs(player);
       touch(latest);
       return true;
     });
@@ -1266,11 +1332,70 @@ export class GameService {
     );
   }
 
+  private clampModelNextCheckDelay(delayMs: number, player: Player): number {
+    if (isSimulatedHuman(player)) {
+      return Math.min(
+        SIM_HUMAN_SPEECH_NEXT_CHECK_MAX_MS,
+        Math.max(AI_SPEECH_NEXT_CHECK_MIN_MS, delayMs),
+      );
+    }
+
+    return this.clampAiNextCheckDelay(delayMs);
+  }
+
   private clampAiResponseDelay(delayMs: number): number {
     return Math.min(
       AI_SPEECH_RESPONSE_DELAY_MAX_MS,
       Math.max(AI_SPEECH_RESPONSE_DELAY_MIN_MS, delayMs),
     );
+  }
+
+  private clampModelResponseDelay(delayMs: number, player: Player): number {
+    if (isSimulatedHuman(player)) {
+      return Math.min(
+        SIM_HUMAN_SPEECH_RESPONSE_DELAY_MAX_MS,
+        Math.max(AI_SPEECH_RESPONSE_DELAY_MIN_MS, delayMs),
+      );
+    }
+
+    return this.clampAiResponseDelay(delayMs);
+  }
+
+  private modelSpeechCooldownMs(player: Player): number {
+    return isSimulatedHuman(player)
+      ? SIM_HUMAN_SPEECH_COOLDOWN_MS
+      : SPEAK_COOLDOWN_MS;
+  }
+
+  private modelSpeechSkipBackoffMs(player: Player): number {
+    return isSimulatedHuman(player)
+      ? SIM_HUMAN_SPEECH_SKIP_BACKOFF_MS
+      : AI_SPEECH_SKIP_BACKOFF_MS;
+  }
+
+  private hasAliveSimulatedHuman(room: Room): boolean {
+    return room.players.some(
+      (player) => isSimulatedHuman(player) && player.status === "alive",
+    );
+  }
+
+  private lastCurrentRoundMessage(room: Room): ChatMessage | null {
+    for (let index = room.messages.length - 1; index >= 0; index -= 1) {
+      const message = room.messages[index];
+      if (message.roundNo === room.currentRound) {
+        return message;
+      }
+    }
+
+    return null;
+  }
+
+  private randomSimulatedHumanFollowupDelay(): number {
+    return this.randomBetween(1_000, 2_000);
+  }
+
+  private randomBetween(minMs: number, maxMs: number): number {
+    return minMs + Math.random() * (maxMs - minMs);
   }
 
   private randomAiStaleRetryDelay(): number {
@@ -1289,7 +1414,7 @@ export class GameService {
 
   private scheduleAiVotes(room: Room) {
     const aiPlayers = room.players.filter(
-      (player) => player.type === "ai" && player.status === "alive",
+      (player) => isModelDrivenPlayer(player) && player.status === "alive",
     );
 
     aiPlayers.forEach((aiPlayer, index) => {
@@ -1308,7 +1433,7 @@ export class GameService {
     const aiPlayer = room.players.find(
       (player) =>
         player.id === aiPlayerId &&
-        player.type === "ai" &&
+        isModelDrivenPlayer(player) &&
         player.status === "alive",
     );
     if (!aiPlayer) {
@@ -1400,8 +1525,10 @@ export class GameService {
       remainingTimeMs: remainingMs,
       myName: aiPlayer.name,
       myPlayerId: aiPlayer.id,
+      myPlayerType: aiPlayer.type,
+      mySimulated: isSimulatedHuman(aiPlayer),
       mySeatNo: aiPlayer.seatNo,
-      myPersona: getAiPersonaById(aiPlayer.aiPersonaId),
+      myPersona: aiPlayer.type === "ai" ? getAiPersonaById(aiPlayer.aiPersonaId) : null,
       alivePlayers,
       recentMessages,
       historicalMessages,

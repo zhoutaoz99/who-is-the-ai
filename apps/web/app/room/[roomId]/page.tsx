@@ -332,8 +332,12 @@ export default function WaitingRoomPage() {
   );
   const debugAiPlayers =
     room?.players.filter((player) => player.revealedType === "ai") ?? [];
-  const debugAiCount =
-    debugAiPlayers.length;
+  const debugSimulatedHumanPlayers =
+    room?.players.filter(
+      (player) => player.revealedType === "human" && player.simulated,
+    ) ?? [];
+  const debugAiCount = debugAiPlayers.length;
+  const debugSimulatedHumanCount = debugSimulatedHumanPlayers.length;
   const canAddDebugAi =
     isDebugAutoAiRoom || debugAiCount < (room?.config.aiPlayerCount ?? 0);
   const isOwner = Boolean(
@@ -355,10 +359,14 @@ export default function WaitingRoomPage() {
       room?.players.find((p) => p.id === playerId && !p.connected),
   );
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
+  const [selectedDebugPlayerType, setSelectedDebugPlayerType] =
+    useState<"ai" | "human">("ai");
+  const isAddingDebugAi = selectedDebugPlayerType === "ai";
   const availablePersonaOptions = isDebugAutoAiRoom
     ? personaOptions
     : personaOptions.filter((persona) => !usedAiPersonaIds.has(persona.id));
   const selectedDebugPersonaId =
+    isAddingDebugAi &&
     canAddDebugAi &&
     selectedPersonaId &&
     (isDebugAutoAiRoom || !usedAiPersonaIds.has(selectedPersonaId))
@@ -482,10 +490,18 @@ export default function WaitingRoomPage() {
   }
 
   async function handleAddDebugAi() {
-    if (!room || !selectedDebugPersonaId) {
+    if (!room) {
       return;
     }
-    await addDebugAi(room.id, selectedDebugPersonaId);
+    if (selectedDebugPlayerType === "ai" && !selectedDebugPersonaId) {
+      return;
+    }
+
+    await addDebugAi(
+      room.id,
+      selectedDebugPlayerType,
+      selectedDebugPlayerType === "ai" ? selectedDebugPersonaId : undefined,
+    );
   }
 
   async function handleRemoveDebugAi(aiPlayerId: string) {
@@ -661,10 +677,10 @@ export default function WaitingRoomPage() {
                   height="18"
                   style={{ color: "var(--accent)" }}
                 />
-                <span>真人玩家</span>
+                <span>{room.debugAutoAi ? "模拟真人" : "真人玩家"}</span>
                 <strong>
                   {room.debugAutoAi
-                    ? humanCount(room)
+                    ? debugSimulatedHumanCount
                     : `${humanCount(room)}/${room.config.maxHumanPlayers}`}
                 </strong>
               </div>
@@ -753,7 +769,7 @@ export default function WaitingRoomPage() {
                 {!room.canStart && (
                   <p className="muted-text canstart-hint">
                     {isDebugAutoAiRoom
-                      ? "需要至少 1 个主动破冰型 AI"
+                      ? "需要至少 1 名 AI 和 1 名模拟真人"
                       : "等待更多玩家加入后才能开始"}
                   </p>
                 )}
@@ -779,59 +795,76 @@ export default function WaitingRoomPage() {
                 {canManageDebugAi && personaOptions.length > 0 && (
                   <div className="debug-ai-controls">
                     <div className="debug-ai-header">
-                      <span>调试 AI</span>
+                      <span>调试玩家</span>
                       <strong>
                         {isDebugAutoAiRoom
-                          ? `${debugAiCount} 个`
+                          ? `AI ${debugAiCount} / 模拟真人 ${debugSimulatedHumanCount}`
                           : `${debugAiCount}/${room.config.aiPlayerCount}`}
                       </strong>
                     </div>
                     <div className="debug-ai-row">
                       <select
                         className="debug-ai-select"
-                        value={selectedDebugPersonaId}
-                        disabled={
-                          pending ||
-                          (!isDebugAutoAiRoom && !canAddDebugAi) ||
-                          availablePersonaOptions.length === 0
-                        }
+                        value={selectedDebugPlayerType}
+                        disabled={pending || !isDebugAutoAiRoom}
                         onChange={(event) =>
-                          setSelectedPersonaId(event.target.value)
+                          setSelectedDebugPlayerType(
+                            event.target.value === "human" ? "human" : "ai",
+                          )
                         }
                       >
-                        {!canAddDebugAi && (
-                          <option value="">AI 名额已满</option>
-                        )}
-                        {canAddDebugAi &&
-                          availablePersonaOptions.length === 0 && (
-                            <option value="">人格已添加完</option>
-                          )}
-                        {personaOptions.map((persona) => {
-                          const used =
-                            !isDebugAutoAiRoom &&
-                            usedAiPersonaIds.has(persona.id);
-                          return (
-                            <option
-                              disabled={used}
-                              key={persona.id}
-                              value={persona.id}
-                            >
-                              {persona.name}
-                              {used ? "（已添加）" : ""}
-                            </option>
-                          );
-                        })}
+                        <option value="ai">AI 玩家</option>
+                        <option value="human" disabled={!isDebugAutoAiRoom}>
+                          模拟真人
+                        </option>
                       </select>
+                      {isAddingDebugAi && (
+                        <select
+                          className="debug-ai-select"
+                          value={selectedDebugPersonaId}
+                          disabled={
+                            pending ||
+                            (!isDebugAutoAiRoom && !canAddDebugAi) ||
+                            availablePersonaOptions.length === 0
+                          }
+                          onChange={(event) =>
+                            setSelectedPersonaId(event.target.value)
+                          }
+                        >
+                          {!canAddDebugAi && (
+                            <option value="">AI 名额已满</option>
+                          )}
+                          {canAddDebugAi &&
+                            availablePersonaOptions.length === 0 && (
+                              <option value="">人格已添加完</option>
+                            )}
+                          {personaOptions.map((persona) => {
+                            const used =
+                              !isDebugAutoAiRoom &&
+                              usedAiPersonaIds.has(persona.id);
+                            return (
+                              <option
+                                disabled={used}
+                                key={persona.id}
+                                value={persona.id}
+                              >
+                                {persona.name}
+                                {used ? "（已添加）" : ""}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      )}
                       <button
                         className="secondary debug-ai-add-btn"
                         disabled={
                           pending ||
-                          (!isDebugAutoAiRoom && !canAddDebugAi) ||
-                          !selectedDebugPersonaId
+                          (!isDebugAutoAiRoom && (!isAddingDebugAi || !canAddDebugAi)) ||
+                          (isAddingDebugAi && !selectedDebugPersonaId)
                         }
                         onClick={handleAddDebugAi}
                       >
-                        添加 AI
+                        {isAddingDebugAi ? "添加 AI" : "添加模拟真人"}
                       </button>
                     </div>
                   </div>
@@ -883,6 +916,8 @@ export default function WaitingRoomPage() {
                 const isSelf = player.id === playerId;
                 const isRoomOwner = player.id === room.ownerPlayerId;
                 const isAi = player.revealedType === "ai";
+                const isSimulatedHuman =
+                  player.revealedType === "human" && player.simulated;
                 const seatBgColors = [
                   "#0f766e",
                   "#2563eb",
@@ -898,7 +933,7 @@ export default function WaitingRoomPage() {
 
                 return (
                   <div
-                    className={`player-row waiting-player-row ${isSelf ? "is-self" : ""} ${isAi ? "is-ai" : ""} ${!player.connected ? "is-offline" : ""}`}
+                    className={`player-row waiting-player-row ${isSelf ? "is-self" : ""} ${isAi ? "is-ai" : ""} ${isSimulatedHuman ? "is-simulated-human" : ""} ${!player.connected ? "is-offline" : ""}`}
                     key={player.id}
                     style={{ animationDelay: `${index * 0.05}s` }}
                   >
@@ -913,6 +948,11 @@ export default function WaitingRoomPage() {
                         <strong>{player.name}</strong>
                         {isSelf && <span className="self">你</span>}
                         {isAi && <span className="identity-tag ai">AI</span>}
+                        {isSimulatedHuman && (
+                          <span className="identity-tag human simulated">
+                            模拟真人
+                          </span>
+                        )}
                         {player.aiPersonaName && (
                           <span className="waiting-persona-tag">
                             {player.aiPersonaName}
@@ -947,7 +987,7 @@ export default function WaitingRoomPage() {
                         )}
                       </div>
                     </div>
-                    {canManageDebugAi && isAi && (
+                    {canManageDebugAi && (isAi || isSimulatedHuman) && (
                       <button
                         className="debug-ai-remove-btn"
                         disabled={pending}

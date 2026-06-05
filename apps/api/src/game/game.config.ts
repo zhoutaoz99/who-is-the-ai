@@ -1,6 +1,11 @@
 export const MAX_HUMAN_PLAYERS = 5;
 export const AI_PLAYER_COUNT = 2;
-export const DEBUG_AUTO_AI_PLAYER_COUNT = 3;
+export const DEBUG_AUTO_AI_PLAYER_COUNT = Number(
+  process.env.DEBUG_AUTO_AI_PLAYER_COUNT ?? AI_PLAYER_COUNT,
+);
+export const DEBUG_AUTO_SIMULATED_HUMAN_COUNT = Number(
+  process.env.DEBUG_AUTO_SIMULATED_HUMAN_COUNT ?? 3,
+);
 export const ACTIVE_ICEBREAKER_PERSONA_ID = "active_icebreaker";
 export const MAX_ROUNDS = 4;
 export const REWARD_POOL = 2000;
@@ -21,6 +26,10 @@ export const AI_SPEECH_RESPONSE_DELAY_MAX_MS = 20_000;
 export const AI_SPEECH_STALE_RETRY_MIN_MS = 500;
 export const AI_SPEECH_STALE_RETRY_MAX_MS = 1_500;
 export const AI_SPEECH_SKIP_BACKOFF_MS = 8_000;
+export const SIM_HUMAN_SPEECH_COOLDOWN_MS = 8_000;
+export const SIM_HUMAN_SPEECH_NEXT_CHECK_MAX_MS = 15_000;
+export const SIM_HUMAN_SPEECH_RESPONSE_DELAY_MAX_MS = 12_000;
+export const SIM_HUMAN_SPEECH_SKIP_BACKOFF_MS = 4_000;
 export const AI_VOTE_DELAY_MS = 1_500;
 export const AI_VOTE_STAGGER_MS = 1_200;
 export const AUTO_RESOLVE_DELAY_MS = 500;
@@ -36,4 +45,15 @@ export const AI_NAMES = [
   "沈星",
   "陆白",
   "江野",
+];
+
+export const SIMULATED_HUMAN_NAMES = [
+  "顾南",
+  "唐一",
+  "苏禾",
+  "秦川",
+  "何夏",
+  "程远",
+  "叶宁",
+  "宋雨",
 ];

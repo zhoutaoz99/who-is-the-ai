@@ -36,9 +36,10 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
       .sort((a, b) => a.seatNo - b.seatNo)
       .filter((player) => !hideAi || player.type !== "ai")
       .map((player) => {
-        const exposeDebugAi =
-          player.type === "ai" && (showDebugWaitingAi || showDebugAutoAi);
-        const persona = revealTypes || exposeDebugAi
+        const exposeDebugType =
+          showDebugAutoAi ||
+          (player.type === "ai" && showDebugWaitingAi);
+        const persona = revealTypes || exposeDebugType
           ? getAiPersonaById(player.aiPersonaId)
           : null;
         return {
@@ -50,8 +51,12 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
           eliminatedRound: player.eliminatedRound,
           revealedType: revealTypes
             ? player.type
-            : exposeDebugAi
+            : exposeDebugType
               ? player.type
+              : undefined,
+          simulated:
+            revealTypes || showDebugAutoAi
+              ? player.simulated === true
               : undefined,
           aiPersonaId: persona?.id,
           aiPersonaName: persona?.name,
@@ -83,8 +88,9 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
     },
     canStart:
       room.status === "waiting" &&
-      (countHumans(room) >= 1 ||
-        (showDebugAutoAi && canStartDebugAutoAiRoom(room))),
+      (showDebugAutoAi
+        ? canStartDebugAutoAiRoom(room)
+        : countHumans(room) >= 1),
     debug: DEBUG || undefined,
     debugAutoAi: showDebugAutoAi || undefined,
     updatedAt: room.updatedAt,
