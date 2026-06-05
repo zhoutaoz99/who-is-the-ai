@@ -263,6 +263,7 @@ export default function Home() {
     createRoom,
     createDebugAutoAiRoom,
     joinRoom,
+    deleteRoom,
   } = useGameClient();
   const lobbyDisabled = pending || authPending || !user;
 
@@ -296,7 +297,7 @@ export default function Home() {
     .sort((a, b) => {
     if (a.status === "finished" && b.status !== "finished") return 1;
     if (a.status !== "finished" && b.status === "finished") return -1;
-    return 0;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
   const totalPages = Math.max(1, Math.ceil(sortedRooms.length / ROOMS_PER_PAGE));
@@ -597,8 +598,7 @@ export default function Home() {
                       key={room.id}
                       data-status={room.status}
                       disabled={
-                        (room.status === "playing" && !isDebugAutoAiRoom) ||
-                        (!isDebugAutoAiRoom && lobbyDisabled)
+                        room.status === "playing" && !isDebugAutoAiRoom
                       }
                       onClick={() => {
                         if (room.status === "finished") {
@@ -624,6 +624,11 @@ export default function Home() {
                                 {winnerLabel(room.winner)}
                               </span>
                             )}
+                            {room.status === "finished" && !room.winner && (
+                              <span className="room-tag terminated">
+                                手动停止
+                              </span>
+                            )}
                             {room.status !== "finished" && (
                               <>
                                 <span className="room-stat">
@@ -645,16 +650,68 @@ export default function Home() {
                           </div>
                         </div>
                         {room.status === "waiting" && (
-                          <span className="room-join-hint">
-                            {isDebugAutoAiRoom ? "管理 →" : "加入 →"}
-                          </span>
+                          <div className="replay-room-actions">
+                            <span className="room-join-hint">
+                              {isDebugAutoAiRoom ? "管理 →" : "加入 →"}
+                            </span>
+                            {debug && (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="delete-link-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm("确定删除该房间？")) {
+                                    void deleteRoom(room.id);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.stopPropagation();
+                                    if (confirm("确定删除该房间？")) {
+                                      void deleteRoom(room.id);
+                                    }
+                                  }
+                                }}
+                              >
+                                删除
+                              </span>
+                            )}
+                          </div>
                         )}
-                        {room.status === "playing" && isDebugAutoAiRoom && (
-                          <span className="room-join-hint">观察 →</span>
+                        {room.status === "playing" && (
+                          <div className="replay-room-actions">
+                            {isDebugAutoAiRoom && (
+                              <span className="room-join-hint">观察 →</span>
+                            )}
+                            {debug && (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="delete-link-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm("确定删除该房间？")) {
+                                    void deleteRoom(room.id);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.stopPropagation();
+                                    if (confirm("确定删除该房间？")) {
+                                      void deleteRoom(room.id);
+                                    }
+                                  }
+                                }}
+                              >
+                                删除
+                              </span>
+                            )}
+                          </div>
                         )}
                         {room.status === "finished" && (
                           <div className="replay-room-actions">
-                            <span className="room-join-hint">查看记录 →</span>
+                            <span className="replay-link-btn">查看记录 →</span>
                             {room.debug && (
                               <span
                                 role="button"
@@ -672,6 +729,29 @@ export default function Home() {
                                 }}
                               >
                                 复盘
+                              </span>
+                            )}
+                            {debug && (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className="delete-link-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (confirm("确定删除该房间？")) {
+                                    void deleteRoom(room.id);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.stopPropagation();
+                                    if (confirm("确定删除该房间？")) {
+                                      void deleteRoom(room.id);
+                                    }
+                                  }
+                                }}
+                              >
+                                删除
                               </span>
                             )}
                           </div>

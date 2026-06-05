@@ -66,6 +66,7 @@ import {
   DebugAddAiPayload,
   DebugDeleteAutoAiRoomPayload,
   DebugRemoveAiPayload,
+  DeleteRoomPayload,
   GameAccount,
   JoinRoomPayload,
   LeaveRoomPayload,
@@ -312,6 +313,10 @@ export class GameService {
     const roomId = normalizeRoomId(payload.roomId);
 
     const room = await this.applyWithLock(roomId, (room) => {
+      if (room.status === "finished") {
+        return false;
+      }
+
       const player = room.players.find(
         (candidate) => candidate.id === payload.playerId && candidate.type === "human",
       );
@@ -364,8 +369,12 @@ export class GameService {
         freshPlayer.connected = false;
         freshPlayer.socketId = undefined;
 
-        if (room.status === "playing" || room.status === "finished") {
+        if (room.status === "playing") {
           touch(room);
+          return true;
+        }
+
+        if (room.status === "finished") {
           return true;
         }
 
@@ -818,6 +827,24 @@ export class GameService {
 
     if (room.status !== "waiting") {
       return this.fail("只能删除未开局的自动对抗调试房");
+    }
+
+    this.clearTimers(room.id);
+    await this.roomRepository.delete(room.id);
+    return {
+      ok: true,
+      deletedRoomId: room.id,
+    };
+  }
+
+  async deleteRoom(payload: DeleteRoomPayload): Promise<ActionResult> {
+    if (!DEBUG) {
+      return this.fail("调试模式未开启");
+    }
+
+    const room = await this.getRoom(payload.roomId);
+    if (!room) {
+      return this.fail("房间不存在");
     }
 
     this.clearTimers(room.id);

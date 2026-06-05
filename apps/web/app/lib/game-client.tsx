@@ -47,6 +47,7 @@ type GameClientContextValue = {
   ) => Promise<ActionResult>;
   removeDebugAi: (roomId: string, aiPlayerId: string) => Promise<ActionResult>;
   deleteDebugAutoAiRoom: (roomId: string) => Promise<ActionResult>;
+  deleteRoom: (roomId: string) => Promise<ActionResult>;
   updateDiscussionDuration: (
     roomId: string,
     discussionDurationMinutes: number,
@@ -402,6 +403,8 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
         }),
+      deleteRoom: (roomId: string) =>
+        emitAction("room.delete", { roomId }),
       updateDiscussionDuration: (
         roomId: string,
         discussionDurationMinutes: number,

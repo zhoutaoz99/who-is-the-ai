@@ -18,6 +18,7 @@ import {
   DebugAddAiPayload,
   DebugDeleteAutoAiRoomPayload,
   DebugRemoveAiPayload,
+  DeleteRoomPayload,
   JoinRoomPayload,
   LeaveRoomPayload,
   ReconnectPayload,
@@ -208,6 +209,11 @@ export class GameGateway
     @MessageBody() payload: DebugDeleteAutoAiRoomPayload,
   ) {
     return this.gameService.deleteDebugAutoAiRoom(payload ?? {});
+  }
+
+  @SubscribeMessage("room.delete")
+  async handleDeleteRoom(@MessageBody() payload: DeleteRoomPayload) {
+    return this.gameService.deleteRoom(payload ?? {});
   }
 
   @SubscribeMessage("room.duration.update")

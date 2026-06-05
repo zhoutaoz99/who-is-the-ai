@@ -93,6 +93,7 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
         : countHumans(room) >= 1),
     debug: DEBUG || undefined,
     debugAutoAi: showDebugAutoAi || undefined,
+    createdAt: room.createdAt,
     updatedAt: room.updatedAt,
   };
 }

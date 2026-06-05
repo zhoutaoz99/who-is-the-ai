@@ -542,9 +542,17 @@ export default function GamePage() {
               </p>
             </div>
           </div>
-          <button className="secondary" onClick={() => router.push("/")}>
-            返回大厅
-          </button>
+          <div className="result-banner-actions">
+            <button
+              className="secondary"
+              onClick={() => router.push(`/replay/${room.id}`)}
+            >
+              复盘
+            </button>
+            <button className="secondary" onClick={() => router.push("/")}>
+              返回大厅
+            </button>
+          </div>
         </section>
       )}
 

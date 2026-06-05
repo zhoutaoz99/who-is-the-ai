@@ -1652,6 +1652,11 @@ p {
   color: #05603a;
 }
 
+.room-tag.terminated {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .room-stat {
   align-items: center;
   color: var(--muted);
@@ -2520,6 +2525,12 @@ p {
   line-height: 1.5;
   margin: 0;
   opacity: 0.9;
+}
+
+.result-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* Panel header with icon */
@@ -3559,6 +3570,7 @@ p {
   padding: 3px 10px;
   border-radius: 6px;
   background: #eff6ff;
+  border: 1px solid transparent;
   color: #2563eb;
   cursor: pointer;
   display: inline-block;
@@ -3566,6 +3578,24 @@ p {
 
 .replay-link-btn:hover {
   background: #dbeafe;
+  border: 1px solid #93c5fd;
+}
+
+.delete-link-btn {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: #fef2f2;
+  border: 1px solid transparent;
+  color: #dc2626;
+  cursor: pointer;
+  display: inline-block;
+}
+
+.delete-link-btn:hover {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
 }
 
 .replay-header-actions {

@@ -120,6 +120,7 @@ export interface RoomSnapshot {
   canStart: boolean;
   debug?: boolean;
   debugAutoAi?: boolean;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -193,6 +194,10 @@ export interface DebugRemoveAiPayload {
 export interface DebugDeleteAutoAiRoomPayload {
   roomId?: string;
   playerId?: string;
+}
+
+export interface DeleteRoomPayload {
+  roomId?: string;
 }
 
 export interface UpdateDiscussionDurationPayload {
