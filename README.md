@@ -91,6 +91,14 @@ cp .env.example .env
 AI_API_KEY=sk-your-key-here
 ```
 
+一键复盘分析使用独立模型配置，不复用对局 AI 模型：
+
+```bash
+REPLAY_ANALYSIS_BASE_URL=https://api.example.com/v1
+REPLAY_ANALYSIS_API_KEY=sk-your-replay-analysis-key
+REPLAY_ANALYSIS_MODEL=your-review-model
+```
+
 其余变量均有默认值，按需修改。`DATABASE_URL` 和 `REDIS_URL` 无需修改，`docker-compose.yml` 已使用容器内部主机名。
 
 ### 2. 构建并启动

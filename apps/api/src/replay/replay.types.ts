@@ -30,3 +30,7 @@ export interface ReplayResponse {
   aiCallLogs: AiCallLog[];
   error?: string;
 }
+
+export interface ReplayAnalyzeRequest {
+  replay?: unknown;
+}

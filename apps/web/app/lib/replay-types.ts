@@ -45,3 +45,7 @@ export type DebugCallResponse = {
   thinkingContent?: string;
   error?: string;
 };
+
+export type ReplayAnalyzeRequest = {
+  replay: unknown;
+};

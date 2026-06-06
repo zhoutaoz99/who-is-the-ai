@@ -773,6 +773,138 @@ export class AiService {
     }
   }
 
+  async streamModel(
+    systemPrompt: string,
+    userPrompt: string,
+    modelConfig: AiModelCallConfig,
+    onChunk: (chunk: string) => void,
+    options?: {
+      baseURL?: string;
+      apiKey?: string;
+      timeoutMs?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<void> {
+    const baseURL = options?.baseURL ?? this.config.baseURL;
+    const apiKey = options?.apiKey ?? this.config.apiKey;
+    const timeoutMs = options?.timeoutMs ?? this.config.timeoutMs;
+    const url = `${baseURL}/chat/completions`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      timeoutMs,
+    );
+    const abortFromParent = () => controller.abort();
+    options?.signal?.addEventListener("abort", abortFromParent);
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelConfig.model,
+          temperature: modelConfig.temperature,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          ...(modelConfig.thinking !== false ? { thinking: { type: "enabled" } } : {}),
+          reasoning_effort: modelConfig.reasoningEffort,
+          stream: true,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(
+          `API returned ${response.status}: ${body.slice(0, 200)}`,
+        );
+      }
+
+      if (!response.body) {
+        throw new Error("API returned empty stream");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const chunk = this.parseStreamLine(line);
+          if (chunk === null) {
+            continue;
+          }
+
+          if (chunk === "[DONE]") {
+            return;
+          }
+
+          if (chunk.length > 0) {
+            onChunk(chunk);
+          }
+        }
+      }
+
+      buffer += decoder.decode();
+      const finalChunk = this.parseStreamLine(buffer);
+      if (finalChunk && finalChunk !== "[DONE]") {
+        onChunk(finalChunk);
+      }
+    } finally {
+      clearTimeout(timeout);
+      options?.signal?.removeEventListener("abort", abortFromParent);
+    }
+  }
+
+  private parseStreamLine(line: string): string | null {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const payload = trimmed.startsWith("data:")
+      ? trimmed.slice("data:".length).trim()
+      : trimmed;
+    if (!payload) {
+      return null;
+    }
+
+    if (payload === "[DONE]") {
+      return "[DONE]";
+    }
+
+    try {
+      const parsed = JSON.parse(payload) as {
+        choices?: Array<{
+          delta?: { content?: string };
+          message?: { content?: string };
+          text?: string;
+        }>;
+      };
+      return parsed.choices?.[0]?.delta?.content ??
+        parsed.choices?.[0]?.message?.content ??
+        parsed.choices?.[0]?.text ??
+        "";
+    } catch {
+      return null;
+    }
+  }
+
   private describeModelConfig(config: AiModelCallConfig): string {
     return `${config.model}/temp=${config.temperature}/reasoning=${config.reasoningEffort}`;
   }

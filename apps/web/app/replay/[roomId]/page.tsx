@@ -1,8 +1,12 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import type { AiCallLog, DebugCallResponse, ReplayData } from "../../lib/replay-types";
+import { useEffect, useRef, useState } from "react";
+import type {
+  AiCallLog,
+  DebugCallResponse,
+  ReplayData,
+} from "../../lib/replay-types";
 import type {
   PublicMessage,
   PublicVoteResult,
@@ -429,7 +433,12 @@ export default function ReplayPage() {
   const [error, setError] = useState<string | null>(null);
   const [localPrompts, setLocalPrompts] = useState<Record<string, string>>({});
   const [showSkips, setShowSkips] = useState(false);
-  const [includeUserPrompt, setIncludeUserPrompt] = useState(false);
+  const [includeUserPrompt, setIncludeUserPrompt] = useState(true);
+  const [analysisText, setAnalysisText] = useState<string | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysisInterrupted, setAnalysisInterrupted] = useState(false);
+  const analysisAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetch(`${API_URL}/replay/${roomId}`)
@@ -449,6 +458,12 @@ export default function ReplayPage() {
       .then((res) => res.json())
       .then((prompts: Record<string, string>) => setLocalPrompts(prompts))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      analysisAbortRef.current?.abort();
+    };
   }, []);
 
   if (loading) {
@@ -492,7 +507,7 @@ export default function ReplayPage() {
   }
   const rounds = [...roundMap.values()];
 
-  function handleExport(
+  function buildReplayExportData(
     room: NonNullable<ReplayData["room"]>,
     aiCallLogs: AiCallLog[],
     includeSkips: boolean,
@@ -513,7 +528,7 @@ export default function ReplayPage() {
       return base;
     };
 
-    const exportData = {
+    return {
       roomId: room.id,
       winner: room.winner,
       currentRound: room.currentRound,
@@ -534,7 +549,7 @@ export default function ReplayPage() {
       rounds: rounds.map((r) => {
         const timeline = buildTimeline(r.messages, r.votes, r.aiCalls, playerMap);
         const messages: Record<string, unknown>[] = [];
-        const voteRounds: { votes: Record<string, unknown>[]; aiCalls: Record<string, unknown>[] }[] = [];
+        const voteRounds: { votes: Record<string, unknown>[] }[] = [];
         for (const item of timeline) {
           if (item.type === "message") {
             messages.push({
@@ -582,6 +597,20 @@ export default function ReplayPage() {
         };
       }),
     };
+  }
+
+  function handleExport(
+    room: NonNullable<ReplayData["room"]>,
+    aiCallLogs: AiCallLog[],
+    includeSkips: boolean,
+    includeUserPrompt: boolean,
+  ) {
+    const exportData = buildReplayExportData(
+      room,
+      aiCallLogs,
+      includeSkips,
+      includeUserPrompt,
+    );
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], {
       type: "application/json",
@@ -592,6 +621,89 @@ export default function ReplayPage() {
     a.download = `replay-${room.id}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function handleAnalyzeReplay() {
+    if (analysisLoading) {
+      analysisAbortRef.current?.abort();
+      return;
+    }
+
+    const abortController = new AbortController();
+    analysisAbortRef.current = abortController;
+
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    setAnalysisText(null);
+    setAnalysisInterrupted(false);
+
+    const replay = buildReplayExportData(room, aiCallLogs, true, true);
+
+    try {
+      const res = await fetch(`${API_URL}/replay/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ replay }),
+        signal: abortController.signal,
+      });
+
+      if (!res.ok) {
+        const message = await readErrorResponse(res);
+        setAnalysisError(message || "复盘分析失败");
+        return;
+      }
+
+      if (!res.body) {
+        setAnalysisError("复盘分析响应为空");
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        const chunk = decoder.decode(value, { stream: true });
+        if (chunk) {
+          setAnalysisText((prev) => `${prev ?? ""}${chunk}`);
+        }
+      }
+
+      const finalChunk = decoder.decode();
+      if (finalChunk) {
+        setAnalysisText((prev) => `${prev ?? ""}${finalChunk}`);
+      }
+    } catch (err) {
+      if (abortController.signal.aborted) {
+        setAnalysisInterrupted(true);
+        return;
+      }
+
+      setAnalysisError(err instanceof Error ? err.message : "网络错误");
+    } finally {
+      if (analysisAbortRef.current === abortController) {
+        analysisAbortRef.current = null;
+      }
+      setAnalysisLoading(false);
+    }
+  }
+
+  async function readErrorResponse(res: Response) {
+    const text = await res.text().catch(() => "");
+    if (!text) {
+      return "";
+    }
+
+    try {
+      const parsed = JSON.parse(text) as { error?: string };
+      return parsed.error ?? text;
+    } catch {
+      return text;
+    }
   }
 
   return (
@@ -623,6 +735,12 @@ export default function ReplayPage() {
             <span className="replay-toggle-slider" />
             <span className="replay-toggle-label">导出用户提示词</span>
           </label>
+          <button
+            className="replay-analyze-btn"
+            onClick={handleAnalyzeReplay}
+          >
+            {analysisLoading ? "中断" : analysisText || analysisError || analysisInterrupted ? "重试复盘" : "一键复盘"}
+          </button>
           <button className="secondary" onClick={() => handleExport(room, aiCallLogs, showSkips, includeUserPrompt)}>
             导出 JSON
           </button>
@@ -631,6 +749,24 @@ export default function ReplayPage() {
           </button>
         </div>
       </header>
+
+      {(analysisLoading || analysisText || analysisError || analysisInterrupted) && (
+        <section className="replay-section replay-analysis-section">
+          <h2>一键复盘</h2>
+          {analysisLoading && (
+            <div className="replay-analysis-status">正在分析对局记录...</div>
+          )}
+          {analysisInterrupted && !analysisLoading && (
+            <div className="replay-analysis-status">已中断，可重试复盘。</div>
+          )}
+          {analysisError && (
+            <div className="replay-debug-error">{analysisError}</div>
+          )}
+          {analysisText && (
+            <pre className="replay-analysis-content">{analysisText}</pre>
+          )}
+        </section>
+      )}
 
       {/* Player Overview */}
       <section className="replay-section">
