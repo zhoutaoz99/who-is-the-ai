@@ -200,6 +200,9 @@ export class AiService {
           context.myName,
           "Speech Strategy Prompt",
           strategyUserPrompt,
+          context.roundNo,
+          context.mySeatNo,
+          undefined,
         ),
       );
       const strategyStartedAt = new Date().toISOString();
@@ -214,6 +217,9 @@ export class AiService {
           context.myName,
           "Raw Speech Strategy Response",
           strategyResult.slice(0, 500),
+          context.roundNo,
+          context.mySeatNo,
+          undefined,
         ),
       );
       callRecords.push({
@@ -250,6 +256,9 @@ export class AiService {
           context.myName,
           "Speech Expression Prompt",
           expressionUserPrompt,
+          context.roundNo,
+          context.mySeatNo,
+          undefined,
         ),
       );
       const expressionStartedAt = new Date().toISOString();
@@ -264,6 +273,9 @@ export class AiService {
           context.myName,
           "Raw Speech Expression Response",
           expressionResult.slice(0, 500),
+          context.roundNo,
+          context.mySeatNo,
+          undefined,
         ),
       );
       const expressionTemplatePrompt = this.buildSpeechExpressionPrompt(
@@ -324,6 +336,9 @@ export class AiService {
           context.myName,
           "Simulated Human Speech Prompt",
           userPrompt,
+          context.roundNo,
+          context.mySeatNo,
+          true,
         ),
       );
       const startedAt = new Date().toISOString();
@@ -338,6 +353,9 @@ export class AiService {
           context.myName,
           "Raw Simulated Human Speech Response",
           result.slice(0, 500),
+          context.roundNo,
+          context.mySeatNo,
+          true,
         ),
       );
 
@@ -398,7 +416,7 @@ export class AiService {
         ? this.buildSimulatedHumanVotePrompt(context, aiPlayerId)
         : this.buildVotePrompt(context, aiPlayerId);
       this.logger.log(
-        this.formatAiLog(context.myName, "Vote Prompt", userPrompt),
+        this.formatAiLog(context.myName, "Vote Prompt", userPrompt, context.roundNo, context.mySeatNo, isSimulatedHuman),
       );
       const voteStartedAt = new Date().toISOString();
       const result = await this.callModel(systemPrompt, userPrompt, modelConfig, callOptions);
@@ -407,6 +425,9 @@ export class AiService {
           context.myName,
           "Raw Vote Response",
           result.slice(0, 300),
+          context.roundNo,
+          context.mySeatNo,
+          isSimulatedHuman,
         ),
       );
       this.recorder?.record({
@@ -450,13 +471,18 @@ export class AiService {
     playerName: string,
     title: string,
     content: string,
+    roundNo?: number,
+    seatNo?: number,
+    simulated?: boolean,
   ): string {
+    const playerTypeTag = simulated ? "模拟真人" : "AI";
+    const prefix = roundNo != null && seatNo != null ? `[第${roundNo}轮 #${seatNo} ${playerTypeTag}] ` : "";
     const separator = "=".repeat(72);
     const subSeparator = "-".repeat(72);
     return [
       "",
       separator,
-      `[${playerName}] ${title}`,
+      `${prefix}[${playerName}] ${title}`,
       subSeparator,
       content,
       separator,
