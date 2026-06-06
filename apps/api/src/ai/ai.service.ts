@@ -15,6 +15,12 @@ import {
   GameContext,
 } from "./ai.types";
 import { loadPrompt, renderTemplate } from "./prompt-loader";
+import {
+  getSimulatedHumanIntensity,
+  getSimulatedHumanSpeechPromptFilename,
+  getSimulatedHumanVotePromptFilename,
+  SIMULATED_HUMAN_INTENSITY_ENV,
+} from "./sim-human-intensity";
 
 const DEFAULT_AI_NEXT_CHECK_MS = 10_000;
 const MAX_MODEL_SPEECH_CONTENT_LENGTH = 240;
@@ -29,6 +35,7 @@ export class AiService {
   private readonly config: AiConfig;
   private readonly models = new Map<string, AiModelEntry>();
   private readonly configPath = process.env.AI_MODELS_PATH || join(__dirname, "..", "..", "..", "..", "ai-models.json");
+  private readonly simulatedHumanIntensity = getSimulatedHumanIntensity();
   private recorder?: AiCallRecorder;
 
   setRecorder(recorder: AiCallRecorder) {
@@ -89,6 +96,10 @@ export class AiService {
       this.logger.warn("No default model found in ai-models.json, AI will skip speaking");
     }
 
+    this.logger.log(
+      `Simulated human intensity: ${this.simulatedHumanIntensity} ` +
+        `(${SIMULATED_HUMAN_INTENSITY_ENV})`,
+    );
   }
 
   private loadModels() {
@@ -330,7 +341,9 @@ export class AiService {
     const callOptions = override?.connection;
 
     try {
-      const systemPrompt = loadPrompt("system-sim-human-speech.txt");
+      const systemPrompt = loadPrompt(
+        getSimulatedHumanSpeechPromptFilename(this.simulatedHumanIntensity),
+      );
       const userPrompt = this.buildSimulatedHumanSpeechPrompt(context);
       this.logger.log(
         this.formatAiLog(
@@ -411,7 +424,9 @@ export class AiService {
     try {
       const isSimulatedHuman = this.isSimulatedHumanContext(context);
       const systemPrompt = loadPrompt(
-        isSimulatedHuman ? "system-sim-human-vote.txt" : "system-vote.txt",
+        isSimulatedHuman
+          ? getSimulatedHumanVotePromptFilename(this.simulatedHumanIntensity)
+          : "system-vote.txt",
       );
       const userPrompt = isSimulatedHuman
         ? this.buildSimulatedHumanVotePrompt(context, aiPlayerId)

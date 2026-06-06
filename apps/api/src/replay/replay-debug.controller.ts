@@ -2,6 +2,10 @@ import { Body, Controller, Get, Post } from "@nestjs/common";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { AiService } from "../ai/ai.service";
+import {
+  getSimulatedHumanSpeechPromptFilename,
+  getSimulatedHumanVotePromptFilename,
+} from "../ai/sim-human-intensity";
 import { DebugCallRequest, DebugCallResponse } from "../ai/ai.types";
 import { DEBUG } from "../game/game.config";
 
@@ -16,8 +20,8 @@ export class ReplayDebugController {
       "speech-strategy": readFileSync(join(dir, "system-speech-strategy.txt"), "utf-8").trim(),
       "speech-expression": readFileSync(join(dir, "system-speech-expression.txt"), "utf-8").trim(),
       vote: readFileSync(join(dir, "system-vote.txt"), "utf-8").trim(),
-      "sim-human-speech": readFileSync(join(dir, "system-sim-human-speech.txt"), "utf-8").trim(),
-      "sim-human-vote": readFileSync(join(dir, "system-sim-human-vote.txt"), "utf-8").trim(),
+      "sim-human-speech": readFileSync(join(dir, getSimulatedHumanSpeechPromptFilename()), "utf-8").trim(),
+      "sim-human-vote": readFileSync(join(dir, getSimulatedHumanVotePromptFilename()), "utf-8").trim(),
     };
   }
 
