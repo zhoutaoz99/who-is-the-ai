@@ -2,6 +2,25 @@ export interface AiModelCallConfig {
   model: string;
   temperature: number;
   reasoningEffort: string;
+  thinking?: boolean;
+}
+
+export interface AiModelEntry {
+  id: string;
+  default?: boolean;
+  baseURL: string;
+  apiKey: string;
+  model: string;
+  temperature: number;
+  reasoningEffort: string;
+  timeoutMs?: number;
+  thinking?: boolean;
+  expression?: {
+    model?: string;
+    temperature?: number;
+    reasoningEffort?: string;
+    thinking?: boolean;
+  };
 }
 
 export interface AiConfig extends AiModelCallConfig {
@@ -83,6 +102,7 @@ export interface GameContext {
   myPlayerId: string;
   myPlayerType: "human" | "ai";
   mySimulated: boolean;
+  myModelId?: string;
   mySeatNo: number;
   myPersona: AiPersonaContext | null;
   alivePlayers: Array<{ id: string; seatNo: number }>;

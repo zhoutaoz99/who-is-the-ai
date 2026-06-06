@@ -22,6 +22,7 @@ export interface Player {
   connected: boolean;
   eliminatedRound?: number;
   aiPersonaId?: string;
+  aiModelId?: string;
   aiLastConsideredRound?: number;
   aiLastConsideredAt?: number;
   aiSkipBackoffUntil?: number;
@@ -89,6 +90,7 @@ export interface PublicPlayer {
   eliminatedRound?: number;
   aiPersonaId?: string;
   aiPersonaName?: string;
+  aiModelId?: string;
 }
 
 export interface RoomSnapshot {
@@ -110,6 +112,10 @@ export interface RoomSnapshot {
     aiPersonas?: Array<{
       id: string;
       name: string;
+    }>;
+    availableModels?: Array<{
+      id: string;
+      default?: boolean;
     }>;
     maxRounds: number;
     discussionDurationMs: number;
@@ -178,6 +184,7 @@ export interface DebugAddAiPayload {
   playerId?: string;
   playerType?: PlayerType;
   personaId?: string;
+  modelId?: string;
 }
 
 export interface CreateDebugAutoAiRoomPayload {
@@ -189,6 +196,13 @@ export interface DebugRemoveAiPayload {
   playerId?: string;
   aiPlayerId?: string;
   targetPlayerId?: string;
+}
+
+export interface DebugUpdateModelPayload {
+  roomId?: string;
+  playerId?: string;
+  targetPlayerId?: string;
+  modelId?: string;
 }
 
 export interface DebugDeleteAutoAiRoomPayload {

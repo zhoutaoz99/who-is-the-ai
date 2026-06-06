@@ -20,7 +20,7 @@ import {
   RoomSnapshot,
 } from "./game.types";
 
-export function toRoomSnapshot(room: Room): RoomSnapshot {
+export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string; default?: boolean }>): RoomSnapshot {
   const revealTypes = room.status === "finished";
   const showDebugWaitingAi = DEBUG && room.status === "waiting";
   const showDebugAutoAi = DEBUG && room.debugAutoAi === true;
@@ -60,6 +60,7 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
               : undefined,
           aiPersonaId: persona?.id,
           aiPersonaName: persona?.name,
+          aiModelId: (revealTypes || exposeDebugType) ? player.aiModelId : undefined,
         };
       }),
     currentRound: room.currentRound,
@@ -80,6 +81,7 @@ export function toRoomSnapshot(room: Room): RoomSnapshot {
             name: persona.name,
           }))
         : undefined,
+      availableModels: (DEBUG && availableModels?.length) ? availableModels : undefined,
       maxRounds: MAX_ROUNDS,
       discussionDurationMs: room.discussionDurationMs,
       voteDurationMs: VOTE_DURATION_MS,

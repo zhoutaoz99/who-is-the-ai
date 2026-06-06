@@ -1,9 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   AiCallRecord,
   AiCallRecorder,
   AiConfig,
   AiModelCallConfig,
+  AiModelEntry,
   AiSpeechAction,
   AiSpeechStrategy,
   AiSpeechStrategyAction,
@@ -23,6 +26,8 @@ type ParsedSpeechContent =
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly config: AiConfig;
+  private readonly models = new Map<string, AiModelEntry>();
+  private readonly configPath = process.env.AI_MODELS_PATH || join(__dirname, "..", "..", "..", "..", "ai-models.json");
   private recorder?: AiCallRecorder;
 
   setRecorder(recorder: AiCallRecorder) {
@@ -36,27 +41,31 @@ export class AiService {
   }
 
   constructor() {
-    const defaultModelConfig = this.readModelCallConfig("AI");
+    this.loadModels();
 
-    this.config = {
-      baseURL: (process.env.AI_BASE_URL ?? "https://api.openai.com/v1").replace(
-        /\/+$/,
-        "",
-      ),
-      apiKey: process.env.AI_API_KEY ?? "",
-      ...defaultModelConfig,
-      timeoutMs: Number(process.env.AI_TIMEOUT_MS) || 15000,
-      speechStrategy: this.readModelCallConfig(
-        "AI_STRATEGY",
-        defaultModelConfig,
-      ),
-      speechExpression: this.readModelCallConfig(
-        "AI_EXPRESSION",
-        defaultModelConfig,
-      ),
-    };
-
-    if (this.config.apiKey) {
+    const defaultModel = this.getDefaultModel();
+    if (defaultModel) {
+      this.config = {
+        baseURL: defaultModel.baseURL,
+        apiKey: defaultModel.apiKey,
+        model: defaultModel.model,
+        temperature: defaultModel.temperature,
+        reasoningEffort: defaultModel.reasoningEffort,
+        thinking: defaultModel.thinking,
+        timeoutMs: defaultModel.timeoutMs ?? 15000,
+        speechStrategy: {
+          model: defaultModel.model,
+          temperature: defaultModel.temperature,
+          reasoningEffort: defaultModel.reasoningEffort,
+          thinking: defaultModel.thinking,
+        },
+        speechExpression: {
+          model: defaultModel.expression?.model ?? defaultModel.model,
+          temperature: defaultModel.expression?.temperature ?? defaultModel.temperature,
+          reasoningEffort: defaultModel.expression?.reasoningEffort ?? defaultModel.reasoningEffort,
+          thinking: defaultModel.expression?.thinking ?? defaultModel.thinking,
+        },
+      };
       this.logger.log(
         [
           `AI service configured: ${this.config.baseURL}`,
@@ -66,10 +75,106 @@ export class AiService {
         ].join(" "),
       );
     } else {
-      this.logger.warn(
-        "AI_API_KEY not set, AI will skip speaking",
-      );
+      this.config = {
+        baseURL: "",
+        apiKey: "",
+        model: "",
+        temperature: 0.7,
+        reasoningEffort: "high",
+        timeoutMs: 15000,
+        speechStrategy: { model: "", temperature: 0.7, reasoningEffort: "high" },
+        speechExpression: { model: "", temperature: 0.7, reasoningEffort: "high" },
+      };
+      this.logger.warn("No default model found in ai-models.json, AI will skip speaking");
     }
+
+  }
+
+  private loadModels() {
+    let raw: string | undefined;
+    try {
+      raw = readFileSync(this.configPath, "utf-8").trim();
+    } catch {
+      this.logger.warn(`ai-models.json not found at ${this.configPath}`);
+      return;
+    }
+
+    try {
+      const entries: AiModelEntry[] = JSON.parse(raw);
+      if (!Array.isArray(entries)) {
+        this.logger.warn("AI_MODELS must be a JSON array");
+        return;
+      }
+
+      for (const entry of entries) {
+        if (!entry.id || !entry.baseURL || !entry.apiKey || !entry.model) {
+          this.logger.warn(`Skipping invalid AI_MODELS entry: ${JSON.stringify(entry).slice(0, 200)}`);
+          continue;
+        }
+
+        const resolved: AiModelEntry = {
+          id: entry.id,
+          default: entry.default,
+          baseURL: entry.baseURL.replace(/\/+$/, ""),
+          apiKey: entry.apiKey,
+          model: entry.model,
+          temperature: entry.temperature ?? 0.7,
+          reasoningEffort: entry.reasoningEffort ?? "high",
+          timeoutMs: entry.timeoutMs,
+          thinking: entry.thinking,
+          expression: entry.expression,
+        };
+        this.models.set(resolved.id, resolved);
+        this.logger.log(
+          `Model "${resolved.id}": ${resolved.baseURL} model=${resolved.model}/temp=${resolved.temperature}`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to parse AI_MODELS: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  getAvailableModels(): Array<{ id: string; default?: boolean }> {
+    return Array.from(this.models.values()).map((m) => ({ id: m.id, default: m.default }));
+  }
+
+  getDefaultModelId(): string | undefined {
+    const entry = this.getDefaultModel();
+    return entry?.id;
+  }
+
+  private getDefaultModel(): AiModelEntry | undefined {
+    return Array.from(this.models.values()).find((m) => m.default === true);
+  }
+
+  private resolveModelOverride(modelId?: string) {
+    if (!modelId || !this.models.has(modelId)) {
+      return null;
+    }
+
+    const entry = this.models.get(modelId)!;
+
+    const mainConfig: AiModelCallConfig = {
+      model: entry.model,
+      temperature: entry.temperature,
+      reasoningEffort: entry.reasoningEffort,
+      thinking: entry.thinking,
+    };
+
+    const expressionConfig: AiModelCallConfig = {
+      model: entry.expression?.model ?? entry.model,
+      temperature: entry.expression?.temperature ?? entry.temperature,
+      reasoningEffort: entry.expression?.reasoningEffort ?? entry.reasoningEffort,
+      thinking: entry.expression?.thinking ?? entry.thinking,
+    };
+
+    const connection = {
+      baseURL: entry.baseURL,
+      apiKey: entry.apiKey,
+      timeoutMs: entry.timeoutMs ?? this.config.timeoutMs,
+    };
+
+    return { mainConfig, expressionConfig, connection };
   }
 
   async generateSpeech(context: GameContext): Promise<AiSpeechAction> {
@@ -80,6 +185,11 @@ export class AiService {
     if (this.isSimulatedHumanContext(context)) {
       return this.generateSimulatedHumanSpeech(context);
     }
+
+    const override = this.resolveModelOverride(context.myModelId);
+    const strategyConfig = override?.mainConfig ?? this.config.speechStrategy;
+    const expressionConfig = override?.expressionConfig ?? this.config.speechExpression;
+    const callOptions = override?.connection;
 
     try {
       const callRecords: AiCallRecord[] = [];
@@ -96,7 +206,8 @@ export class AiService {
       const strategyResult = await this.callModel(
         strategySystemPrompt,
         strategyUserPrompt,
-        this.config.speechStrategy,
+        strategyConfig,
+        callOptions,
       );
       this.logger.log(
         this.formatAiLog(
@@ -114,9 +225,9 @@ export class AiService {
         aiPlayerSeatNo: context.mySeatNo,
         userPrompt: strategyUserPrompt,
         rawResponse: strategyResult,
-        modelName: this.config.speechStrategy.model,
-        temperature: this.config.speechStrategy.temperature,
-        reasoningEffort: this.config.speechStrategy.reasoningEffort,
+        modelName: strategyConfig.model,
+        temperature: strategyConfig.temperature,
+        reasoningEffort: strategyConfig.reasoningEffort,
         createdAt: strategyStartedAt,
       });
 
@@ -145,7 +256,8 @@ export class AiService {
       const expressionResult = await this.callModel(
         expressionSystemPrompt,
         expressionUserPrompt,
-        this.config.speechExpression,
+        expressionConfig,
+        callOptions,
       );
       this.logger.log(
         this.formatAiLog(
@@ -167,9 +279,9 @@ export class AiService {
         aiPlayerSeatNo: context.mySeatNo,
         userPrompt: expressionUserPrompt,
         rawResponse: expressionResult,
-        modelName: this.config.speechExpression.model,
-        temperature: this.config.speechExpression.temperature,
-        reasoningEffort: this.config.speechExpression.reasoningEffort,
+        modelName: expressionConfig.model,
+        temperature: expressionConfig.temperature,
+        reasoningEffort: expressionConfig.reasoningEffort,
         templatePrompt: expressionTemplatePrompt,
         createdAt: expressionStartedAt,
       });
@@ -200,6 +312,10 @@ export class AiService {
   private async generateSimulatedHumanSpeech(
     context: GameContext,
   ): Promise<AiSpeechAction> {
+    const override = this.resolveModelOverride(context.myModelId);
+    const modelConfig = override?.mainConfig ?? this.config.speechStrategy;
+    const callOptions = override?.connection;
+
     try {
       const systemPrompt = loadPrompt("system-sim-human-speech.txt");
       const userPrompt = this.buildSimulatedHumanSpeechPrompt(context);
@@ -214,7 +330,8 @@ export class AiService {
       const result = await this.callModel(
         systemPrompt,
         userPrompt,
-        this.config.speechStrategy,
+        modelConfig,
+        callOptions,
       );
       this.logger.log(
         this.formatAiLog(
@@ -233,9 +350,9 @@ export class AiService {
         aiPlayerSeatNo: context.mySeatNo,
         userPrompt,
         rawResponse: result,
-        modelName: this.config.speechStrategy.model,
-        temperature: this.config.speechStrategy.temperature,
-        reasoningEffort: this.config.speechStrategy.reasoningEffort,
+        modelName: modelConfig.model,
+        temperature: modelConfig.temperature,
+        reasoningEffort: modelConfig.reasoningEffort,
         createdAt: startedAt,
       }];
 
@@ -268,6 +385,10 @@ export class AiService {
       return null;
     }
 
+    const override = this.resolveModelOverride(context.myModelId);
+    const modelConfig = override?.mainConfig ?? this.config;
+    const callOptions = override?.connection;
+
     try {
       const isSimulatedHuman = this.isSimulatedHumanContext(context);
       const systemPrompt = loadPrompt(
@@ -280,7 +401,7 @@ export class AiService {
         this.formatAiLog(context.myName, "Vote Prompt", userPrompt),
       );
       const voteStartedAt = new Date().toISOString();
-      const result = await this.callModel(systemPrompt, userPrompt, this.config);
+      const result = await this.callModel(systemPrompt, userPrompt, modelConfig, callOptions);
       this.logger.log(
         this.formatAiLog(
           context.myName,
@@ -297,9 +418,9 @@ export class AiService {
         aiPlayerSeatNo: context.mySeatNo,
         userPrompt,
         rawResponse: result,
-        modelName: this.config.model,
-        temperature: this.config.temperature,
-        reasoningEffort: this.config.reasoningEffort,
+        modelName: modelConfig.model,
+        temperature: modelConfig.temperature,
+        reasoningEffort: modelConfig.reasoningEffort,
         createdAt: voteStartedAt,
       });
       return this.parseVoteResult(result, context);
@@ -555,13 +676,17 @@ export class AiService {
     systemPrompt: string,
     userPrompt: string,
     modelConfig: AiModelCallConfig,
+    options?: { baseURL?: string; apiKey?: string; timeoutMs?: number },
   ): Promise<string> {
-    const url = `${this.config.baseURL}/chat/completions`;
+    const baseURL = options?.baseURL ?? this.config.baseURL;
+    const apiKey = options?.apiKey ?? this.config.apiKey;
+    const timeoutMs = options?.timeoutMs ?? this.config.timeoutMs;
+    const url = `${baseURL}/chat/completions`;
 
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
-      this.config.timeoutMs,
+      timeoutMs,
     );
 
     try {
@@ -569,7 +694,7 @@ export class AiService {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
           model: modelConfig.model,
@@ -578,7 +703,7 @@ export class AiService {
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
-          thinking: { type: "enabled" },
+          ...(modelConfig.thinking !== false ? { thinking: { type: "enabled" } } : {}),
           reasoning_effort: modelConfig.reasoningEffort,
         }),
         signal: controller.signal,
@@ -599,41 +724,6 @@ export class AiService {
     } finally {
       clearTimeout(timeout);
     }
-  }
-
-  private readModelCallConfig(
-    prefix: string,
-    fallback?: AiModelCallConfig,
-  ): AiModelCallConfig {
-    return {
-      model:
-        this.readStringEnv(`${prefix}_MODEL`) ??
-        fallback?.model ??
-        "gpt-4o-mini",
-      temperature:
-        this.readNumberEnv(`${prefix}_TEMPERATURE`) ??
-        fallback?.temperature ??
-        0.7,
-      reasoningEffort:
-        this.readStringEnv(`${prefix}_REASONING_EFFORT`) ??
-        fallback?.reasoningEffort ??
-        "high",
-    };
-  }
-
-  private readStringEnv(name: string): string | null {
-    const value = process.env[name]?.trim();
-    return value ? value : null;
-  }
-
-  private readNumberEnv(name: string): number | null {
-    const rawValue = this.readStringEnv(name);
-    if (!rawValue) {
-      return null;
-    }
-
-    const value = Number(rawValue);
-    return Number.isFinite(value) ? value : null;
   }
 
   private describeModelConfig(config: AiModelCallConfig): string {

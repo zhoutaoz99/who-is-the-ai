@@ -66,6 +66,7 @@ import {
   DebugAddAiPayload,
   DebugDeleteAutoAiRoomPayload,
   DebugRemoveAiPayload,
+  DebugUpdateModelPayload,
   DeleteRoomPayload,
   GameAccount,
   JoinRoomPayload,
@@ -108,6 +109,10 @@ export class GameService {
     private readonly roomRepository: GameRoomRepository,
   ) {}
 
+  private snapshot(room: Room): RoomSnapshot {
+    return toRoomSnapshot(room, this.aiService.getAvailableModels());
+  }
+
   bindServer(server: Server) {
     this.server = server;
   }
@@ -145,7 +150,7 @@ export class GameService {
     await this.roomRepository.save(room);
     return {
       ok: true,
-      room: toRoomSnapshot(room),
+      room: this.snapshot(room),
       playerId: host.id,
     };
   }
@@ -158,7 +163,8 @@ export class GameService {
     }
 
     const now = new Date().toISOString();
-    const aiPlayers = createDebugAutoAiPlayers(1);
+    const defaultModelId = this.aiService.getDefaultModelId();
+    const aiPlayers = createDebugAutoAiPlayers(1, undefined, undefined, defaultModelId);
     const room: Room = {
       id: createRoomId(),
       status: "waiting",
@@ -181,7 +187,7 @@ export class GameService {
     await this.roomRepository.save(room);
     return {
       ok: true,
-      room: toRoomSnapshot(room),
+      room: this.snapshot(room),
       playerId: room.ownerPlayerId,
     };
   }
@@ -245,7 +251,7 @@ export class GameService {
 
     return {
       ok: true,
-      room: toRoomSnapshot(room),
+      room: this.snapshot(room),
       playerId,
     };
   }
@@ -302,7 +308,7 @@ export class GameService {
 
     return {
       ok: true,
-      room: toRoomSnapshot(room),
+      room: this.snapshot(room),
     };
   }
 
@@ -338,7 +344,7 @@ export class GameService {
 
     return {
       ok: true,
-      room: toRoomSnapshot(room),
+      room: this.snapshot(room),
       playerId: payload.playerId,
     };
   }
@@ -396,7 +402,7 @@ export class GameService {
       });
 
       if (room) {
-        updatedRooms.push(toRoomSnapshot(room));
+        updatedRooms.push(this.snapshot(room));
       }
     }
 
@@ -447,7 +453,7 @@ export class GameService {
       return;
     }
 
-    this.server?.to(roomId).emit("room.updated", toRoomSnapshot(room));
+    this.server?.to(roomId).emit("room.updated", this.snapshot(room));
   }
 
   async startGame(payload: StartGamePayload): Promise<ActionResult> {
@@ -540,11 +546,11 @@ export class GameService {
     }
 
     this.afterDiscussionStarted(room);
-    this.server?.to(room.id).emit("game.started", toRoomSnapshot(room));
+    this.server?.to(room.id).emit("game.started", this.snapshot(room));
 
     return {
       ok: true,
-      room: toRoomSnapshot(room),
+      room: this.snapshot(room),
     };
   }
 
@@ -588,7 +594,7 @@ export class GameService {
 
     return {
       ok: true,
-      room: toRoomSnapshot(saved),
+      room: this.snapshot(saved),
     };
   }
 
@@ -611,7 +617,7 @@ export class GameService {
 
   async listRooms(): Promise<RoomSnapshot[]> {
     const rooms = await this.roomRepository.list();
-    return rooms.map((room) => toRoomSnapshot(room));
+    return rooms.map((room) => this.snapshot(room));
   }
 
   async stopGame(payload: StopGamePayload): Promise<ActionResult> {
@@ -652,7 +658,7 @@ export class GameService {
     }
 
     this.clearTimers(room.id);
-    const snapshot = toRoomSnapshot(room);
+    const snapshot = this.snapshot(room);
     this.broadcastRoom(room);
     this.server?.to(room.id).emit("game.ended", snapshot);
 
@@ -673,6 +679,7 @@ export class GameService {
     const room = await this.applyWithLock(roomId, (latest) => {
       const isDebugAutoAiRoom = latest.debugAutoAi === true;
       const playerType = payload.playerType === "human" ? "human" : "ai";
+      const modelId = payload.modelId || (isDebugAutoAiRoom ? this.aiService.getDefaultModelId() : undefined);
       if (latest.status !== "waiting") {
         failure = "只能在等待房间添加调试玩家";
         return false;
@@ -724,11 +731,13 @@ export class GameService {
           nextSeatNo,
           selectedPersona.id,
           latest.players.map((candidate) => candidate.name),
+          modelId,
         );
       } else {
         player = createSimulatedHumanPlayer(
           nextSeatNo,
           latest.players.map((candidate) => candidate.name),
+          modelId,
         );
       }
       latest.players.push(player);
@@ -749,7 +758,7 @@ export class GameService {
     this.broadcastRoom(room);
     return {
       ok: true,
-      room: toRoomSnapshot(room),
+      room: this.snapshot(room),
     };
   }
 
@@ -805,7 +814,45 @@ export class GameService {
     this.broadcastRoom(room);
     return {
       ok: true,
-      room: toRoomSnapshot(room),
+      room: this.snapshot(room),
+    };
+  }
+
+  async updateDebugModel(payload: DebugUpdateModelPayload): Promise<ActionResult> {
+    if (!DEBUG) {
+      return this.fail("调试模式未开启");
+    }
+
+    const roomId = normalizeRoomId(payload.roomId);
+    let failure = "房间不存在或操作冲突";
+
+    const room = await this.applyWithLock(roomId, (latest) => {
+      if (latest.status !== "waiting") {
+        failure = "只能在等待房间修改模型";
+        return false;
+      }
+
+      const target = latest.players.find(
+        (player) => player.id === payload.targetPlayerId && isModelDrivenPlayer(player),
+      );
+      if (!target) {
+        failure = "玩家不存在";
+        return false;
+      }
+
+      target.aiModelId = payload.modelId || this.aiService.getDefaultModelId();
+      touch(latest);
+      return true;
+    });
+
+    if (!room) {
+      return this.fail(failure);
+    }
+
+    this.broadcastRoom(room);
+    return {
+      ok: true,
+      room: this.snapshot(room),
     };
   }
 
@@ -890,7 +937,7 @@ export class GameService {
     this.broadcastRoom(room);
     return {
       ok: true,
-      room: toRoomSnapshot(room),
+      room: this.snapshot(room),
     };
   }
 
@@ -944,7 +991,7 @@ export class GameService {
   private afterDiscussionStarted(room: Room) {
     this.clearTimers(room.id);
     this.broadcastRoom(room);
-    this.server?.to(room.id).emit("round.started", toRoomSnapshot(room));
+    this.server?.to(room.id).emit("round.started", this.snapshot(room));
     this.startTick(room);
     this.startAiSpeech(room);
 
@@ -974,7 +1021,7 @@ export class GameService {
 
     this.clearTimers(room.id);
     this.broadcastRoom(room);
-    this.server?.to(room.id).emit("vote.started", toRoomSnapshot(room));
+    this.server?.to(room.id).emit("vote.started", this.snapshot(room));
     this.startTick(room);
     this.scheduleAiVotes(room);
 
@@ -1073,7 +1120,7 @@ export class GameService {
         }`,
       );
     }
-    const snapshot = toRoomSnapshot(saved);
+    const snapshot = this.snapshot(saved);
     this.broadcastRoom(saved);
     this.server?.to(saved.id).emit("game.ended", snapshot);
   }
@@ -1554,6 +1601,7 @@ export class GameService {
       myPlayerId: aiPlayer.id,
       myPlayerType: aiPlayer.type,
       mySimulated: isSimulatedHuman(aiPlayer),
+      myModelId: aiPlayer.aiModelId,
       mySeatNo: aiPlayer.seatNo,
       myPersona: aiPlayer.type === "ai" ? getAiPersonaById(aiPlayer.aiPersonaId) : null,
       alivePlayers,
@@ -1613,7 +1661,7 @@ export class GameService {
       return this.fail("投票失败，请重试");
     }
 
-    const snapshot = toRoomSnapshot(saved);
+    const snapshot = this.snapshot(saved);
     this.server?.to(saved.id).emit("vote.updated", snapshot);
     this.broadcastRoom(saved);
 
@@ -1836,7 +1884,7 @@ export class GameService {
   }
 
   private broadcastRoom(room: Room) {
-    this.server?.to(room.id).emit("room.updated", toRoomSnapshot(room));
+    this.server?.to(room.id).emit("room.updated", this.snapshot(room));
   }
 
   private getTimers(roomId: string): RoomTimers {

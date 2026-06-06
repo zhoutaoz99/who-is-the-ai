@@ -19,6 +19,7 @@ export type PublicPlayer = {
   eliminatedRound?: number;
   aiPersonaId?: string;
   aiPersonaName?: string;
+  aiModelId?: string;
 };
 
 export type PublicMessage = {
@@ -50,6 +51,11 @@ export type AiPersonaOption = {
   name: string;
 };
 
+export type AiModelOption = {
+  id: string;
+  default?: boolean;
+};
+
 export type RoomSnapshot = {
   id: string;
   status: RoomStatus;
@@ -67,6 +73,7 @@ export type RoomSnapshot = {
     maxHumanPlayers: number;
     aiPlayerCount: number;
     aiPersonas?: AiPersonaOption[];
+    availableModels?: AiModelOption[];
     maxRounds: number;
     discussionDurationMs: number;
     voteDurationMs: number;

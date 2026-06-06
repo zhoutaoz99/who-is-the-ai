@@ -1,0 +1,34 @@
+[
+  {
+    "id": "deepseek",
+    "default": true,
+    "baseURL": "https://api.deepseek.com",
+    "apiKey": "sk-xxx",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.6,
+    "thinking": true,
+    "reasoningEffort": "high",
+    "timeoutMs": 60000,
+    "expression": {
+      "model": "deepseek-v4-flash",
+      "temperature": 0.9,
+      "thinking": true,
+      "reasoningEffort": "medium"
+    }
+  },
+  {
+    "id": "mimo",
+    "default": false,
+    "baseURL": "https://api.xiaomimimo.com/v1",
+    "apiKey": "sk-xxx",
+    "model": "mimo-v2.5-pro",
+    "temperature": 0.6,
+    "thinking": true,
+    "timeoutMs": 60000,
+    "expression": {
+      "model": "mimo-v2.5",
+      "temperature": 0.9,
+      "thinking": true
+    }
+  }
+]

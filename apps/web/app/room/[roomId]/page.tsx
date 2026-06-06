@@ -317,6 +317,7 @@ export default function WaitingRoomPage() {
     startGame,
     addDebugAi,
     removeDebugAi,
+    updateDebugModel,
     deleteDebugAutoAiRoom,
     updateDiscussionDuration,
   } = useGameClient();
@@ -325,6 +326,8 @@ export default function WaitingRoomPage() {
   const playerId = getPlayerId(roomId);
   const isDebugAutoAiRoom = Boolean(room?.debugAutoAi);
   const personaOptions = room?.config.aiPersonas ?? [];
+  const modelOptions = room?.config.availableModels ?? [];
+  const defaultModelId = modelOptions.find((m) => m.default)?.id ?? modelOptions[0]?.id ?? "";
   const usedAiPersonaIds = new Set(
     room?.players.flatMap((player) =>
       player.aiPersonaId ? [player.aiPersonaId] : [],
@@ -359,6 +362,14 @@ export default function WaitingRoomPage() {
       room?.players.find((p) => p.id === playerId && !p.connected),
   );
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
+  const [selectedModelId, setSelectedModelId] = useState("");
+
+  useEffect(() => {
+    if (!selectedModelId && defaultModelId) {
+      setSelectedModelId(defaultModelId);
+    }
+  }, [selectedModelId, defaultModelId]);
+
   const [selectedDebugPlayerType, setSelectedDebugPlayerType] =
     useState<"ai" | "human">("ai");
   const isAddingDebugAi = selectedDebugPlayerType === "ai";
@@ -501,6 +512,7 @@ export default function WaitingRoomPage() {
       room.id,
       selectedDebugPlayerType,
       selectedDebugPlayerType === "ai" ? selectedDebugPersonaId : undefined,
+      selectedModelId || undefined,
     );
   }
 
@@ -855,6 +867,22 @@ export default function WaitingRoomPage() {
                           })}
                         </select>
                       )}
+                      {isDebugAutoAiRoom && modelOptions.length > 0 && (
+                        <select
+                          className="debug-ai-select"
+                          value={selectedModelId}
+                          disabled={pending}
+                          onChange={(event) =>
+                            setSelectedModelId(event.target.value)
+                          }
+                        >
+                          {modelOptions.map((model) => (
+                            <option key={model.id} value={model.id}>
+                              {model.id}{model.default ? " (默认)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       <button
                         className="secondary debug-ai-add-btn"
                         disabled={
@@ -913,8 +941,8 @@ export default function WaitingRoomPage() {
 
             <div className="waiting-player-list">
               {room.players.map((player, index) => {
-                const isSelf = player.id === playerId;
-                const isRoomOwner = player.id === room.ownerPlayerId;
+                const isSelf = !isDebugAutoAiRoom && player.id === playerId;
+                const isRoomOwner = !isDebugAutoAiRoom && player.id === room.ownerPlayerId;
                 const isAi = player.revealedType === "ai";
                 const isSimulatedHuman =
                   player.revealedType === "human" && player.simulated;
@@ -958,6 +986,28 @@ export default function WaitingRoomPage() {
                             {player.aiPersonaName}
                           </span>
                         )}
+                        {canManageDebugAi && modelOptions.length > 0 && (isAi || isSimulatedHuman) ? (
+                          <select
+                            className="debug-ai-select debug-model-inline"
+                            value={player.aiModelId || defaultModelId}
+                            disabled={pending}
+                            onChange={(event) => {
+                              if (room) {
+                                void updateDebugModel(room.id, player.id, event.target.value);
+                              }
+                            }}
+                          >
+                            {modelOptions.map((model) => (
+                              <option key={model.id} value={model.id}>
+                                {model.id}{model.default ? " *" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        ) : player.aiModelId ? (
+                          <span className="waiting-persona-tag model-tag">
+                            {player.aiModelId}
+                          </span>
+                        ) : null}
                         {isRoomOwner && (
                           <span className="owner-badge">
                             <IconCrown

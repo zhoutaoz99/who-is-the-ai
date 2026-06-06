@@ -165,6 +165,7 @@ export function createHumanPlayer(
 export function createSimulatedHumanPlayer(
   seatNo: number,
   usedNames: string[] = [],
+  modelId?: string,
 ): Player {
   const names = SIMULATED_HUMAN_NAMES.filter((name) => !usedNames.includes(name));
 
@@ -177,6 +178,7 @@ export function createSimulatedHumanPlayer(
     seatNo,
     lastSpokeAt: 0,
     connected: true,
+    aiModelId: modelId,
   };
 }
 
@@ -184,6 +186,7 @@ export function createAiPlayer(
   seatNo: number,
   personaId?: string,
   usedNames: string[] = [],
+  modelId?: string,
 ): Player {
   const names = AI_NAMES.filter((name) => !usedNames.includes(name));
   const selectedPersona =
@@ -199,6 +202,7 @@ export function createAiPlayer(
     lastSpokeAt: 0,
     connected: true,
     aiPersonaId: selectedPersona?.id,
+    aiModelId: modelId,
   };
 }
 
@@ -231,12 +235,13 @@ export function createDebugAutoAiPlayers(
   startSeatNo = 1,
   aiCount = DEBUG_AUTO_AI_PLAYER_COUNT,
   simulatedHumanCount = DEBUG_AUTO_SIMULATED_HUMAN_COUNT,
+  defaultModelId?: string,
 ): Player[] {
   const players: Player[] = [];
   const safeAiCount = Math.max(1, Math.floor(aiCount));
   const safeSimulatedHumanCount = Math.max(1, Math.floor(simulatedHumanCount));
 
-  players.push(createAiPlayer(startSeatNo, ACTIVE_ICEBREAKER_PERSONA_ID));
+  players.push(createAiPlayer(startSeatNo, ACTIVE_ICEBREAKER_PERSONA_ID, [], defaultModelId));
 
   const otherPersonaIds = AI_PERSONAS.filter(
     (persona) => persona.id !== ACTIVE_ICEBREAKER_PERSONA_ID,
@@ -252,6 +257,7 @@ export function createDebugAutoAiPlayers(
         startSeatNo + players.length,
         personaId,
         players.map((player) => player.name),
+        defaultModelId,
       ),
     );
   }
@@ -261,6 +267,7 @@ export function createDebugAutoAiPlayers(
       createSimulatedHumanPlayer(
         startSeatNo + players.length,
         players.map((player) => player.name),
+        defaultModelId,
       ),
     );
   }

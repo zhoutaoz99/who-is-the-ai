@@ -18,6 +18,7 @@ import {
   DebugAddAiPayload,
   DebugDeleteAutoAiRoomPayload,
   DebugRemoveAiPayload,
+  DebugUpdateModelPayload,
   DeleteRoomPayload,
   JoinRoomPayload,
   LeaveRoomPayload,
@@ -202,6 +203,11 @@ export class GameGateway
   @SubscribeMessage("debug.ai.remove")
   async handleDebugRemoveAi(@MessageBody() payload: DebugRemoveAiPayload) {
     return this.gameService.removeDebugAi(payload ?? {});
+  }
+
+  @SubscribeMessage("debug.ai.updateModel")
+  async handleDebugUpdateModel(@MessageBody() payload: DebugUpdateModelPayload) {
+    return this.gameService.updateDebugModel(payload ?? {});
   }
 
   @SubscribeMessage("debug.ai-room.delete")

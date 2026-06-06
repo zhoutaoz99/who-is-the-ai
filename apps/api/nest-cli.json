@@ -5,5 +5,8 @@
   "compilerOptions": {
     "assets": ["ai/prompts/*"],
     "watchAssets": true
+  },
+  "watchOptions": {
+    "watchPaths": ["../../ai-models.json"]
   }
 }

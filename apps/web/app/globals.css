@@ -2307,6 +2307,18 @@ p {
   padding: 1px 6px;
 }
 
+.waiting-persona-tag.model-tag {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.debug-model-inline {
+  min-height: 24px;
+  font-size: 11px;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
 .player-row-status {
   align-items: center;
   display: flex;
