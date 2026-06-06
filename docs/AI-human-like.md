@@ -138,6 +138,48 @@ AI 策略层已开始返回：
 
 工程层只做硬约束、时间裁剪和上下文过期校验。
 
+### 投票短期记忆
+
+第一版已落地轻量短期记忆：每个模型驱动玩家只记录自己的历史投票目标和模型输出的可公开投票理由，用于后续发言和投票时保持自洽。
+
+当前记忆结构挂在 `Room.aiMemories`，以玩家 ID 分桶，不进入公开 `RoomSnapshot`：
+
+```ts
+type AiShortMemory = {
+  votes: Array<{
+    roundNo: number;
+    targetSeatNo: number;
+    publicReason?: string;
+    source: "model" | "fallback";
+  }>;
+};
+```
+
+写入规则：
+
+- 只在投票真正成功写入 `room.votes` 后更新记忆。
+- 模型投票记录 `source: "model"` 和 `reason`。
+- 兜底投票记录 `source: "fallback"`，不伪造理由。
+- 每个玩家只保留最近 4 条投票记忆。
+- 记忆只给同一个模型驱动玩家自己看，不给其他玩家或其他 AI 看。
+
+Prompt 使用方式：
+
+- `GameContext.shortMemory` 只读取 `room.aiMemories[myPlayerId]`。
+- 发言策略 prompt 和投票 prompt 都会看到“你的短期记忆”。
+- 模板明确说明：短期记忆只代表自己的公开投票记录和可公开解释；如果与聊天记录冲突，以聊天记录为准。
+
+已实现文件：
+
+- `apps/api/src/game/game.types.ts`
+- `apps/api/src/game/game.service.ts`
+- `apps/api/src/ai/ai.types.ts`
+- `apps/api/src/ai/ai.service.ts`
+- `apps/api/src/ai/prompts/user-speech-strategy-template.txt`
+- `apps/api/src/ai/prompts/user-vote-template.txt`
+- `apps/api/src/ai/prompts/user-sim-human-speech-template.txt`
+- `apps/api/src/ai/prompts/user-sim-human-vote-template.txt`
+
 ## 可实施方案
 
 ### 阶段 1：继续打磨 Prompt
@@ -217,29 +259,50 @@ type AiPersona = {
 2. 给不同 persona 设置不同 `targetResponseDelayMs` 偏好。
 3. persona 与 AI 名字做稳定搭配，减少割裂感。
 
-### 阶段 3：发言记忆与立场连续性
+### 阶段 3：扩展发言记忆与立场连续性
 
 目标：减少 AI 前后观点跳跃，让 AI 有“自己的视角”。
 
-建议维护轻量记忆：
+当前已完成投票短期记忆。后续如果 replay 显示 AI 仍然存在“刚质疑过又突然改口”“被追问但忘记回应”“重复使用同一类表达动作”等问题，再扩展到发言立场记忆。
+
+建议扩展结构：
 
 ```ts
-type AiMemory = {
-  suspiciousSeats: Array<{ seatNo: number; reason: string; confidence: number }>;
-  defendedSeats: Array<{ seatNo: number; reason: string }>;
-  lastStanceSummary: string;
-  repeatedPhrases: string[];
+type ExtendedAiShortMemory = {
+  votes: Array<{
+    roundNo: number;
+    targetSeatNo: number;
+    publicReason?: string;
+    source: "model" | "fallback";
+  }>;
+  publicStances: Array<{
+    seatNo: number;
+    stance: "suspect" | "defend" | "neutral";
+    reason: string;
+    roundNo: number;
+  }>;
+  pendingReplies: Array<{
+    fromSeatNo: number;
+    topic: string;
+    roundNo: number;
+  }>;
+  openQuestions: Array<{
+    toSeatNo: number;
+    question: string;
+    roundNo: number;
+  }>;
+  recentSelfNotes: string[];
 };
 ```
 
-实现步骤：
+后续实现步骤：
 
-1. 每轮结束后根据聊天和投票生成每个 AI 的短摘要。
-2. 下轮 `GameContext` 增加 `myMemorySummary`。
-3. 策略层要求不要无理由推翻自己的上轮立场。
-4. 表达层要求避免重复自己的 `repeatedPhrases`。
+1. 成功发言后根据策略层的 `replyTo / speechAct / publicPoint` 更新自己的公开立场。
+2. 记录自己提出的问题，后续观察目标玩家是否回应。
+3. 记录别人对自己的直接质疑，避免下一次发言漏回应。
+4. 记录最近表达动作或高频话术，降低重复感。
 
-优先级：`P1/P2`。需要有更多 replay 样本后再做。
+优先级：`P1/P2`。先观察投票记忆版 replay，再决定是否扩展。
 
 ### 阶段 4：上下文信息质量判断
 
@@ -290,8 +353,9 @@ type AiMemory = {
 
 1. 继续补 prompt 示例和禁用话术，成本最低，收益直接。
 2. 接入 persona，让两个 AI 说话风格分化。
-3. 增加 AI 记忆摘要，保证跨轮立场一致。
-4. 建设 replay 评估闭环，避免凭感觉改 prompt。
+3. 已接入投票短期记忆，先通过 replay 验证跨轮投票解释是否更一致。
+4. 如仍出现立场跳跃，再扩展发言立场、待回应问题和重复话术记忆。
+5. 建设 replay 评估闭环，避免凭感觉改 prompt。
 
 ## 当前最佳实践
 
