@@ -59,6 +59,8 @@ import {
 import { toPublicMessage, toRoomSnapshot } from "./game.snapshot";
 import {
   ActionResult,
+  AiShortMemory,
+  AiVoteMemorySource,
   CastVotePayload,
   ChatMessage,
   CreateDebugAutoAiRoomPayload,
@@ -498,6 +500,7 @@ export class GameService {
       latest.phaseEndsAt = futureIso(latest.discussionDurationMs);
       latest.messages = [];
       latest.votes = [];
+      latest.aiMemories = {};
       latest.pointAwards = [];
       latest.rewardSettledAt = null;
       for (const player of latest.players) {
@@ -1518,13 +1521,18 @@ export class GameService {
     const voteAction = await this.aiService.generateVote(context, aiPlayer.id);
 
     if (voteAction) {
-      await this.castVoteForPlayer(room, aiPlayer, voteAction.targetPlayerId);
+      await this.castVoteForPlayer(room, aiPlayer, voteAction.targetPlayerId, {
+        voteReason: voteAction.reason,
+        voteSource: "model",
+      });
       return;
     }
 
     const target = chooseFallbackVoteTarget(room, aiPlayer);
     if (target) {
-      await this.castVoteForPlayer(room, aiPlayer, target.id);
+      await this.castVoteForPlayer(room, aiPlayer, target.id, {
+        voteSource: "fallback",
+      });
     }
   }
 
@@ -1610,13 +1618,41 @@ export class GameService {
       myLastSpeech: myLastMessage?.content ?? null,
       currentVoteCounts,
       voteHistory,
+      shortMemory: room.aiMemories?.[aiPlayer.id] ?? null,
     };
+  }
+
+  private rememberAiVote(
+    room: Room,
+    voter: Player,
+    target: Player,
+    options?: { voteReason?: string; voteSource?: AiVoteMemorySource },
+  ) {
+    if (!isModelDrivenPlayer(voter)) {
+      return;
+    }
+
+    room.aiMemories ??= {};
+    const memory = room.aiMemories[voter.id] ?? this.createEmptyAiMemory();
+    memory.votes.push({
+      roundNo: room.currentRound,
+      targetSeatNo: target.seatNo,
+      publicReason: options?.voteReason,
+      source: options?.voteSource ?? "model",
+    });
+    memory.votes = memory.votes.slice(-4);
+    room.aiMemories[voter.id] = memory;
+  }
+
+  private createEmptyAiMemory(): AiShortMemory {
+    return { votes: [] };
   }
 
   private async castVoteForPlayer(
     room: Room,
     voter: Player,
     targetPlayerId?: string,
+    options?: { voteReason?: string; voteSource?: AiVoteMemorySource },
   ): Promise<ActionResult> {
     const saved = await this.applyWithLock(room.id, (latest) => {
       if (latest.status !== "playing" || latest.phase !== "voting") {
@@ -1653,6 +1689,7 @@ export class GameService {
         targetPlayerId: target.id,
         createdAt: new Date().toISOString(),
       });
+      this.rememberAiVote(latest, freshVoter, target, options);
       touch(latest);
       return true;
     });

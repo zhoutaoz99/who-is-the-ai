@@ -60,6 +60,17 @@ export interface PointAward {
   points: number;
 }
 
+export type AiVoteMemorySource = "model" | "fallback";
+
+export interface AiShortMemory {
+  votes: Array<{
+    roundNo: number;
+    targetSeatNo: number;
+    publicReason?: string;
+    source: AiVoteMemorySource;
+  }>;
+}
+
 export interface Room {
   id: string;
   status: RoomStatus;
@@ -73,6 +84,7 @@ export interface Room {
   winner: Winner;
   messages: ChatMessage[];
   votes: Vote[];
+  aiMemories?: Record<string, AiShortMemory>;
   pointAwards: PointAward[];
   rewardSettledAt: string | null;
   createdAt: string;

@@ -1,3 +1,5 @@
+import type { AiShortMemory } from "../game/game.types";
+
 export interface AiModelCallConfig {
   model: string;
   temperature: number;
@@ -111,6 +113,7 @@ export interface GameContext {
   myLastSpeech: string | null;
   currentVoteCounts: Record<string, number>;
   voteHistory: RoundVoteSummary[];
+  shortMemory: AiShortMemory | null;
 }
 
 export type AiCallType =

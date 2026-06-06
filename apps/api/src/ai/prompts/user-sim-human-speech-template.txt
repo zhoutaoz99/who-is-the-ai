@@ -2,6 +2,8 @@
 剩余时间：{{remainingSeconds}}秒
 存活玩家：{{alivePlayersList}}
 你上次发言：{{myLastSpeech}}
+你的短期记忆（只代表你自己的公开投票记录和可公开解释；如果与聊天记录冲突，以聊天记录为准）：
+{{shortMemory}}
 最近聊天：
 {{recentMessages}}
 历史对话：

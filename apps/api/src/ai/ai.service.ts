@@ -513,6 +513,7 @@ export class AiService {
       historicalMessages: "无",
       voteHistory: "无",
       currentVoteInfo: "无",
+      shortMemory: this.formatShortMemory(context),
       alivePlayersList: context.alivePlayers
         .map((p) => `${p.seatNo}号位(ID:${p.id})`)
         .join("、"),
@@ -570,6 +571,7 @@ export class AiService {
       historicalMessages: "无",
       voteHistory: "无",
       currentVoteInfo: "同时盲投，当前票数不可见",
+      shortMemory: this.formatShortMemory(context),
       voteTargets: targets
         .map((p) => `${p.seatNo}号位 - ID: ${p.id}`)
         .join("\n"),
@@ -617,6 +619,7 @@ export class AiService {
       historicalMessages: "无",
       voteHistory: "无",
       currentVoteInfo: "同时盲投，当前票数不可见",
+      shortMemory: this.formatShortMemory(context),
       voteTargets: targets
         .map((p) => `${p.seatNo}号位 - ID: ${p.id}`)
         .join("\n"),
@@ -648,6 +651,24 @@ export class AiService {
     }
 
     return renderTemplate("user-sim-human-vote-template.txt", vars);
+  }
+
+  private formatShortMemory(context: GameContext): string {
+    const memory = context.shortMemory;
+    if (!memory || memory.votes.length === 0) {
+      return "无";
+    }
+
+    return memory.votes
+      .map((vote) => {
+        const reason = vote.publicReason
+          ? `，公开理由：${vote.publicReason}`
+          : vote.source === "fallback"
+            ? "，当时没有可靠的公开理由记录"
+            : "";
+        return `- 第${vote.roundNo}轮你投给${vote.targetSeatNo}号${reason}`;
+      })
+      .join("\n");
   }
 
   private formatPersonaInfo(context: GameContext): string {
