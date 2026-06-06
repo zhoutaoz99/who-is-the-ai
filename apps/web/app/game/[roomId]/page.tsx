@@ -524,7 +524,11 @@ export default function GamePage() {
             <div>
               <h2>
                 {isObserverMode
-                  ? "AI 自动对抗结束"
+                  ? room.winner === "human"
+                    ? "模拟真人获胜"
+                    : room.winner === "ai"
+                      ? "AI 获胜"
+                      : "AI 自动对抗结束"
                   : room.winner === "human"
                   ? "真人玩家获胜"
                   : room.winner === "ai"
@@ -533,7 +537,11 @@ export default function GamePage() {
               </h2>
               <p>
                 {isObserverMode
-                  ? "可返回大厅进入复盘查看模型行为记录。"
+                  ? room.winner === "human"
+                    ? "模拟真人成功识别并投票淘汰了所有 AI 玩家。"
+                    : room.winner === "ai"
+                      ? "AI 玩家成功隐藏身份，模拟真人未能将其全部淘汰。"
+                      : "可返回大厅进入复盘查看模型行为记录。"
                   : room.winner === "human"
                   ? formatPointAwardSummary(room)
                   : room.winner === "ai"

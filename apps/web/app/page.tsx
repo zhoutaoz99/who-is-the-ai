@@ -621,7 +621,11 @@ export default function Home() {
                             </span>
                             {room.status === "finished" && room.winner && (
                               <span className="room-tag winner">
-                                {winnerLabel(room.winner)}
+                                {isDebugAutoAiRoom && room.winner === "human"
+                                  ? "模拟真人获胜"
+                                  : isDebugAutoAiRoom && room.winner === "ai"
+                                    ? "AI 获胜"
+                                    : winnerLabel(room.winner)}
                               </span>
                             )}
                             {room.status === "finished" && !room.winner && (
