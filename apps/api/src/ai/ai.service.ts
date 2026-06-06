@@ -17,6 +17,7 @@ import {
 import { loadPrompt, renderTemplate } from "./prompt-loader";
 
 const DEFAULT_AI_NEXT_CHECK_MS = 10_000;
+const MAX_MODEL_SPEECH_CONTENT_LENGTH = 240;
 
 type ParsedSpeechContent =
   | { type: "speak"; content: string }
@@ -791,8 +792,12 @@ export class AiService {
     const url = `${baseURL}/chat/completions`;
 
     const controller = new AbortController();
+    let timedOut = false;
     const timeout = setTimeout(
-      () => controller.abort(),
+      () => {
+        timedOut = true;
+        controller.abort();
+      },
       timeoutMs,
     );
     const abortFromParent = () => controller.abort();
@@ -865,6 +870,12 @@ export class AiService {
       if (finalChunk && finalChunk !== "[DONE]") {
         onChunk(finalChunk);
       }
+    } catch (error) {
+      if (timedOut) {
+        throw new Error(`模型调用超时（${timeoutMs}ms）`);
+      }
+
+      throw error;
     } finally {
       clearTimeout(timeout);
       options?.signal?.removeEventListener("abort", abortFromParent);
@@ -923,7 +934,7 @@ export class AiService {
     }
 
     if (parsed.type === "speak" && typeof parsed.content === "string") {
-      const content = parsed.content.trim().slice(0, 240);
+      const content = this.trimSpeechContent(parsed.content);
       if (content.length > 0) {
         return { type: "speak", content };
       }
@@ -955,7 +966,7 @@ export class AiService {
     }
 
     if (parsed.type === "speak" && typeof parsed.content === "string") {
-      const content = parsed.content.trim().slice(0, 240);
+      const content = this.trimSpeechContent(parsed.content);
       if (content.length > 0) {
         return {
           type: "speak",
@@ -970,6 +981,10 @@ export class AiService {
     }
 
     return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
+  }
+
+  private trimSpeechContent(content: string): string {
+    return content.trim().slice(0, MAX_MODEL_SPEECH_CONTENT_LENGTH);
   }
 
   private parseSpeechStrategyResult(raw: string): AiSpeechStrategyAction {

@@ -5,7 +5,7 @@ import { loadPrompt, renderTemplate } from "../ai/prompt-loader";
 import { PostgresService } from "../data/postgres.service";
 import { AiCallLog } from "./replay.types";
 
-const REPLAY_ANALYSIS_TIMEOUT_MS = 60_000;
+const REPLAY_ANALYSIS_TIMEOUT_MS = 300_000;
 
 @Injectable()
 export class ReplayService {

@@ -54,6 +54,10 @@ type GameClientContextValue = {
     roomId: string,
     discussionDurationMinutes: number,
   ) => Promise<ActionResult>;
+  updateDebugAutoAiFastMode: (
+    roomId: string,
+    fastMode: boolean,
+  ) => Promise<ActionResult>;
   sendChat: (roomId: string, content: string) => Promise<ActionResult>;
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
   stopGame: (roomId: string) => Promise<ActionResult>;
@@ -424,6 +428,12 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
           discussionDurationMinutes,
+        }),
+      updateDebugAutoAiFastMode: (roomId: string, fastMode: boolean) =>
+        emitAction("debug.ai-room.fastMode.update", {
+          roomId,
+          playerId: playerIds[roomId.toUpperCase()],
+          fastMode,
         }),
       sendChat: (roomId: string, content: string) =>
         emitAction("chat.send", {

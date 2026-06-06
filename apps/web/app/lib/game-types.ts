@@ -83,6 +83,7 @@ export type RoomSnapshot = {
   canStart: boolean;
   debug?: boolean;
   debugAutoAi?: boolean;
+  debugAutoAiFastMode?: boolean;
   createdAt: string;
   updatedAt: string;
 };

@@ -320,6 +320,7 @@ export default function WaitingRoomPage() {
     updateDebugModel,
     deleteDebugAutoAiRoom,
     updateDiscussionDuration,
+    updateDebugAutoAiFastMode,
   } = useGameClient();
 
   const room = getRoom(roomId);
@@ -425,6 +426,14 @@ export default function WaitingRoomPage() {
     room?.id,
     updateDiscussionDuration,
   ]);
+
+  function handleUpdateFastMode(nextFastMode: boolean) {
+    if (!room || !canEditDiscussionDuration || !isDebugAutoAiRoom) {
+      return;
+    }
+
+    void updateDebugAutoAiFastMode(room.id, nextFastMode);
+  }
 
   useEffect(() => {
     if (room?.status === "playing") {
@@ -802,6 +811,19 @@ export default function WaitingRoomPage() {
                         }
                       />
                     </label>
+                    {isDebugAutoAiRoom && (
+                      <label className="debug-fast-mode-toggle">
+                        <input
+                          type="checkbox"
+                          checked={room.debugAutoAiFastMode === true}
+                          disabled={pending}
+                          onChange={(event) =>
+                            handleUpdateFastMode(event.target.checked)
+                          }
+                        />
+                        <span>快速模式</span>
+                      </label>
+                    )}
                   </div>
                 )}
                 {canManageDebugAi && personaOptions.length > 0 && (

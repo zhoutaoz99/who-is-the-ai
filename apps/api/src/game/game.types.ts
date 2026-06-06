@@ -76,6 +76,7 @@ export interface Room {
   status: RoomStatus;
   ownerPlayerId: string;
   debugAutoAi?: boolean;
+  debugAutoAiFastMode?: boolean;
   players: Player[];
   discussionDurationMs: number;
   currentRound: number;
@@ -85,6 +86,11 @@ export interface Room {
   messages: ChatMessage[];
   votes: Vote[];
   aiMemories?: Record<string, AiShortMemory>;
+  debugAutoAiSpeech?: {
+    roundNo: number;
+    startOffset: number;
+    passNo: number;
+  };
   pointAwards: PointAward[];
   rewardSettledAt: string | null;
   createdAt: string;
@@ -138,6 +144,7 @@ export interface RoomSnapshot {
   canStart: boolean;
   debug?: boolean;
   debugAutoAi?: boolean;
+  debugAutoAiFastMode?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -201,6 +208,7 @@ export interface DebugAddAiPayload {
 
 export interface CreateDebugAutoAiRoomPayload {
   discussionDurationMinutes?: number;
+  fastMode?: boolean;
 }
 
 export interface DebugRemoveAiPayload {
@@ -230,6 +238,12 @@ export interface UpdateDiscussionDurationPayload {
   roomId?: string;
   playerId?: string;
   discussionDurationMinutes?: number;
+}
+
+export interface UpdateDebugAutoAiFastModePayload {
+  roomId?: string;
+  playerId?: string;
+  fastMode?: boolean;
 }
 
 export interface ActionResult {

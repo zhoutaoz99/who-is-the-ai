@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type {
   AiCallLog,
   DebugCallResponse,
@@ -60,6 +60,150 @@ function winnerLabel(winner: string | null) {
     default:
       return "已中止";
   }
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <div className="replay-analysis-content">
+      {renderMarkdownBlocks(content)}
+    </div>
+  );
+}
+
+function renderMarkdownBlocks(content: string): ReactNode[] {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let paragraph: string[] = [];
+  let listItems: string[] = [];
+  let listType: "ul" | "ol" | null = null;
+  let codeLines: string[] | null = null;
+  let codeLanguage = "";
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    const text = paragraph.join(" ").trim();
+    if (text) {
+      blocks.push(
+        <p key={`p-${blocks.length}`}>{renderInlineMarkdown(text)}</p>,
+      );
+    }
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (!listType || listItems.length === 0) return;
+    const Tag = listType;
+    blocks.push(
+      <Tag key={`list-${blocks.length}`}>
+        {listItems.map((item, index) => (
+          <li key={index}>{renderInlineMarkdown(item)}</li>
+        ))}
+      </Tag>,
+    );
+    listItems = [];
+    listType = null;
+  };
+
+  const flushCode = () => {
+    if (!codeLines) return;
+    blocks.push(
+      <pre key={`code-${blocks.length}`} className="replay-analysis-code">
+        <code data-language={codeLanguage}>{codeLines.join("\n")}</code>
+      </pre>,
+    );
+    codeLines = null;
+    codeLanguage = "";
+  };
+
+  for (const line of lines) {
+    const codeFence = line.match(/^```(\S*)\s*$/);
+    if (codeFence) {
+      if (codeLines) {
+        flushCode();
+      } else {
+        flushParagraph();
+        flushList();
+        codeLines = [];
+        codeLanguage = codeFence[1] ?? "";
+      }
+      continue;
+    }
+
+    if (codeLines) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length;
+      const text = heading[2].trim();
+      if (level === 1) {
+        blocks.push(<h3 key={`h-${blocks.length}`}>{renderInlineMarkdown(text)}</h3>);
+      } else if (level === 2) {
+        blocks.push(<h4 key={`h-${blocks.length}`}>{renderInlineMarkdown(text)}</h4>);
+      } else {
+        blocks.push(<h5 key={`h-${blocks.length}`}>{renderInlineMarkdown(text)}</h5>);
+      }
+      continue;
+    }
+
+    const unordered = line.match(/^\s*[-*]\s+(.+)$/);
+    const ordered = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (unordered || ordered) {
+      flushParagraph();
+      const nextType = unordered ? "ul" : "ol";
+      if (listType && listType !== nextType) {
+        flushList();
+      }
+      listType = nextType;
+      listItems.push((unordered?.[1] ?? ordered?.[1] ?? "").trim());
+      continue;
+    }
+
+    flushList();
+    paragraph.push(line.trim());
+  }
+
+  flushParagraph();
+  flushList();
+  flushCode();
+  return blocks;
+}
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+    if (token.startsWith("`")) {
+      nodes.push(<code key={nodes.length}>{token.slice(1, -1)}</code>);
+    } else {
+      nodes.push(<strong key={nodes.length}>{token.slice(2, -2)}</strong>);
+    }
+    lastIndex = match.index + token.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
 }
 
 type TimelineItem =
@@ -763,7 +907,7 @@ export default function ReplayPage() {
             <div className="replay-debug-error">{analysisError}</div>
           )}
           {analysisText && (
-            <pre className="replay-analysis-content">{analysisText}</pre>
+            <MarkdownContent content={analysisText} />
           )}
         </section>
       )}

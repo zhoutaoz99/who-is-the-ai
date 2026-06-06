@@ -231,7 +231,7 @@ AI 玩家的投票目标是保护自身阵营，优先投真人阵营玩家。
 - 更短发言冷却。
 - 更短 skip 退避。
 - 更强公开信息推理。
-- AI 玩家发言后更快进入观察，并优先选择模拟真人回应。
+- 与 AI 玩家发言调度隔离，避免互相挤占发言机会。
 
 不允许：
 
@@ -259,9 +259,63 @@ AI 玩家的投票目标是保护自身阵营，优先投真人阵营玩家。
 
 ## 发言调度
 
-工程层仍由 `GameService.startAiSpeech` 统一调度所有模型驱动玩家。
+工程层在讨论阶段开始后根据 `room.debugAutoAiFastMode` 选择两套调度策略：
 
-### 首次观察
+- 普通模式：AI 玩家和模拟真人玩家走独立的普通发言调度器。
+- 快速模式：所有模型驱动玩家走自动对抗串行发言循环。
+
+快速模式只影响 AI 自动对抗调试房。普通房不读取该开关，自动对抗房未打开快速模式时也保持普通发言策略。
+
+### 普通模式
+
+普通模式用于让自动对抗房尽量接近普通对局的时间节奏。它不会把所有模型玩家串成一个队列，而是保留“按时间观察、按候选条件挑人、按模型返回的延迟继续观察”的普通发言策略。
+
+#### 启动入口和调度隔离
+
+普通模式由 `GameService.afterDiscussionStarted` 启动。当房间不是“自动对抗快速模式”时，会同时启动两个普通发言调度器：
+
+- `startAiSpeech(room)`：只调度 `type === "ai"` 的 AI 玩家。
+- `startSimulatedHumanSpeech(room)`：只调度 `type === "human" && simulated === true` 的模拟真人玩家。
+
+两个调度器使用不同的 timer key 和 speaking map：
+
+- AI 玩家：`RoomTimers.aiSpeech` + `GameService.aiSpeaking`
+- 模拟真人：`RoomTimers.simulatedHumanSpeech` + `GameService.simulatedHumanSpeaking`
+
+这样 AI 玩家和模拟真人的普通发言调度互相隔离，某一类玩家正在模型调用、等待下次观察或进入 skip backoff 时，不会阻塞另一类玩家的调度。
+
+在普通房里也会调用这两个入口。由于普通房没有模拟真人，模拟真人调度器通常找不到候选人并持续低频观察；AI 玩家仍走和自动对抗普通模式一致的 AI 发言调度。真实真人发言不经过模型调度，仍由 socket 用户输入触发。
+
+#### 普通模式调度循环
+
+普通模式的核心实现是 `startModelSpeech(room, schedulerKind, initialDelayMs)`。`schedulerKind` 决定当前调度器只处理 AI 玩家还是模拟真人玩家。
+
+每个调度器按以下流程循环：
+
+1. 使用当前 delay 创建一个 `setTimeout`。
+2. timeout 触发后重新读取房间。
+3. 如果房间不存在或当前阶段不是 `discussion`，本调度器停止。
+4. 如果当前调度器在这个房间已有模型调用进行中，等待 `AI_SPEECH_NEXT_CHECK_MIN_MS` 后重新观察。
+5. 调用 `selectSpeechPlayer(room, schedulerKind)` 选择一个候选玩家。
+6. 如果没有候选玩家，等待 `AI_SPEECH_NEXT_CHECK_MIN_MS` 后重新观察。
+7. 记录发言上下文标记：
+   - `roundNo`
+   - `voteCount`
+8. 构建该玩家的 `GameContext`，调用 `aiService.generateSpeech(context)`。
+9. 根据玩家类型裁剪模型返回的 `nextCheckAfterMs`，作为后续默认观察间隔。
+10. 模型返回后重新读取房间，确认仍是同一轮 `discussion`。
+11. 如果轮次、阶段或投票数量变化，丢弃本次结果并打印日志。
+12. 根据模型动作分别处理 `skip` 或 `speak`。
+13. finally 中释放当前调度器的 `speaking` 标记。
+14. 如果仍需要继续调度，并且房间仍处于 `playing + discussion`，按 `nextDelayMs` 安排下一次观察。
+
+这里的串行只在同一个 scheduler 内生效：
+
+- AI 调度器同一时间只会有一个 AI 玩家模型发言调用。
+- 模拟真人调度器同一时间只会有一个模拟真人模型发言调用。
+- 两个调度器互相独立，因此自动对抗普通模式下可能同时存在一个 AI 玩家调用和一个模拟真人调用。
+
+#### 首次观察
 
 每轮讨论开始后首次观察时间仍为：
 
@@ -269,39 +323,55 @@ AI 玩家的投票目标是保护自身阵营，优先投真人阵营玩家。
 AI_SPEECH_INITIAL_CHECK_MS = 10_000
 ```
 
-模拟真人不会在开局阶段因为强对抗而提前到 3-6 秒观察。这样避免模拟真人过早抢第一句话，强对抗重点放在 AI 发言后的追问和压迫。
+AI 调度器和模拟真人调度器的首次观察时间相同。模拟真人不会在开局阶段因为强对抗而提前到 3-6 秒观察。这样避免模拟真人过早抢第一句话；强对抗更多依赖 prompt 和后续公开上下文判断，而不是工程层强行插队。
 
-### 候选条件
+#### 候选条件
 
 候选玩家必须满足：
 
-- `isModelDrivenPlayer(player) === true`
+- 属于当前调度器：
+  - AI 调度器只接受 `player.type === "ai"`。
+  - 模拟真人调度器只接受 `isSimulatedHuman(player)`。
 - 存活。
 - 不在发言冷却中。
 - 不在 skip backoff 中。
 
-### 冷却时间
+如果当前调度器没有候选玩家，它不会调用模型，只会在 `AI_SPEECH_NEXT_CHECK_MIN_MS = 1_000` 后再次观察。
+
+#### 冷却时间
 
 | 玩家 | 发言冷却 |
 | --- | --- |
 | AI 玩家 | `SPEAK_COOLDOWN_MS = 15_000` |
 | 模拟真人 | `SIM_HUMAN_SPEECH_COOLDOWN_MS = 8_000` |
 
-### skip backoff
+冷却依赖 `player.lastSpokeAt`。发言成功保存时，`addChatMessage` 会更新 `lastSpokeAt` 并把消息写入 `room.messages`。
+
+#### skip backoff
 
 | 玩家 | skip backoff |
 | --- | --- |
 | AI 玩家 | `AI_SPEECH_SKIP_BACKOFF_MS = 8_000` |
 | 模拟真人 | `SIM_HUMAN_SPEECH_SKIP_BACKOFF_MS = 4_000` |
 
-### nextCheck 裁剪
+当模型返回 `skip` 时：
+
+- 更新 `aiLastConsideredRound`。
+- 更新 `aiLastConsideredAt`。
+- 设置 `aiSkipBackoffUntil = Date.now() + modelSpeechSkipBackoffMs(player)`。
+- 记录模型调用。
+- 不新增聊天消息。
+
+#### nextCheck 裁剪
 
 | 玩家 | nextCheckAfterMs 最大值 |
 | --- | --- |
 | AI 玩家 | `AI_SPEECH_NEXT_CHECK_MAX_MS = 30_000` |
 | 模拟真人 | `SIM_HUMAN_SPEECH_NEXT_CHECK_MAX_MS = 15_000` |
 
-### 发言反应时间裁剪
+`nextCheckAfterMs` 的最小值统一为 `AI_SPEECH_NEXT_CHECK_MIN_MS = 1_000`。如果模型返回值过小或过大，会按玩家类型裁剪后再用于下一次观察。
+
+#### 发言反应时间裁剪
 
 | 玩家 | targetResponseDelayMs 最大值 |
 | --- | --- |
@@ -310,26 +380,138 @@ AI_SPEECH_INITIAL_CHECK_MS = 10_000
 
 最小值均沿用 `AI_SPEECH_RESPONSE_DELAY_MIN_MS = 800`。
 
-### AI 发言后的模拟真人优先观察
+当模型返回 `speak` 时，普通模式不会立刻保存，而是用 `targetResponseDelayMs` 模拟真实响应时间：
 
-当 AI 玩家成功发言后，如果房间里存在存活模拟真人：
+1. 记录模型决策耗时 `elapsedMs`。
+2. 裁剪 `targetResponseDelayMs`。
+3. 计算 `remainingDelayMs = max(0, targetResponseDelayMs - elapsedMs)`。
+4. 如果 `remainingDelayMs > 0`，等待这段时间。
+5. 保存前再次加锁读取房间并校验状态。
 
-- 下一次观察延迟被压到 `1_000-2_000ms`。
-- 如果候选中存在模拟真人，优先从模拟真人中选择。
+保存成功后：
 
-这使模拟真人更像对抗方，会更快针对 AI 玩家的公开发言做判断和追问。
+- 更新 `aiLastConsideredRound`。
+- 更新 `aiLastConsideredAt`。
+- 清空 `aiSkipBackoffUntil`。
+- 调用 `addMessage` 写入聊天消息。
+- 记录模型调用。
+- 广播房间快照。
 
-### 候选选择顺序
+#### 上下文失效判断
 
-如果触发 AI 发言后的模拟真人优先观察：
+普通模式的发言上下文标记只包含：
 
-1. 从可发言的模拟真人候选中选。
-2. 优先本轮未发言且未考虑过的玩家。
-3. 其次本轮未发言的玩家。
-4. 其次本轮未考虑过的玩家。
-5. 否则随机。
+```ts
+{
+  roundNo: room.currentRound,
+  voteCount: room.votes.length,
+}
+```
 
-普通情况下，在所有模型驱动玩家中使用同样的 freshness 选择顺序。
+也就是说，其他玩家在模型调用期间新增聊天消息不会导致本次发言被判定为失效。只有轮次变化或投票数量变化才会让结果丢弃。
+
+这样做是为了避免 AI 玩家和模拟真人调度互相独立后，大量模型调用因为对话消息变化而被丢弃。模型发言可能基于稍早的聊天上下文生成，但只要仍在同一轮发言阶段且投票状态未变，就允许保存。
+
+如果保存前发现上下文失效，会使用 `AI_SPEECH_STALE_RETRY_MIN_MS = 500` 到 `AI_SPEECH_STALE_RETRY_MAX_MS = 1_500` 的随机延迟进行下一次观察。
+
+#### 候选选择顺序
+
+每个普通调度器只在自己的候选集合中使用 freshness 选择顺序：
+
+1. 优先本轮未发言且未考虑过的玩家。
+2. 其次本轮未发言的玩家。
+3. 其次本轮未考虑过的玩家。
+4. 否则随机。
+
+普通模式不再使用“AI 发言后强制模拟真人跟进”的跨调度器逻辑，避免模拟真人调度挤占 AI 玩家的发言机会。
+
+### 丢弃日志
+
+模型发言返回后，如果对局已经离开发言阶段、轮次变化、上下文失效或保存失败，服务端会打印丢弃日志：
+
+```text
+Discarded model speech room=<roomId> round=<roundNo> scheduler=<ai|simulated-human> seat=<seatNo> player=<name> reason=<reason>
+```
+
+日志只记录被丢弃发言的短预览，方便定位模型调用耗时过长或保存时状态变化导致的发言丢弃。
+
+### 快速模式
+
+快速模式由 `room.debugAutoAiFastMode` 控制。该字段只在 AI 自动对抗调试房中有效，等待房通过“快速模式”开关修改，服务端事件为 `debug.ai-room.fastMode.update`。
+
+服务端限制：
+
+- 仅 `DEBUG=true` 时可修改。
+- 只能修改 `room.debugAutoAi === true` 的自动对抗调试房。
+- 只能在 `room.status === "waiting"` 时修改。
+
+快速模式打开后，每轮讨论阶段开始时不启动普通调度器，而是启动 `startDebugAutoAiSpeechLoop(room)`。这个循环覆盖 AI 玩家和模拟真人玩家。
+
+#### 快速模式状态
+
+快速模式使用房间内的临时状态记录当前轮的 pass 进度：
+
+```ts
+room.debugAutoAiSpeech = {
+  roundNo: room.currentRound,
+  startOffset: number,
+  passNo: number,
+}
+```
+
+- `roundNo`：状态所属轮次。
+- `startOffset`：当前 pass 的轮转起点。
+- `passNo`：已经完成的 pass 数。
+
+每轮进入讨论阶段时会重新初始化该状态。第一轮 pass 的 `startOffset` 随机生成；每完成一个 pass，`startOffset = (startOffset + 1) % aliveModelDrivenPlayers.length`，因此每个 pass 的起始玩家都会轮转。
+
+#### 快速模式 pass 顺序
+
+每个 pass 会重新读取当前房间状态，并按以下规则生成发言顺序：
+
+1. 取所有存活的模型驱动玩家：
+   - AI 玩家。
+   - 模拟真人玩家。
+2. 按 `seatNo` 升序排序。
+3. 从 `startOffset` 开始旋转数组。
+
+例如当前存活玩家座位为 `[1, 2, 3, 4, 5]`，第一轮随机 `startOffset = 2`，则第一个 pass 的顺序是 `[3, 4, 5, 1, 2]`；下一个 pass 起点变为 3，顺序是 `[4, 5, 1, 2, 3]`。
+
+#### 快速模式模型调用
+
+快速模式中所有模型调用严格串行：
+
+1. 取当前 pass 中的下一个玩家。
+2. 重新读取房间，确认仍处于当前轮发言阶段，且玩家仍存活。
+3. 构建 `GameContext`。
+4. `await aiService.generateSpeech(context)`。
+5. 模型返回后再次读取房间，确认仍处于当前轮发言阶段且上下文未失效。
+6. 如果返回 `skip`，标记该玩家本轮已考虑过，记录模型调用，继续下一个玩家。
+7. 如果返回 `speak`，立即保存发言、记录模型调用并广播房间快照。
+
+快速模式不使用普通调度中的等待和限制：
+
+- 不等待 `AI_SPEECH_INITIAL_CHECK_MS`。
+- 不检查发言冷却。
+- 不使用 skip backoff。
+- 不使用 `nextCheckAfterMs` 调度下一次观察。
+- 不等待 `targetResponseDelayMs` 模拟真实响应时间。
+
+快速模式仍然保留真实讨论阶段时间限制。讨论时间到后，房间会正常进入投票阶段；串行循环下一次检查房间状态时会退出。模型调用如果在阶段切换后才返回，发言不会保存，并会打印丢弃日志。
+
+#### 快速模式退出条件
+
+串行循环在以下情况退出：
+
+- 房间不存在。
+- 房间不再是 `playing`。
+- 房间不再处于 `discussion`。
+- 当前轮次变化。
+- 房间不再是自动对抗调试房。
+- 当前没有存活的模型驱动玩家。
+- 保存发言失败。
+
+当前 UI 只允许开局前修改快速模式，所以运行中的快速模式不会被用户中途关闭。
 
 ## 投票兜底
 

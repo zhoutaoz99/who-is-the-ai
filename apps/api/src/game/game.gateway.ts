@@ -27,6 +27,7 @@ import {
   StartGamePayload,
   StopGamePayload,
   UpdateDiscussionDurationPayload,
+  UpdateDebugAutoAiFastModePayload,
 } from "./game.types";
 import { PostgresService } from "../data/postgres.service";
 import { DEBUG } from "./game.config";
@@ -227,6 +228,13 @@ export class GameGateway
     @MessageBody() payload: UpdateDiscussionDurationPayload,
   ) {
     return this.gameService.updateDiscussionDuration(payload ?? {});
+  }
+
+  @SubscribeMessage("debug.ai-room.fastMode.update")
+  async handleUpdateDebugAutoAiFastMode(
+    @MessageBody() payload: UpdateDebugAutoAiFastModePayload,
+  ) {
+    return this.gameService.updateDebugAutoAiFastMode(payload ?? {});
   }
 
   private async getAccount(authToken: string | undefined): Promise<
