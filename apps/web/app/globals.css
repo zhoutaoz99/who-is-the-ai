@@ -2688,6 +2688,24 @@ p {
   gap: 5px;
 }
 
+.game-player-persona {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.game-player-model {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #6366f1;
+}
+
 .offline-tag {
   align-items: center;
   background: rgba(239, 68, 68, 0.12);
@@ -2807,6 +2825,16 @@ p {
 .msg-source.human.simulated {
   background: rgba(245, 158, 11, 0.16);
   color: #fbbf24;
+}
+
+.msg-source.msg-persona {
+  background: rgba(148, 163, 184, 0.18);
+  color: #94a3b8;
+}
+
+.msg-source.msg-model {
+  background: rgba(129, 140, 248, 0.15);
+  color: #a5b4fc;
 }
 
 .msg-content {
@@ -3173,15 +3201,15 @@ p {
 
 .replay-players {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 
 .replay-player {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
   border-radius: 8px;
   background: #f8fafc;
   border: 1px solid var(--line);
@@ -3192,27 +3220,46 @@ p {
 }
 
 .replay-player-avatar {
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 12px;
   flex-shrink: 0;
+}
+
+.replay-player-info {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .replay-player-info strong {
   font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
 }
 
-.replay-player-tags {
+.replay-player-row {
   display: flex;
-  gap: 6px;
   align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.replay-player-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin-top: 2px;
+  font-size: 11px;
+  color: #64748b;
 }
 
 .replay-dead {
@@ -3254,6 +3301,15 @@ p {
   border-radius: 4px;
   background: #f1f5f9;
   color: #475569;
+}
+
+.replay-model-tag {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #6366f1;
 }
 
 .identity-tag.mini {
@@ -3837,6 +3893,6 @@ p {
   }
 
   .replay-players {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
 }

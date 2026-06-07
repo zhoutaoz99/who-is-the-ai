@@ -715,7 +715,7 @@ export default function Home() {
                         )}
                         {room.status === "finished" && (
                           <div className="replay-room-actions">
-                            <span className="replay-link-btn">查看记录 →</span>
+                            <span className="replay-link-btn">对局记录 →</span>
                             {room.debug && (
                               <span
                                 role="button"

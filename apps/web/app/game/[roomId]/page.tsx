@@ -635,6 +635,12 @@ export default function GamePage() {
                           离线
                         </span>
                       )}
+                      {isObserverMode && player.aiPersonaName && (
+                        <span className="game-player-persona">{player.aiPersonaName}</span>
+                      )}
+                      {isObserverMode && player.aiModelId && (
+                        <span className="game-player-model">{player.aiModelId}</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -687,7 +693,7 @@ export default function GamePage() {
                     </p>
                   </div>
                 ) : (
-                  renderTranscriptItem(room, item, playerId)
+                  renderTranscriptItem(room, item, playerId, isObserverMode)
                 ),
               )
             )}
@@ -928,6 +934,7 @@ function renderTranscriptItem(
   room: RoomSnapshot,
   item: Exclude<TranscriptItem, { type: "round" }>,
   currentPlayerId?: string | null,
+  isObserverMode?: boolean,
 ) {
   if (item.type === "voteResult") {
     return (
@@ -975,6 +982,12 @@ function renderTranscriptItem(
             <span className={`msg-source ${isAi ? "ai" : "human"}${messagePlayer?.simulated ? " simulated" : ""}`}>
               {isAi ? "AI" : messagePlayer?.simulated ? "模拟真人" : "真人"}
             </span>
+          )}
+          {isObserverMode && messagePlayer?.aiPersonaName && (
+            <span className="msg-source msg-persona">{messagePlayer.aiPersonaName}</span>
+          )}
+          {isObserverMode && messagePlayer?.aiModelId && (
+            <span className="msg-source msg-model">{messagePlayer.aiModelId}</span>
           )}
         </div>
       </div>

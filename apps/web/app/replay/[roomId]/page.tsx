@@ -888,6 +888,9 @@ export default function ReplayPage() {
           <button className="secondary" onClick={() => handleExport(room, aiCallLogs, showSkips, includeUserPrompt)}>
             导出 JSON
           </button>
+          <button className="secondary" onClick={() => router.push(`/game/${room.id}`)}>
+            对局记录
+          </button>
           <button className="secondary" onClick={() => router.push("/")}>
             返回大厅
           </button>
@@ -931,24 +934,29 @@ export default function ReplayPage() {
                   {player.seatNo}
                 </div>
                 <div className="replay-player-info">
-                  <strong>#{player.seatNo} {player.name}</strong>
-                  <div className="replay-player-tags">
+                  <div className="replay-player-row">
+                    <strong>#{player.seatNo} {player.name}</strong>
                     {player.revealedType && (
-                      <span className={`identity-tag ${player.revealedType}`}>
-                        {player.revealedType === "ai" ? "AI" : "真人"}
-                      </span>
-                    )}
-                    {player.aiPersonaName && (
-                      <span className="replay-persona-tag">
-                        {player.aiPersonaName}
+                      <span className={`identity-tag ${player.revealedType}${player.simulated ? " simulated" : ""}`}>
+                        {player.revealedType === "ai" ? "AI" : player.simulated ? "模拟真人" : "真人"}
                       </span>
                     )}
                     {player.status === "eliminated" ? (
-                      <span className="replay-dead">第{player.eliminatedRound}轮淘汰</span>
+                      <span className="replay-dead">淘汰</span>
                     ) : (
                       <span className="replay-alive">存活</span>
                     )}
                   </div>
+                  {(player.aiPersonaName || player.aiModelId) && (
+                    <div className="replay-player-meta">
+                      {player.aiPersonaName && (
+                        <span className="replay-persona-tag">{player.aiPersonaName}</span>
+                      )}
+                      {player.aiModelId && (
+                        <span className="replay-model-tag">{player.aiModelId}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -1046,7 +1054,7 @@ export default function ReplayPage() {
                                 >
                                   {voterSeat}
                                 </span>
-                                {voter?.name ?? voterSeat}号
+                                {voter?.name ?? `${voterSeat}号`}
                               </span>
                               <span className="replay-vote-arrow">→</span>
                               <span className="replay-vote-target">
@@ -1056,7 +1064,7 @@ export default function ReplayPage() {
                                 >
                                   {targetSeat}
                                 </span>
-                                {target?.name ?? targetSeat}号
+                                {target?.name ?? `${targetSeat}号`}
                               </span>
                             </div>
                             {voterCall && (
