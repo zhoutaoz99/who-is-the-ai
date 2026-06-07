@@ -409,7 +409,7 @@ p {
 }
 
 .secondary:hover:not(:disabled) {
-  background: #111827;
+  background: #374151;
 }
 
 .room-list {

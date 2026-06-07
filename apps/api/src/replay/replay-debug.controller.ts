@@ -36,7 +36,7 @@ export class ReplayDebugController {
     }
 
     try {
-      const rawResponse = await this.aiService.callModel(
+      const { content: rawResponse } = await this.aiService.callModel(
         body.systemPrompt,
         body.userPrompt,
         {

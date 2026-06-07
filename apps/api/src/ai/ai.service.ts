@@ -29,6 +29,15 @@ type ParsedSpeechContent =
   | { type: "speak"; content: string }
   | { type: "skip" };
 
+type ModelUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+};
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -218,7 +227,7 @@ export class AiService {
         ),
       );
       const strategyStartedAt = new Date().toISOString();
-      const strategyResult = await this.callModel(
+      const { content: strategyResult, usage: strategyUsage } = await this.callModel(
         strategySystemPrompt,
         strategyUserPrompt,
         strategyConfig,
@@ -234,6 +243,7 @@ export class AiService {
           undefined,
         ),
       );
+      this.logUsage(strategyConfig.model, strategyUsage);
       callRecords.push({
         roomId: context.roomId,
         roundNo: context.roundNo,
@@ -274,7 +284,7 @@ export class AiService {
         ),
       );
       const expressionStartedAt = new Date().toISOString();
-      const expressionResult = await this.callModel(
+      const { content: expressionResult, usage: expressionUsage } = await this.callModel(
         expressionSystemPrompt,
         expressionUserPrompt,
         expressionConfig,
@@ -290,6 +300,7 @@ export class AiService {
           undefined,
         ),
       );
+      this.logUsage(expressionConfig.model, expressionUsage);
       const expressionTemplatePrompt = this.buildSpeechExpressionPrompt(
         context,
         null,
@@ -356,7 +367,7 @@ export class AiService {
         ),
       );
       const startedAt = new Date().toISOString();
-      const result = await this.callModel(
+      const { content: result, usage } = await this.callModel(
         systemPrompt,
         userPrompt,
         modelConfig,
@@ -372,6 +383,7 @@ export class AiService {
           true,
         ),
       );
+      this.logUsage(modelConfig.model, usage);
 
       const callRecords: AiCallRecord[] = [{
         roomId: context.roomId,
@@ -435,7 +447,7 @@ export class AiService {
         this.formatAiLog(context.myName, "Vote Prompt", userPrompt, context.roundNo, context.mySeatNo, isSimulatedHuman),
       );
       const voteStartedAt = new Date().toISOString();
-      const result = await this.callModel(systemPrompt, userPrompt, modelConfig, callOptions);
+      const { content: result, usage } = await this.callModel(systemPrompt, userPrompt, modelConfig, callOptions);
       this.logger.log(
         this.formatAiLog(
           context.myName,
@@ -446,6 +458,7 @@ export class AiService {
           isSimulatedHuman,
         ),
       );
+      this.logUsage(modelConfig.model, usage);
       this.recorder?.record({
         roomId: context.roomId,
         roundNo: context.roundNo,
@@ -481,6 +494,21 @@ export class AiService {
       "user-sim-human-speech-template.txt",
       this.buildSpeechVars(context),
     );
+  }
+
+  private logUsage(model: string, usage?: ModelUsage): void {
+    if (!usage) return;
+    const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens;
+    const parts = [`model=${model}`, `prompt=${usage.prompt_tokens ?? "-"}`, `completion=${usage.completion_tokens ?? "-"}`];
+    if (cachedTokens != null && cachedTokens > 0) {
+      const promptTokens = usage.prompt_tokens ?? 0;
+      parts.push(`cached=${cachedTokens}`, `hit=${promptTokens > 0 ? ((cachedTokens / promptTokens) * 100).toFixed(1) + "%" : "?"}`);
+    }
+    if (usage.cache_creation_input_tokens != null && usage.cache_creation_input_tokens > 0) {
+      parts.push(`cache_write=${usage.cache_creation_input_tokens}`);
+    }
+    const sep = "-".repeat(72);
+    this.logger.log(`\n${sep}\n[Cache Hit] ${parts.join(", ")}\n${sep}\n`);
   }
 
   private formatAiLog(
@@ -739,7 +767,7 @@ export class AiService {
     userPrompt: string,
     modelConfig: AiModelCallConfig,
     options?: { baseURL?: string; apiKey?: string; timeoutMs?: number },
-  ): Promise<string> {
+  ): Promise<{ content: string; usage?: ModelUsage }> {
     const baseURL = options?.baseURL ?? this.config.baseURL;
     const apiKey = options?.apiKey ?? this.config.apiKey;
     const timeoutMs = options?.timeoutMs ?? this.config.timeoutMs;
@@ -780,9 +808,20 @@ export class AiService {
 
       const data = (await response.json()) as {
         choices: Array<{ message: { content: string } }>;
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          total_tokens?: number;
+          prompt_tokens_details?: { cached_tokens?: number };
+          cache_read_input_tokens?: number;
+          cache_creation_input_tokens?: number;
+        };
       };
 
-      return data.choices?.[0]?.message?.content ?? "";
+      return {
+        content: data.choices?.[0]?.message?.content ?? "",
+        usage: data.usage,
+      };
     } finally {
       clearTimeout(timeout);
     }
