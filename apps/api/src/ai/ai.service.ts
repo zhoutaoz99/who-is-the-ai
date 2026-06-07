@@ -729,8 +729,7 @@ export class AiService {
   ): string {
     return messages
       .map((msg, index) => {
-        const prefix = msg.isSelf ? "你" : msg.playerName;
-        return `${indent}[${index + 1}] ${prefix}：${msg.content}`;
+        return `${indent}[${msg.orderLabel ?? index + 1}] ${msg.playerName}：${msg.content}`;
       })
       .join("\n");
   }
