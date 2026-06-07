@@ -18,6 +18,8 @@ import {
   RoomSnapshot,
   RoundTickPayload,
   ServerReadyPayload,
+  SpeechGeneratingPayload,
+  SpeechDiscardedPayload,
 } from "./game-types";
 
 type GameClientContextValue = {
@@ -28,6 +30,8 @@ type GameClientContextValue = {
   rooms: RoomSnapshot[];
   playerName: string;
   roomCode: string;
+  speechGenerating: SpeechGeneratingPayload | null;
+  speechDiscarded: SpeechDiscardedPayload | null;
   setPlayerName: (value: string) => void;
   setRoomCode: (value: string) => void;
   setError: (value: string) => void;
@@ -85,8 +89,76 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
   const [playerIds, setPlayerIds] = useState<Record<string, string>>({});
   const [playerName, setPlayerName] = useState("");
   const [roomCode, setRoomCode] = useState("");
+  const [speechGenerating, setSpeechGenerating] = useState<SpeechGeneratingPayload | null>(null);
+  const [speechDiscarded, setSpeechDiscarded] = useState<SpeechDiscardedPayload | null>(null);
+  const speechGeneratingClearTimerRef = useRef<number | null>(null);
+  const speechDiscardedClearTimerRef = useRef<number | null>(null);
+
+  const clearSpeechGeneratingTimer = useCallback(() => {
+    if (speechGeneratingClearTimerRef.current == null) {
+      return;
+    }
+
+    window.clearTimeout(speechGeneratingClearTimerRef.current);
+    speechGeneratingClearTimerRef.current = null;
+  }, []);
+
+  const clearSpeechDiscardedTimer = useCallback(() => {
+    if (speechDiscardedClearTimerRef.current == null) {
+      return;
+    }
+
+    window.clearTimeout(speechDiscardedClearTimerRef.current);
+    speechDiscardedClearTimerRef.current = null;
+  }, []);
+
+  const clearResolvedSpeechGenerating = useCallback(
+    (snapshot: RoomSnapshot) => {
+      setSpeechGenerating((current) => {
+        if (!current) {
+          return current;
+        }
+        if (current.roomId && current.roomId !== snapshot.id) {
+          return current;
+        }
+        if (current.roundNo && current.roundNo !== snapshot.currentRound) {
+          clearSpeechGeneratingTimer();
+          return null;
+        }
+        if (snapshot.status !== "playing" || snapshot.phase !== "discussion") {
+          clearSpeechGeneratingTimer();
+          return null;
+        }
+
+        const startedAtMs = current.startedAt
+          ? new Date(current.startedAt).getTime()
+          : Number.NaN;
+        const hasNewMessage = snapshot.messages.some((message) => {
+          if (message.playerId !== current.playerId) {
+            return false;
+          }
+          if (current.roundNo && message.roundNo !== current.roundNo) {
+            return false;
+          }
+          if (!Number.isFinite(startedAtMs)) {
+            return true;
+          }
+
+          return new Date(message.createdAt).getTime() >= startedAtMs - 1_000;
+        });
+        if (!hasNewMessage) {
+          return current;
+        }
+
+        clearSpeechGeneratingTimer();
+        return null;
+      });
+    },
+    [clearSpeechGeneratingTimer],
+  );
 
   const upsertRoom = useCallback((snapshot: RoomSnapshot) => {
+    clearResolvedSpeechGenerating(snapshot);
     setRooms((current) => {
       const existing = current.find((room) => room.id === snapshot.id);
       const next = current.filter((room) => room.id !== snapshot.id);
@@ -110,7 +182,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
 
       return [{ ...snapshot, messages: mergedMessages }, ...next].slice(0, 12);
     });
-  }, []);
+  }, [clearResolvedSpeechGenerating]);
 
   const applyRoundTick = useCallback((payload: RoundTickPayload) => {
     setRooms((current) => applyRoundTickToRooms(current, payload));
@@ -144,7 +216,13 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socketRef.current = socket;
 
     socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => setConnected(false));
+    socket.on("disconnect", () => {
+      setConnected(false);
+      clearSpeechGeneratingTimer();
+      clearSpeechDiscardedTimer();
+      setSpeechGenerating(null);
+      setSpeechDiscarded(null);
+    });
     socket.on("server.ready", (payload: ServerReadyPayload) => {
       setDebug(Boolean(payload.debug));
       setRooms(payload.rooms);
@@ -159,11 +237,89 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("game.ended", syncRoom);
     socket.on("round.tick", applyRoundTick);
 
+    socket.on("player.speech.generating", (payload: SpeechGeneratingPayload) => {
+      clearSpeechGeneratingTimer();
+      const nextPayload = {
+        ...payload,
+        startedAt: payload.startedAt ?? new Date().toISOString(),
+      };
+      setSpeechGenerating(nextPayload);
+      setSpeechDiscarded((current) => {
+        if (
+          current?.playerId === nextPayload.playerId &&
+          (!current.roomId || !nextPayload.roomId || current.roomId === nextPayload.roomId) &&
+          (!current.roundNo || !nextPayload.roundNo || current.roundNo === nextPayload.roundNo)
+        ) {
+          clearSpeechDiscardedTimer();
+          return null;
+        }
+
+        return current;
+      });
+      speechGeneratingClearTimerRef.current = window.setTimeout(() => {
+        setSpeechGenerating((current) => {
+          if (
+            current?.playerId === nextPayload.playerId &&
+            current.roomId === nextPayload.roomId &&
+            current.roundNo === nextPayload.roundNo &&
+            current.startedAt === nextPayload.startedAt
+          ) {
+            return null;
+          }
+
+          return current;
+        });
+        speechGeneratingClearTimerRef.current = null;
+      }, 120_000);
+    });
+    socket.on("player.speech.discarded", (payload: SpeechDiscardedPayload) => {
+      clearSpeechDiscardedTimer();
+      const nextPayload = {
+        ...payload,
+        discardedAt: payload.discardedAt ?? new Date().toISOString(),
+      };
+      setSpeechGenerating((current) => {
+        if (
+          current?.playerId === nextPayload.playerId &&
+          (!current.roomId || !nextPayload.roomId || current.roomId === nextPayload.roomId) &&
+          (!current.roundNo || !nextPayload.roundNo || current.roundNo === nextPayload.roundNo)
+        ) {
+          clearSpeechGeneratingTimer();
+          return null;
+        }
+
+        return current;
+      });
+      setSpeechDiscarded(nextPayload);
+      speechDiscardedClearTimerRef.current = window.setTimeout(() => {
+        setSpeechDiscarded((current) => {
+          if (
+            current?.playerId === nextPayload.playerId &&
+            current.roomId === nextPayload.roomId &&
+            current.roundNo === nextPayload.roundNo &&
+            current.discardedAt === nextPayload.discardedAt
+          ) {
+            return null;
+          }
+
+          return current;
+        });
+        speechDiscardedClearTimerRef.current = null;
+      }, 4_000);
+    });
+
     return () => {
+      clearSpeechGeneratingTimer();
+      clearSpeechDiscardedTimer();
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [applyRoundTick, upsertRoom]);
+  }, [
+    applyRoundTick,
+    clearSpeechDiscardedTimer,
+    clearSpeechGeneratingTimer,
+    upsertRoom,
+  ]);
 
   const rememberPlayer = useCallback((roomId: string, playerId: string) => {
     setPlayerIds((current) => ({
@@ -254,6 +410,8 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       rooms,
       playerName,
       roomCode,
+      speechGenerating,
+      speechDiscarded,
       setPlayerName,
       setRoomCode,
       setError,
@@ -481,6 +639,8 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     playerName,
     roomCode,
     rooms,
+    speechGenerating,
+    speechDiscarded,
     token,
     user?.displayName,
   ]);

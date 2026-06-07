@@ -90,6 +90,9 @@ export interface Room {
     roundNo: number;
     startOffset: number;
     passNo: number;
+    passInProgress?: boolean;
+    passStartedAt?: number;
+    voteAfterPass?: boolean;
   };
   pointAwards: PointAward[];
   rewardSettledAt: string | null;

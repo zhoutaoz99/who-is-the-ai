@@ -108,3 +108,22 @@ export type RoundTickPayload = {
   phase: GamePhase;
   remainingMs: number;
 };
+
+export type SpeechGeneratingPayload = {
+  roomId?: string;
+  roundNo?: number;
+  playerId: string;
+  playerName: string;
+  seatNo: number;
+  startedAt?: string;
+};
+
+export type SpeechDiscardedPayload = {
+  roomId?: string;
+  roundNo?: number;
+  playerId: string;
+  playerName: string;
+  seatNo: number;
+  reason: string;
+  discardedAt?: string;
+};

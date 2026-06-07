@@ -288,6 +288,8 @@ export default function GamePage() {
     castVote,
     stopGame,
     fetchRoom,
+    speechGenerating,
+    speechDiscarded,
   } = useGameClient();
 
   const [chatDraft, setChatDraft] = useState("");
@@ -409,6 +411,19 @@ export default function GamePage() {
     alivePlayers.find((player) => player.id === selectedVoteTarget) ?? null;
   const transcriptItems = buildTranscriptItems(room);
   const isObserverMode = Boolean(room.debugAutoAi);
+
+  const showSpeechGenerating =
+    isObserverMode &&
+    room.status === "playing" &&
+    room.phase === "discussion" &&
+    speechGenerating &&
+    (!speechGenerating.roomId || speechGenerating.roomId === room.id) &&
+    (!speechGenerating.roundNo || speechGenerating.roundNo === room.currentRound);
+  const showSpeechDiscarded =
+    isObserverMode &&
+    speechDiscarded &&
+    (!speechDiscarded.roomId || speechDiscarded.roomId === room.id) &&
+    (!speechDiscarded.roundNo || speechDiscarded.roundNo === room.currentRound);
 
   const phaseTotalMs =
     room.phase === "discussion"
@@ -585,9 +600,11 @@ export default function GamePage() {
           <div className="player-dock-list">
             {room.players.map((player) => {
               const isSelf = player.id === playerId;
+              const isGenerating = showSpeechGenerating && speechGenerating?.playerId === player.id;
+              const isDiscarded = showSpeechDiscarded && speechDiscarded?.playerId === player.id;
               return (
                 <div
-                  className={`player-row game-player-row ${isSelf ? "is-self" : ""} ${player.status === "eliminated" ? "is-dead" : ""}`}
+                  className={`player-row game-player-row ${isSelf ? "is-self" : ""} ${player.status === "eliminated" ? "is-dead" : ""} ${isGenerating ? "is-generating" : ""}`}
                   key={player.id}
                 >
                   <div
@@ -643,6 +660,19 @@ export default function GamePage() {
                       )}
                     </div>
                   </div>
+                  {isGenerating && (
+                    <span className="generating-tag">
+                      生成中
+                      <span className="typing-dots">
+                        <span className="dot" />
+                        <span className="dot" />
+                        <span className="dot" />
+                      </span>
+                    </span>
+                  )}
+                  {isDiscarded && (
+                    <span className="discarded-tag">已跳过</span>
+                  )}
                 </div>
               );
             })}

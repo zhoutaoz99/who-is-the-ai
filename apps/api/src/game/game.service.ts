@@ -99,6 +99,9 @@ type AiSpeechContextMark = {
 
 type SpeechSchedulerKind = "ai" | "simulated-human";
 type SpeechTimerKey = "aiSpeech" | "simulatedHumanSpeech";
+type DebugAutoAiSpeechPassResult = "continue" | "start-voting" | "stop";
+
+const DEBUG_AUTO_AI_PASS_STALE_MS = 10 * 60_000;
 
 @Injectable()
 export class GameService {
@@ -1058,17 +1061,39 @@ export class GameService {
   }
 
   private async startVotingById(roomId: string) {
+    let deferredUntilDebugPassEnds = false;
     const room = await this.applyWithLock(roomId, (latest) => {
+      deferredUntilDebugPassEnds = false;
       if (latest.status !== "playing" || latest.phase !== "discussion") {
         return false;
       }
 
+      if (this.shouldDeferVotingForDebugAutoAiPass(latest)) {
+        const state = this.getDebugAutoAiSpeechState(latest);
+        latest.debugAutoAiSpeech = {
+          roundNo: latest.currentRound,
+          startOffset: state?.startOffset ?? 0,
+          passNo: state?.passNo ?? 0,
+          passInProgress: true,
+          passStartedAt: state?.passStartedAt ?? Date.now(),
+          voteAfterPass: true,
+        };
+        touch(latest);
+        deferredUntilDebugPassEnds = true;
+        return true;
+      }
+
       latest.phase = "voting";
       latest.phaseEndsAt = futureIso(VOTE_DURATION_MS);
+      latest.debugAutoAiSpeech = undefined;
       touch(latest);
       return true;
     });
     if (!room) {
+      return;
+    }
+    if (deferredUntilDebugPassEnds) {
+      this.scheduleDeferredDebugAutoAiVoting(room);
       return;
     }
 
@@ -1201,14 +1226,8 @@ export class GameService {
     roundNo: number,
   ) {
     while (true) {
-      const room = await this.getRoom(roomId);
-      if (
-        !room ||
-        room.status !== "playing" ||
-        room.phase !== "discussion" ||
-        room.currentRound !== roundNo ||
-        !room.debugAutoAi
-      ) {
+      const room = await this.beginDebugAutoAiSpeechPass(roomId, roundNo);
+      if (!room) {
         return;
       }
 
@@ -1238,6 +1257,8 @@ export class GameService {
           continue;
         }
 
+        this.emitSpeechGenerating(roomId, freshPlayer, roundNo);
+
         const contextMark = this.markAiSpeechContext(before);
         const schedulerKind = this.playerSpeechSchedulerKind(freshPlayer);
         const context = this.buildGameContext(before, freshPlayer);
@@ -1260,6 +1281,12 @@ export class GameService {
             action.type === "speak" ? action.content : undefined,
           );
           this.aiService.recordCalls(action.callRecords);
+          this.emitSpeechDiscarded(
+            roomId,
+            freshPlayer,
+            "对局已离开发言阶段或上下文失效",
+            roundNo,
+          );
           return;
         }
 
@@ -1270,6 +1297,7 @@ export class GameService {
             roundNo,
           );
           this.aiService.recordCalls(action.callRecords);
+          this.emitSpeechDiscarded(roomId, freshPlayer, "skip", roundNo);
           continue;
         }
 
@@ -1291,18 +1319,65 @@ export class GameService {
             "自动对抗串行发言保存失败",
             action.content,
           );
+          this.emitSpeechDiscarded(roomId, freshPlayer, "保存发言失败", roundNo);
           return;
         }
       }
 
-      const shouldContinue = await this.advanceDebugAutoAiSpeechPass(
+      const passResult = await this.completeDebugAutoAiSpeechPass(
         roomId,
         roundNo,
       );
-      if (!shouldContinue) {
+      if (passResult === "start-voting") {
+        await this.startVotingById(roomId);
+        return;
+      }
+      if (passResult === "stop") {
         return;
       }
     }
+  }
+
+  private async beginDebugAutoAiSpeechPass(
+    roomId: string,
+    roundNo: number,
+  ): Promise<Room | null> {
+    return this.applyWithLock(roomId, (latest) => {
+      if (
+        latest.status !== "playing" ||
+        latest.phase !== "discussion" ||
+        latest.currentRound !== roundNo ||
+        !latest.debugAutoAi ||
+        !latest.debugAutoAiFastMode
+      ) {
+        return false;
+      }
+
+      const players = latest.players.filter(
+        (player) => isModelDrivenPlayer(player) && player.status === "alive",
+      );
+      if (players.length === 0) {
+        return false;
+      }
+
+      const state =
+        this.getDebugAutoAiSpeechState(latest) ??
+        {
+          roundNo,
+          startOffset: 0,
+          passNo: 0,
+        };
+      latest.debugAutoAiSpeech = {
+        roundNo,
+        startOffset: state.startOffset % players.length,
+        passNo: state.passNo,
+        passInProgress: true,
+        passStartedAt: Date.now(),
+        voteAfterPass: state.voteAfterPass === true,
+      };
+      touch(latest);
+      return true;
+    });
   }
 
   private getDebugAutoAiSpeechPassPlayers(room: Room): Player[] {
@@ -1334,6 +1409,44 @@ export class GameService {
     return null;
   }
 
+  private shouldDeferVotingForDebugAutoAiPass(room: Room): boolean {
+    if (!room.debugAutoAi || !room.debugAutoAiFastMode) {
+      return false;
+    }
+
+    const state = this.getDebugAutoAiSpeechState(room);
+    if (!state?.passInProgress) {
+      return false;
+    }
+
+    if (
+      state.passStartedAt &&
+      Date.now() - state.passStartedAt > DEBUG_AUTO_AI_PASS_STALE_MS
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private scheduleDeferredDebugAutoAiVoting(room: Room) {
+    const state = this.getDebugAutoAiSpeechState(room);
+    const passStartedAt = state?.passStartedAt ?? Date.now();
+    const retryDelayMs = Math.max(
+      1_000,
+      DEBUG_AUTO_AI_PASS_STALE_MS - (Date.now() - passStartedAt),
+    );
+
+    const timers = this.getTimers(room.id);
+    if (timers.phase) {
+      clearTimeout(timers.phase);
+    }
+
+    timers.phase = setTimeout(() => {
+      void this.startVotingById(room.id);
+    }, retryDelayMs);
+  }
+
   private prepareDebugAutoAiSpeechState(room: Room) {
     if (!room.debugAutoAi || !room.debugAutoAiFastMode) {
       room.debugAutoAiSpeech = undefined;
@@ -1350,13 +1463,16 @@ export class GameService {
           ? Math.floor(Math.random() * modelDrivenCount)
           : 0,
       passNo: 0,
+      passInProgress: false,
+      voteAfterPass: false,
     };
   }
 
-  private async advanceDebugAutoAiSpeechPass(
+  private async completeDebugAutoAiSpeechPass(
     roomId: string,
     roundNo: number,
-  ): Promise<boolean> {
+  ): Promise<DebugAutoAiSpeechPassResult> {
+    let result: DebugAutoAiSpeechPassResult = "stop";
     const saved = await this.applyWithLock(roomId, (latest) => {
       if (
         latest.status !== "playing" ||
@@ -1374,6 +1490,9 @@ export class GameService {
         return false;
       }
 
+      const phaseEnded =
+        latest.phaseEndsAt != null &&
+        Date.now() >= new Date(latest.phaseEndsAt).getTime();
       const state =
         this.getDebugAutoAiSpeechState(latest) ??
         {
@@ -1381,16 +1500,33 @@ export class GameService {
           startOffset: 0,
           passNo: 0,
         };
+      if (state.voteAfterPass === true || phaseEnded) {
+        latest.debugAutoAiSpeech = {
+          roundNo,
+          startOffset: state.startOffset % players.length,
+          passNo: state.passNo + 1,
+          passInProgress: false,
+          passStartedAt: state.passStartedAt,
+          voteAfterPass: false,
+        };
+        touch(latest);
+        result = "start-voting";
+        return true;
+      }
+
       latest.debugAutoAiSpeech = {
         roundNo,
         startOffset: (state.startOffset + 1) % players.length,
         passNo: state.passNo + 1,
+        passInProgress: false,
+        voteAfterPass: false,
       };
       touch(latest);
+      result = "continue";
       return true;
     });
 
-    return saved != null;
+    return saved ? result : "stop";
   }
 
   private async markDebugAutoAiSpeechConsidered(
@@ -1503,6 +1639,10 @@ export class GameService {
           return;
         }
 
+        if (room.debugAutoAi) {
+          this.emitSpeechGenerating(room.id, aiPlayer, room.currentRound);
+        }
+
         const contextMark = this.markAiSpeechContext(room);
         const decisionStartedAt = Date.now();
         let nextDelayMs: number | null = AI_SPEECH_NEXT_CHECK_MIN_MS;
@@ -1530,6 +1670,14 @@ export class GameService {
               "模型返回后对局已离开发言阶段或轮次已变化",
               action.type === "speak" ? action.content : undefined,
             );
+            if (latestAfterModel?.debugAutoAi) {
+              this.emitSpeechDiscarded(
+                room.id,
+                aiPlayer,
+                "对局已离开发言阶段",
+                contextMark.roundNo,
+              );
+            }
             nextDelayMs = null;
             return;
           }
@@ -1543,6 +1691,14 @@ export class GameService {
               "模型返回后上下文已失效",
               action.type === "speak" ? action.content : undefined,
             );
+            if (latestAfterModel.debugAutoAi) {
+              this.emitSpeechDiscarded(
+                room.id,
+                aiPlayer,
+                "上下文已失效",
+                contextMark.roundNo,
+              );
+            }
             nextDelayMs = this.randomAiStaleRetryDelay();
             return;
           }
@@ -1555,6 +1711,9 @@ export class GameService {
               schedulerKind,
             );
             this.aiService.recordCalls(action.callRecords);
+            if (room.debugAutoAi) {
+              this.emitSpeechDiscarded(room.id, aiPlayer, "skip", contextMark.roundNo);
+            }
           }
 
           if (action.type === "speak") {
@@ -1613,6 +1772,14 @@ export class GameService {
                 discardReason ?? "保存发言时上下文已失效",
                 action.content,
               );
+              if (room.debugAutoAi) {
+                this.emitSpeechDiscarded(
+                  room.id,
+                  aiPlayer,
+                  discardReason ?? "上下文已失效",
+                  contextMark.roundNo,
+                );
+              }
               nextDelayMs = this.randomAiStaleRetryDelay();
               return;
             }
@@ -1629,6 +1796,14 @@ export class GameService {
                 discardReason ?? "保存发言失败",
                 action.content,
               );
+              if (room.debugAutoAi) {
+                this.emitSpeechDiscarded(
+                  room.id,
+                  aiPlayer,
+                  discardReason ?? "保存发言失败",
+                  contextMark.roundNo,
+                );
+              }
             }
           }
         } finally {
@@ -1689,6 +1864,34 @@ export class GameService {
     return schedulerKind === "ai"
       ? this.aiSpeaking
       : this.simulatedHumanSpeaking;
+  }
+
+  private emitSpeechGenerating(roomId: string, player: Player, roundNo?: number) {
+    this.server?.to(roomId).emit("player.speech.generating", {
+      roomId,
+      roundNo,
+      playerId: player.id,
+      playerName: player.name,
+      seatNo: player.seatNo,
+      startedAt: new Date().toISOString(),
+    });
+  }
+
+  private emitSpeechDiscarded(
+    roomId: string,
+    player: Player,
+    reason: string,
+    roundNo?: number,
+  ) {
+    this.server?.to(roomId).emit("player.speech.discarded", {
+      roomId,
+      roundNo,
+      playerId: player.id,
+      playerName: player.name,
+      seatNo: player.seatNo,
+      reason,
+      discardedAt: new Date().toISOString(),
+    });
   }
 
   private logDiscardedSpeech(

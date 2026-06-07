@@ -1339,6 +1339,70 @@ p {
   text-align: center;
 }
 
+.game-player-row.is-generating {
+  border-color: rgba(45, 212, 191, 0.35) !important;
+  background: rgba(45, 212, 191, 0.06) !important;
+}
+
+.generating-tag {
+  color: #5eead4;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+}
+
+.typing-dots .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #5eead4;
+  animation: typing-bounce 1.2s ease-in-out infinite;
+}
+
+.typing-dots .dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dots .dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.discarded-tag {
+  color: #fbbf24;
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: auto;
+  flex-shrink: 0;
+  animation: discarded-fade 4s ease-out forwards;
+}
+
+@keyframes discarded-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .phase-hint {
   border: 1px solid rgba(148, 163, 184, 0.25);
   border-radius: 8px;
