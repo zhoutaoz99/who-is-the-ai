@@ -72,12 +72,14 @@ import {
   GameAccount,
   JoinRoomPayload,
   LeaveRoomPayload,
+  ObserveRoomPayload,
   Player,
   PointAward,
   ReconnectPayload,
   Room,
   RoomSnapshot,
   SendChatPayload,
+  SpeechGeneratingPayload,
   StartGamePayload,
   StopGamePayload,
   UpdateDiscussionDurationPayload,
@@ -109,6 +111,7 @@ export class GameService {
   private readonly timers = new Map<string, RoomTimers>();
   private readonly aiSpeaking = new Map<string, boolean>();
   private readonly simulatedHumanSpeaking = new Map<string, boolean>();
+  private readonly speechGeneratings = new Map<string, Map<string, SpeechGeneratingPayload>>();
   private server?: Server;
 
   constructor(
@@ -118,7 +121,11 @@ export class GameService {
   ) {}
 
   private snapshot(room: Room): RoomSnapshot {
-    return toRoomSnapshot(room, this.aiService.getAvailableModels());
+    const snapshot = toRoomSnapshot(room, this.aiService.getAvailableModels());
+    const speechGeneratings = this.snapshotSpeechGeneratings(room);
+    return speechGeneratings.length > 0
+      ? { ...snapshot, speechGeneratings }
+      : snapshot;
   }
 
   bindServer(server: Server) {
@@ -629,6 +636,18 @@ export class GameService {
   async listRooms(): Promise<RoomSnapshot[]> {
     const rooms = await this.roomRepository.list();
     return rooms.map((room) => this.snapshot(room));
+  }
+
+  async observeRoom(payload: ObserveRoomPayload): Promise<ActionResult> {
+    const room = await this.getRoom(payload.roomId);
+    if (!room) {
+      return this.fail("房间不存在");
+    }
+
+    return {
+      ok: true,
+      room: this.snapshot(room),
+    };
   }
 
   async stopGame(payload: StopGamePayload): Promise<ActionResult> {
@@ -1309,6 +1328,7 @@ export class GameService {
         );
         this.aiService.recordCalls(action.callRecords);
         if (saved) {
+          this.clearSpeechGenerating(roomId, freshPlayer.id, roundNo);
           this.broadcastRoom(saved);
         } else {
           this.logDiscardedSpeech(
@@ -1786,6 +1806,11 @@ export class GameService {
 
             if (saved) {
               this.aiService.recordCalls(action.callRecords);
+              this.clearSpeechGenerating(
+                room.id,
+                aiPlayer.id,
+                contextMark.roundNo,
+              );
               this.broadcastRoom(saved);
             } else {
               this.logDiscardedSpeech(
@@ -1867,14 +1892,20 @@ export class GameService {
   }
 
   private emitSpeechGenerating(roomId: string, player: Player, roundNo?: number) {
-    this.server?.to(roomId).emit("player.speech.generating", {
+    const payload: SpeechGeneratingPayload = {
       roomId,
       roundNo,
       playerId: player.id,
       playerName: player.name,
       seatNo: player.seatNo,
       startedAt: new Date().toISOString(),
-    });
+    };
+    const roomSpeechGeneratings =
+      this.speechGeneratings.get(roomId) ??
+      new Map<string, SpeechGeneratingPayload>();
+    roomSpeechGeneratings.set(player.id, payload);
+    this.speechGeneratings.set(roomId, roomSpeechGeneratings);
+    this.server?.to(roomId).emit("player.speech.generating", payload);
   }
 
   private emitSpeechDiscarded(
@@ -1883,6 +1914,7 @@ export class GameService {
     reason: string,
     roundNo?: number,
   ) {
+    this.clearSpeechGenerating(roomId, player.id, roundNo);
     this.server?.to(roomId).emit("player.speech.discarded", {
       roomId,
       roundNo,
@@ -1892,6 +1924,82 @@ export class GameService {
       reason,
       discardedAt: new Date().toISOString(),
     });
+  }
+
+  private clearSpeechGenerating(
+    roomId: string,
+    playerId?: string,
+    roundNo?: number,
+  ) {
+    const roomSpeechGeneratings = this.speechGeneratings.get(roomId);
+    if (!roomSpeechGeneratings) {
+      return;
+    }
+
+    if (!playerId) {
+      this.speechGeneratings.delete(roomId);
+      return;
+    }
+
+    const current = roomSpeechGeneratings.get(playerId);
+    if (!current) {
+      return;
+    }
+
+    if (roundNo !== undefined && current.roundNo !== roundNo) {
+      return;
+    }
+
+    roomSpeechGeneratings.delete(playerId);
+    if (roomSpeechGeneratings.size === 0) {
+      this.speechGeneratings.delete(roomId);
+    }
+  }
+
+  private snapshotSpeechGeneratings(room: Room): SpeechGeneratingPayload[] {
+    const roomSpeechGeneratings = this.speechGeneratings.get(room.id);
+    if (!roomSpeechGeneratings) {
+      return [];
+    }
+
+    if (
+      !room.debugAutoAi ||
+      room.status !== "playing" ||
+      room.phase !== "discussion"
+    ) {
+      this.speechGeneratings.delete(room.id);
+      return [];
+    }
+
+    const payloads: SpeechGeneratingPayload[] = [];
+    for (const [playerId, payload] of roomSpeechGeneratings) {
+      const player = room.players.find(
+        (candidate) =>
+          candidate.id === playerId &&
+          isModelDrivenPlayer(candidate) &&
+          candidate.status === "alive",
+      );
+      const wrongRound =
+        payload.roundNo !== undefined && payload.roundNo !== room.currentRound;
+      if (!player || wrongRound) {
+        roomSpeechGeneratings.delete(playerId);
+        continue;
+      }
+
+      payloads.push({
+        ...payload,
+        roomId: room.id,
+        roundNo: payload.roundNo ?? room.currentRound,
+        playerName: player.name,
+        seatNo: player.seatNo,
+      });
+    }
+
+    if (roomSpeechGeneratings.size === 0) {
+      this.speechGeneratings.delete(room.id);
+    }
+
+    return payloads.sort((first, second) => first.seatNo - second.seatNo);
   }
 
   private logDiscardedSpeech(
@@ -2539,6 +2647,7 @@ export class GameService {
     this.timers.set(roomId, {});
     this.aiSpeaking.delete(roomId);
     this.simulatedHumanSpeaking.delete(roomId);
+    this.speechGeneratings.delete(roomId);
   }
 
   private fail(error: string): ActionResult {

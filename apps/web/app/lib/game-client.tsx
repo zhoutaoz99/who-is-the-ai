@@ -30,7 +30,7 @@ type GameClientContextValue = {
   rooms: RoomSnapshot[];
   playerName: string;
   roomCode: string;
-  speechGenerating: SpeechGeneratingPayload | null;
+  speechGeneratings: SpeechGeneratingPayload[];
   speechDiscarded: SpeechDiscardedPayload | null;
   setPlayerName: (value: string) => void;
   setRoomCode: (value: string) => void;
@@ -76,6 +76,44 @@ const API_URL =
 const PLAYER_NAME_KEY = "ai-werewolf-name";
 const PLAYER_ID_PREFIX = "ai-werewolf-player-";
 
+function speechGeneratingKey(payload: SpeechGeneratingPayload) {
+  return [
+    payload.roomId ?? "",
+    payload.roundNo ?? "",
+    payload.playerId,
+    payload.startedAt ?? "",
+  ].join(":");
+}
+
+function isSameSpeechGenerating(
+  first: Pick<SpeechGeneratingPayload, "roomId" | "roundNo" | "playerId">,
+  second: Pick<SpeechGeneratingPayload, "roomId" | "roundNo" | "playerId">,
+) {
+  return (
+    first.playerId === second.playerId &&
+    (!first.roomId || !second.roomId || first.roomId === second.roomId) &&
+    (!first.roundNo || !second.roundNo || first.roundNo === second.roundNo)
+  );
+}
+
+function upsertSpeechGenerating(
+  items: SpeechGeneratingPayload[] | undefined,
+  payload: SpeechGeneratingPayload,
+) {
+  return [
+    ...(items ?? []).filter((item) => !isSameSpeechGenerating(item, payload)),
+    payload,
+  ];
+}
+
+function removeSpeechGenerating(
+  items: SpeechGeneratingPayload[] | undefined,
+  payload: Pick<SpeechGeneratingPayload, "roomId" | "roundNo" | "playerId">,
+) {
+  const next = (items ?? []).filter((item) => !isSameSpeechGenerating(item, payload));
+  return next.length > 0 ? next : undefined;
+}
+
 const GameClientContext = createContext<GameClientContextValue | null>(null);
 
 export function GameClientProvider({ children }: { children: ReactNode }) {
@@ -89,18 +127,16 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
   const [playerIds, setPlayerIds] = useState<Record<string, string>>({});
   const [playerName, setPlayerName] = useState("");
   const [roomCode, setRoomCode] = useState("");
-  const [speechGenerating, setSpeechGenerating] = useState<SpeechGeneratingPayload | null>(null);
+  const [speechGeneratings, setSpeechGeneratings] = useState<SpeechGeneratingPayload[]>([]);
   const [speechDiscarded, setSpeechDiscarded] = useState<SpeechDiscardedPayload | null>(null);
-  const speechGeneratingClearTimerRef = useRef<number | null>(null);
+  const speechGeneratingClearTimersRef = useRef<Record<string, number>>({});
   const speechDiscardedClearTimerRef = useRef<number | null>(null);
 
-  const clearSpeechGeneratingTimer = useCallback(() => {
-    if (speechGeneratingClearTimerRef.current == null) {
-      return;
+  const clearSpeechGeneratingTimers = useCallback(() => {
+    for (const timer of Object.values(speechGeneratingClearTimersRef.current)) {
+      window.clearTimeout(timer);
     }
-
-    window.clearTimeout(speechGeneratingClearTimerRef.current);
-    speechGeneratingClearTimerRef.current = null;
+    speechGeneratingClearTimersRef.current = {};
   }, []);
 
   const clearSpeechDiscardedTimer = useCallback(() => {
@@ -114,47 +150,44 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
 
   const clearResolvedSpeechGenerating = useCallback(
     (snapshot: RoomSnapshot) => {
-      setSpeechGenerating((current) => {
-        if (!current) {
+      setSpeechGeneratings((current) => {
+        if (current.length === 0) {
           return current;
-        }
-        if (current.roomId && current.roomId !== snapshot.id) {
-          return current;
-        }
-        if (current.roundNo && current.roundNo !== snapshot.currentRound) {
-          clearSpeechGeneratingTimer();
-          return null;
-        }
-        if (snapshot.status !== "playing" || snapshot.phase !== "discussion") {
-          clearSpeechGeneratingTimer();
-          return null;
         }
 
-        const startedAtMs = current.startedAt
-          ? new Date(current.startedAt).getTime()
-          : Number.NaN;
-        const hasNewMessage = snapshot.messages.some((message) => {
-          if (message.playerId !== current.playerId) {
-            return false;
-          }
-          if (current.roundNo && message.roundNo !== current.roundNo) {
-            return false;
-          }
-          if (!Number.isFinite(startedAtMs)) {
+        const next = current.filter((item) => {
+          if (item.roomId && item.roomId !== snapshot.id) {
             return true;
           }
+          if (item.roundNo && item.roundNo !== snapshot.currentRound) {
+            return false;
+          }
+          if (snapshot.status !== "playing" || snapshot.phase !== "discussion") {
+            return false;
+          }
 
-          return new Date(message.createdAt).getTime() >= startedAtMs - 1_000;
+          const startedAtMs = item.startedAt
+            ? new Date(item.startedAt).getTime()
+            : Number.NaN;
+          const hasNewMessage = snapshot.messages.some((message) => {
+            if (message.playerId !== item.playerId) {
+              return false;
+            }
+            if (item.roundNo && message.roundNo !== item.roundNo) {
+              return false;
+            }
+            if (!Number.isFinite(startedAtMs)) {
+              return true;
+            }
+
+            return new Date(message.createdAt).getTime() >= startedAtMs - 1_000;
+          });
+          return !hasNewMessage;
         });
-        if (!hasNewMessage) {
-          return current;
-        }
-
-        clearSpeechGeneratingTimer();
-        return null;
+        return next.length === current.length ? current : next;
       });
     },
-    [clearSpeechGeneratingTimer],
+    [],
   );
 
   const upsertRoom = useCallback((snapshot: RoomSnapshot) => {
@@ -218,9 +251,9 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => {
       setConnected(false);
-      clearSpeechGeneratingTimer();
+      clearSpeechGeneratingTimers();
       clearSpeechDiscardedTimer();
-      setSpeechGenerating(null);
+      setSpeechGeneratings([]);
       setSpeechDiscarded(null);
     });
     socket.on("server.ready", (payload: ServerReadyPayload) => {
@@ -238,12 +271,26 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("round.tick", applyRoundTick);
 
     socket.on("player.speech.generating", (payload: SpeechGeneratingPayload) => {
-      clearSpeechGeneratingTimer();
       const nextPayload = {
         ...payload,
         startedAt: payload.startedAt ?? new Date().toISOString(),
       };
-      setSpeechGenerating(nextPayload);
+      setSpeechGeneratings((current) =>
+        upsertSpeechGenerating(current, nextPayload),
+      );
+      setRooms((current) =>
+        current.map((room) =>
+          nextPayload.roomId && room.id !== nextPayload.roomId
+            ? room
+            : {
+                ...room,
+                speechGeneratings: upsertSpeechGenerating(
+                  room.speechGeneratings,
+                  nextPayload,
+                ),
+              },
+        ),
+      );
       setSpeechDiscarded((current) => {
         if (
           current?.playerId === nextPayload.playerId &&
@@ -256,20 +303,29 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
 
         return current;
       });
-      speechGeneratingClearTimerRef.current = window.setTimeout(() => {
-        setSpeechGenerating((current) => {
-          if (
-            current?.playerId === nextPayload.playerId &&
-            current.roomId === nextPayload.roomId &&
-            current.roundNo === nextPayload.roundNo &&
-            current.startedAt === nextPayload.startedAt
-          ) {
-            return null;
-          }
-
-          return current;
-        });
-        speechGeneratingClearTimerRef.current = null;
+      const timerKey = speechGeneratingKey(nextPayload);
+      const existingTimer = speechGeneratingClearTimersRef.current[timerKey];
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+      speechGeneratingClearTimersRef.current[timerKey] = window.setTimeout(() => {
+        setSpeechGeneratings((current) =>
+          current.filter((item) => speechGeneratingKey(item) !== timerKey),
+        );
+        setRooms((current) =>
+          current.map((room) =>
+            nextPayload.roomId && room.id !== nextPayload.roomId
+              ? room
+              : {
+                  ...room,
+                  speechGeneratings: removeSpeechGenerating(
+                    room.speechGeneratings,
+                    nextPayload,
+                  ),
+                },
+          ),
+        );
+        delete speechGeneratingClearTimersRef.current[timerKey];
       }, 120_000);
     });
     socket.on("player.speech.discarded", (payload: SpeechDiscardedPayload) => {
@@ -278,18 +334,22 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
         ...payload,
         discardedAt: payload.discardedAt ?? new Date().toISOString(),
       };
-      setSpeechGenerating((current) => {
-        if (
-          current?.playerId === nextPayload.playerId &&
-          (!current.roomId || !nextPayload.roomId || current.roomId === nextPayload.roomId) &&
-          (!current.roundNo || !nextPayload.roundNo || current.roundNo === nextPayload.roundNo)
-        ) {
-          clearSpeechGeneratingTimer();
-          return null;
-        }
-
-        return current;
-      });
+      setSpeechGeneratings((current) =>
+        current.filter((item) => !isSameSpeechGenerating(item, nextPayload)),
+      );
+      setRooms((current) =>
+        current.map((room) =>
+          nextPayload.roomId && room.id !== nextPayload.roomId
+            ? room
+            : {
+                ...room,
+                speechGeneratings: removeSpeechGenerating(
+                  room.speechGeneratings,
+                  nextPayload,
+                ),
+              },
+        ),
+      );
       setSpeechDiscarded(nextPayload);
       speechDiscardedClearTimerRef.current = window.setTimeout(() => {
         setSpeechDiscarded((current) => {
@@ -309,7 +369,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     });
 
     return () => {
-      clearSpeechGeneratingTimer();
+      clearSpeechGeneratingTimers();
       clearSpeechDiscardedTimer();
       socket.disconnect();
       socketRef.current = null;
@@ -317,7 +377,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
   }, [
     applyRoundTick,
     clearSpeechDiscardedTimer,
-    clearSpeechGeneratingTimer,
+    clearSpeechGeneratingTimers,
     upsertRoom,
   ]);
 
@@ -410,7 +470,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       rooms,
       playerName,
       roomCode,
-      speechGenerating,
+      speechGeneratings,
       speechDiscarded,
       setPlayerName,
       setRoomCode,
@@ -613,6 +673,32 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       fetchRoom: async (roomId: string) => {
         const upperId = roomId.toUpperCase();
         const local = rooms.find((r) => r.id === upperId);
+
+        const socket = socketRef.current;
+        if (socket && connected) {
+          const observed = await new Promise<RoomSnapshot | null>((resolve) => {
+            socket
+              .timeout(5_000)
+              .emit(
+                "room.observe",
+                { roomId: upperId },
+                (err: Error | null, result?: ActionResult) => {
+                  if (err || !result?.ok || !result.room) {
+                    resolve(null);
+                    return;
+                  }
+
+                  upsertRoom(result.room);
+                  resolve(result.room);
+                },
+              );
+          });
+
+          if (observed) {
+            return observed;
+          }
+        }
+
         if (local) return local;
 
         try {
@@ -639,7 +725,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     playerName,
     roomCode,
     rooms,
-    speechGenerating,
+    speechGeneratings,
     speechDiscarded,
     token,
     user?.displayName,

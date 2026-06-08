@@ -66,6 +66,7 @@ export type RoomSnapshot = {
   phaseEndsAt: string | null;
   winner: Winner;
   messages: PublicMessage[];
+  speechGeneratings?: SpeechGeneratingPayload[];
   voteCounts: Record<string, number>;
   voteResults: PublicVoteResult[];
   pointAwards: PointAward[];

@@ -276,6 +276,7 @@ export default function GamePage() {
   const roomId = params.roomId.toUpperCase();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const accountRefreshRoomRef = useRef<string | null>(null);
+  const observedDebugRoomRef = useRef<string | null>(null);
   const { refreshMe } = useAuth();
   const {
     connected,
@@ -288,7 +289,7 @@ export default function GamePage() {
     castVote,
     stopGame,
     fetchRoom,
-    speechGenerating,
+    speechGeneratings,
     speechDiscarded,
   } = useGameClient();
 
@@ -311,6 +312,19 @@ export default function GamePage() {
     getPlayerId,
     reconnectRoom,
   });
+
+  useEffect(() => {
+    if (!connected) {
+      observedDebugRoomRef.current = null;
+      return;
+    }
+    if (!room?.debugAutoAi || observedDebugRoomRef.current === room.id) {
+      return;
+    }
+
+    observedDebugRoomRef.current = room.id;
+    void fetchRoom(room.id);
+  }, [connected, fetchRoom, room?.debugAutoAi, room?.id]);
 
   useEffect(() => {
     if (room || fetchAttempted) return;
@@ -412,13 +426,21 @@ export default function GamePage() {
   const transcriptItems = buildTranscriptItems(room);
   const isObserverMode = Boolean(room.debugAutoAi);
 
-  const showSpeechGenerating =
-    isObserverMode &&
-    room.status === "playing" &&
-    room.phase === "discussion" &&
-    speechGenerating &&
-    (!speechGenerating.roomId || speechGenerating.roomId === room.id) &&
-    (!speechGenerating.roundNo || speechGenerating.roundNo === room.currentRound);
+  const activeSpeechGeneratingIds = new Set(
+    [
+      ...(room.speechGeneratings ?? []),
+      ...speechGeneratings,
+    ]
+      .filter(
+        (item) =>
+          isObserverMode &&
+          room.status === "playing" &&
+          room.phase === "discussion" &&
+          (!item.roomId || item.roomId === room.id) &&
+          (!item.roundNo || item.roundNo === room.currentRound),
+      )
+      .map((item) => item.playerId),
+  );
   const showSpeechDiscarded =
     isObserverMode &&
     speechDiscarded &&
@@ -600,7 +622,7 @@ export default function GamePage() {
           <div className="player-dock-list">
             {room.players.map((player) => {
               const isSelf = player.id === playerId;
-              const isGenerating = showSpeechGenerating && speechGenerating?.playerId === player.id;
+              const isGenerating = activeSpeechGeneratingIds.has(player.id);
               const isDiscarded = showSpeechDiscarded && speechDiscarded?.playerId === player.id;
               return (
                 <div

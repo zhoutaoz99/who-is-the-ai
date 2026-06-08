@@ -22,6 +22,7 @@ import {
   DeleteRoomPayload,
   JoinRoomPayload,
   LeaveRoomPayload,
+  ObserveRoomPayload,
   ReconnectPayload,
   SendChatPayload,
   StartGamePayload,
@@ -158,6 +159,18 @@ export class GameGateway
     if (result.room) {
       client.join(result.room.id);
       this.server.to(result.room.id).emit("room.updated", result.room);
+    }
+    return result;
+  }
+
+  @SubscribeMessage("room.observe")
+  async handleObserveRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: ObserveRoomPayload,
+  ) {
+    const result = await this.gameService.observeRoom(payload ?? {});
+    if (result.room) {
+      client.join(result.room.id);
     }
     return result;
   }

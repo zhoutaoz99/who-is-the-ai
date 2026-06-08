@@ -54,6 +54,15 @@ export interface PublicVoteResult {
   createdAt: string;
 }
 
+export interface SpeechGeneratingPayload {
+  roomId?: string;
+  roundNo?: number;
+  playerId: string;
+  playerName: string;
+  seatNo: number;
+  startedAt?: string;
+}
+
 export interface PointAward {
   playerId: string;
   playerName: string;
@@ -124,6 +133,7 @@ export interface RoomSnapshot {
   phaseEndsAt: string | null;
   winner: Winner;
   messages: Array<Omit<ChatMessage, "source"> & { source?: PlayerType }>;
+  speechGeneratings?: SpeechGeneratingPayload[];
   voteCounts: Record<string, number>;
   voteResults: PublicVoteResult[];
   pointAwards: PointAward[];
@@ -194,6 +204,10 @@ export interface LeaveRoomPayload {
 export interface ReconnectPayload {
   roomId?: string;
   playerId?: string;
+}
+
+export interface ObserveRoomPayload {
+  roomId?: string;
 }
 
 export interface StopGamePayload {
