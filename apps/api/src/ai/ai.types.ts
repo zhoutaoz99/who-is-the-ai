@@ -79,7 +79,6 @@ export type AiVoteAction = {
 };
 
 export interface ChatMessageInput {
-  orderLabel?: string;
   playerName: string;
   content: string;
 }

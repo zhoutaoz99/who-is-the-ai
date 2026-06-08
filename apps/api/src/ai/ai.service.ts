@@ -564,7 +564,7 @@ export class AiService {
     };
 
     if (context.recentMessages.length > 0) {
-      vars.recentMessages = this.formatChatMessages(context.recentMessages, "  ");
+      vars.recentMessages = this.formatRecentMessages(context.recentMessages, "  ");
     }
 
     if (context.historicalMessages.length > 0) {
@@ -622,7 +622,7 @@ export class AiService {
     };
 
     if (context.recentMessages.length > 0) {
-      vars.recentMessages = this.formatChatMessages(context.recentMessages, "  ");
+      vars.recentMessages = this.formatRecentMessages(context.recentMessages, "  ");
     }
 
     if (context.historicalMessages.length > 0) {
@@ -670,7 +670,7 @@ export class AiService {
     };
 
     if (context.recentMessages.length > 0) {
-      vars.recentMessages = this.formatChatMessages(context.recentMessages, "  ");
+      vars.recentMessages = this.formatRecentMessages(context.recentMessages, "  ");
     }
 
     if (context.historicalMessages.length > 0) {
@@ -734,30 +734,28 @@ export class AiService {
   private formatHistoricalMessages(
     messages: Array<ChatMessageInput & { roundNo: number }>,
   ): string {
-    const grouped = new Map<number, ChatMessageInput[]>();
+    const lines: string[] = [];
+    let currentRoundNo: number | null = null;
+
     for (const msg of messages) {
-      const lines = grouped.get(msg.roundNo) ?? [];
-      lines.push(msg);
-      grouped.set(msg.roundNo, lines);
+      if (msg.roundNo !== currentRoundNo) {
+        currentRoundNo = msg.roundNo;
+        lines.push(`  第${msg.roundNo}轮：`);
+      }
+
+      lines.push(`    ${msg.playerName}：${msg.content}`);
     }
 
-    return [...grouped.entries()]
-      .map(([roundNo, lines]) =>
-        [
-          `  第${roundNo}轮：`,
-          ...this.formatChatMessages(lines, "    ").split("\n"),
-        ].join("\n"),
-      )
-      .join("\n");
+    return lines.join("\n");
   }
 
-  private formatChatMessages(
+  private formatRecentMessages(
     messages: ChatMessageInput[],
     indent: string,
   ): string {
     return messages
-      .map((msg, index) => {
-        return `${indent}[${msg.orderLabel ?? index + 1}] ${msg.playerName}：${msg.content}`;
+      .map((msg) => {
+        return `${indent}${msg.playerName}：${msg.content}`;
       })
       .join("\n");
   }

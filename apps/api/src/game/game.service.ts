@@ -2226,18 +2226,9 @@ export class GameService {
       .map((p) => ({ id: p.id, seatNo: p.seatNo }));
 
     const seatMap = new Map(room.players.map((p) => [p.id, p.seatNo]));
-    const messageOrderLabels = new Map<string, string>();
-    const roundMessageCounts = new Map<number, number>();
-    for (const message of room.messages) {
-      const nextCount = (roundMessageCounts.get(message.roundNo) ?? 0) + 1;
-      roundMessageCounts.set(message.roundNo, nextCount);
-      messageOrderLabels.set(message.id, `${message.roundNo}.${nextCount}`);
-    }
-
     const recentMessages = room.messages
       .filter((m) => m.roundNo === room.currentRound)
       .map((m) => ({
-        orderLabel: messageOrderLabels.get(m.id),
         playerName: `${seatMap.get(m.playerId) ?? "?"}号位`,
         content: m.content,
       }));
@@ -2246,7 +2237,6 @@ export class GameService {
       .filter((m) => m.roundNo < room.currentRound)
       .map((m) => ({
         roundNo: m.roundNo,
-        orderLabel: messageOrderLabels.get(m.id),
         playerName: `${seatMap.get(m.playerId) ?? "?"}号位`,
         content: m.content,
       }));
