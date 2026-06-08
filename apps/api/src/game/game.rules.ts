@@ -97,6 +97,16 @@ export function getWinner(room: Room): Winner {
     return "ai";
   }
 
+  // 只剩1个AI和1个模拟真人时，模拟真人不可能获胜，提前结束
+  if (aliveAiCount === 1 && aliveHumanCount === 1) {
+    const aliveHuman = room.players.find(
+      (player) => player.type === "human" && player.status === "alive",
+    );
+    if (aliveHuman?.simulated) {
+      return "ai";
+    }
+  }
+
   if (room.currentRound >= MAX_ROUNDS) {
     return aliveAiCount > 0 ? "ai" : "human";
   }
