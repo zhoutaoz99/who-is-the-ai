@@ -101,7 +101,6 @@ export interface Room {
     passNo: number;
     passInProgress?: boolean;
     passStartedAt?: number;
-    voteAfterPass?: boolean;
   };
   pointAwards: PointAward[];
   rewardSettledAt: string | null;

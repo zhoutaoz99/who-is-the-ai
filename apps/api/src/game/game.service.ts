@@ -103,8 +103,6 @@ type SpeechSchedulerKind = "ai" | "simulated-human";
 type SpeechTimerKey = "aiSpeech" | "simulatedHumanSpeech";
 type DebugAutoAiSpeechPassResult = "continue" | "start-voting" | "stop";
 
-const DEBUG_AUTO_AI_PASS_STALE_MS = 10 * 60_000;
-
 @Injectable()
 export class GameService {
   private readonly logger = new Logger(GameService.name);
@@ -1080,26 +1078,9 @@ export class GameService {
   }
 
   private async startVotingById(roomId: string) {
-    let deferredUntilDebugPassEnds = false;
     const room = await this.applyWithLock(roomId, (latest) => {
-      deferredUntilDebugPassEnds = false;
       if (latest.status !== "playing" || latest.phase !== "discussion") {
         return false;
-      }
-
-      if (this.shouldDeferVotingForDebugAutoAiPass(latest)) {
-        const state = this.getDebugAutoAiSpeechState(latest);
-        latest.debugAutoAiSpeech = {
-          roundNo: latest.currentRound,
-          startOffset: state?.startOffset ?? 0,
-          passNo: state?.passNo ?? 0,
-          passInProgress: true,
-          passStartedAt: state?.passStartedAt ?? Date.now(),
-          voteAfterPass: true,
-        };
-        touch(latest);
-        deferredUntilDebugPassEnds = true;
-        return true;
       }
 
       latest.phase = "voting";
@@ -1109,10 +1090,6 @@ export class GameService {
       return true;
     });
     if (!room) {
-      return;
-    }
-    if (deferredUntilDebugPassEnds) {
-      this.scheduleDeferredDebugAutoAiVoting(room);
       return;
     }
 
@@ -1393,7 +1370,6 @@ export class GameService {
         passNo: state.passNo,
         passInProgress: true,
         passStartedAt: Date.now(),
-        voteAfterPass: state.voteAfterPass === true,
       };
       touch(latest);
       return true;
@@ -1429,44 +1405,6 @@ export class GameService {
     return null;
   }
 
-  private shouldDeferVotingForDebugAutoAiPass(room: Room): boolean {
-    if (!room.debugAutoAi || !room.debugAutoAiFastMode) {
-      return false;
-    }
-
-    const state = this.getDebugAutoAiSpeechState(room);
-    if (!state?.passInProgress) {
-      return false;
-    }
-
-    if (
-      state.passStartedAt &&
-      Date.now() - state.passStartedAt > DEBUG_AUTO_AI_PASS_STALE_MS
-    ) {
-      return false;
-    }
-
-    return true;
-  }
-
-  private scheduleDeferredDebugAutoAiVoting(room: Room) {
-    const state = this.getDebugAutoAiSpeechState(room);
-    const passStartedAt = state?.passStartedAt ?? Date.now();
-    const retryDelayMs = Math.max(
-      1_000,
-      DEBUG_AUTO_AI_PASS_STALE_MS - (Date.now() - passStartedAt),
-    );
-
-    const timers = this.getTimers(room.id);
-    if (timers.phase) {
-      clearTimeout(timers.phase);
-    }
-
-    timers.phase = setTimeout(() => {
-      void this.startVotingById(room.id);
-    }, retryDelayMs);
-  }
-
   private prepareDebugAutoAiSpeechState(room: Room) {
     if (!room.debugAutoAi || !room.debugAutoAiFastMode) {
       room.debugAutoAiSpeech = undefined;
@@ -1484,7 +1422,6 @@ export class GameService {
           : 0,
       passNo: 0,
       passInProgress: false,
-      voteAfterPass: false,
     };
   }
 
@@ -1520,14 +1457,13 @@ export class GameService {
           startOffset: 0,
           passNo: 0,
         };
-      if (state.voteAfterPass === true || phaseEnded) {
+      if (phaseEnded) {
         latest.debugAutoAiSpeech = {
           roundNo,
           startOffset: state.startOffset % players.length,
           passNo: state.passNo + 1,
           passInProgress: false,
           passStartedAt: state.passStartedAt,
-          voteAfterPass: false,
         };
         touch(latest);
         result = "start-voting";
@@ -1539,7 +1475,6 @@ export class GameService {
         startOffset: (state.startOffset + 1) % players.length,
         passNo: state.passNo + 1,
         passInProgress: false,
-        voteAfterPass: false,
       };
       touch(latest);
       result = "continue";
