@@ -357,13 +357,20 @@ generateVote(context, aiPlayerId):
 
 ## 六、API 调用
 
-### 请求格式（OpenAI 兼容）
+### 请求格式
+
+对局 AI 模型由根目录 `ai-models.json` 配置。每个条目的 `format` 决定请求协议：
+
+- 不填 `format` 或设置为 `"openai"`：OpenAI-compatible `chat/completions`。
+- 设置为 `"claude"`：原生 Claude Messages API，并自动启用 top-level prompt cache。
+
+#### OpenAI-compatible
 
 ```
-POST {AI_BASE_URL}/chat/completions
+POST {baseURL}/chat/completions
 Headers:
   Content-Type: application/json
-  Authorization: Bearer {AI_API_KEY}
+  Authorization: Bearer {apiKey}
 Body:
   {
     "model": "gpt-4o-mini",
@@ -377,27 +384,65 @@ Body:
   }
 ```
 
-### 配置（环境变量）
+#### Claude Messages API
 
-| 变量 | 说明 | 默认值 |
+Claude 条目的 `baseURL` 配置为不带 `/v1` 的根地址，服务端调用时会拼接 `/v1/messages`。如果配置里误带 `/v1`，加载时会自动去掉。
+
+```
+POST {baseURL}/v1/messages
+Headers:
+  Content-Type: application/json
+  x-api-key: {apiKey}
+  anthropic-version: 2023-06-01
+Body:
+  {
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 1024,
+    "temperature": 0.7,
+    "cache_control": { "type": "ephemeral" },
+    "system": "system prompt",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "user prompt" }
+        ]
+      }
+    ]
+  }
+```
+
+Claude 响应从 `content[]` 的 text block 拼接文本，并把 usage 映射到统一日志：
+
+```json
+{
+  "content": [
+    { "type": "text", "text": "model output" }
+  ],
+  "usage": {
+    "input_tokens": 123,
+    "output_tokens": 45,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 100
+  }
+}
+```
+
+### 配置（ai-models.json）
+
+| 字段 | 说明 | 默认值 |
 |------|------|--------|
-| `AI_BASE_URL` | API 地址 | `https://api.openai.com/v1` |
-| `AI_API_KEY` | API Key | （空） |
-| `AI_MODEL` | 模型名称 | `gpt-4o-mini` |
-| `AI_TEMPERATURE` | 温度 | `0.7` |
-| `AI_REASONING_EFFORT` | 推理强度 | `high` |
-| `AI_TIMEOUT_MS` | 超时（毫秒） | `15000` |
+| `format` | 请求格式：`openai` 或 `claude` | `openai` |
+| `baseURL` | API 根地址；Claude 格式不需要写 `/v1` | 必填 |
+| `apiKey` | API Key | 必填 |
+| `model` | 主模型名称 | 必填 |
+| `temperature` | 温度 | `0.7` |
+| `reasoningEffort` | OpenAI-compatible 推理强度字段 | `high` |
+| `thinking` | OpenAI-compatible thinking 字段开关 | 默认发送 |
+| `maxTokens` | Claude `max_tokens` | `1024` |
+| `timeoutMs` | 超时（毫秒） | `15000` |
 
-发言策略层和表达层可以分别覆盖模型调用参数；未配置时回落到上面的全局配置：
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `AI_STRATEGY_MODEL` | 发言策略层模型 | `AI_MODEL` |
-| `AI_STRATEGY_TEMPERATURE` | 发言策略层温度 | `AI_TEMPERATURE` |
-| `AI_STRATEGY_REASONING_EFFORT` | 发言策略层推理强度 | `AI_REASONING_EFFORT` |
-| `AI_EXPRESSION_MODEL` | 表达转换层模型 | `AI_MODEL` |
-| `AI_EXPRESSION_TEMPERATURE` | 表达转换层温度 | `AI_TEMPERATURE` |
-| `AI_EXPRESSION_REASONING_EFFORT` | 表达转换层推理强度 | `AI_REASONING_EFFORT` |
+`expression` 可覆盖表达层的 `model`、`temperature`、`reasoningEffort`、`thinking` 和 `maxTokens`；未配置时继承主模型条目。
 
 ### 游戏内 AI 调度常量
 

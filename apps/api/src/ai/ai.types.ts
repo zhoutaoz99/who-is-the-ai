@@ -1,15 +1,20 @@
 import type { AiShortMemory } from "../game/game.types";
 
+export type AiModelFormat = "openai" | "claude";
+
 export interface AiModelCallConfig {
   model: string;
   temperature: number;
   reasoningEffort: string;
   thinking?: boolean;
+  format?: AiModelFormat;
+  maxTokens?: number;
 }
 
 export interface AiModelEntry {
   id: string;
   default?: boolean;
+  format?: AiModelFormat;
   baseURL: string;
   apiKey: string;
   model: string;
@@ -17,11 +22,13 @@ export interface AiModelEntry {
   reasoningEffort: string;
   timeoutMs?: number;
   thinking?: boolean;
+  maxTokens?: number;
   expression?: {
     model?: string;
     temperature?: number;
     reasoningEffort?: string;
     thinking?: boolean;
+    maxTokens?: number;
   };
 }
 

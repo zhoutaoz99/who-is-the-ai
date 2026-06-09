@@ -7,6 +7,7 @@ import {
   AiConfig,
   AiModelCallConfig,
   AiModelEntry,
+  AiModelFormat,
   AiSpeechAction,
   AiSpeechStrategy,
   AiSpeechStrategyAction,
@@ -24,6 +25,7 @@ import {
 
 const DEFAULT_AI_NEXT_CHECK_MS = 10_000;
 const MAX_MODEL_SPEECH_CONTENT_LENGTH = 240;
+const DEFAULT_CLAUDE_MAX_TOKENS = 1024;
 
 type ParsedSpeechContent =
   | { type: "speak"; content: string }
@@ -36,6 +38,12 @@ type ModelUsage = {
   prompt_tokens_details?: { cached_tokens?: number };
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+};
+
+type ModelConnectionOptions = {
+  baseURL?: string;
+  apiKey?: string;
+  timeoutMs?: number;
 };
 
 @Injectable()
@@ -69,18 +77,24 @@ export class AiService {
         temperature: defaultModel.temperature,
         reasoningEffort: defaultModel.reasoningEffort,
         thinking: defaultModel.thinking,
+        format: defaultModel.format,
+        maxTokens: defaultModel.maxTokens,
         timeoutMs: defaultModel.timeoutMs ?? 15000,
         speechStrategy: {
           model: defaultModel.model,
           temperature: defaultModel.temperature,
           reasoningEffort: defaultModel.reasoningEffort,
           thinking: defaultModel.thinking,
+          format: defaultModel.format,
+          maxTokens: defaultModel.maxTokens,
         },
         speechExpression: {
           model: defaultModel.expression?.model ?? defaultModel.model,
           temperature: defaultModel.expression?.temperature ?? defaultModel.temperature,
           reasoningEffort: defaultModel.expression?.reasoningEffort ?? defaultModel.reasoningEffort,
           thinking: defaultModel.expression?.thinking ?? defaultModel.thinking,
+          format: defaultModel.format,
+          maxTokens: defaultModel.expression?.maxTokens ?? defaultModel.maxTokens,
         },
       };
       this.logger.log(
@@ -98,9 +112,10 @@ export class AiService {
         model: "",
         temperature: 0.7,
         reasoningEffort: "high",
+        format: "openai",
         timeoutMs: 15000,
-        speechStrategy: { model: "", temperature: 0.7, reasoningEffort: "high" },
-        speechExpression: { model: "", temperature: 0.7, reasoningEffort: "high" },
+        speechStrategy: { model: "", temperature: 0.7, reasoningEffort: "high", format: "openai" },
+        speechExpression: { model: "", temperature: 0.7, reasoningEffort: "high", format: "openai" },
       };
       this.logger.warn("No default model found in ai-models.json, AI will skip speaking");
     }
@@ -133,26 +148,52 @@ export class AiService {
           continue;
         }
 
+        const format = this.resolveModelFormat(entry.format, entry.id);
         const resolved: AiModelEntry = {
           id: entry.id,
           default: entry.default,
-          baseURL: entry.baseURL.replace(/\/+$/, ""),
+          format,
+          baseURL: this.normalizeBaseURL(entry.baseURL, format),
           apiKey: entry.apiKey,
           model: entry.model,
           temperature: entry.temperature ?? 0.7,
           reasoningEffort: entry.reasoningEffort ?? "high",
           timeoutMs: entry.timeoutMs,
           thinking: entry.thinking,
+          maxTokens: entry.maxTokens,
           expression: entry.expression,
         };
         this.models.set(resolved.id, resolved);
         this.logger.log(
-          `Model "${resolved.id}": ${resolved.baseURL} model=${resolved.model}/temp=${resolved.temperature}`,
+          `Model "${resolved.id}": ${resolved.baseURL} format=${resolved.format} model=${resolved.model}/temp=${resolved.temperature}`,
         );
       }
     } catch (error) {
       this.logger.warn(`Failed to parse AI_MODELS: ${error instanceof Error ? error.message : error}`);
     }
+  }
+
+  private resolveModelFormat(format: unknown, modelId: string): AiModelFormat {
+    if (format === "claude" || format === "openai") {
+      return format;
+    }
+
+    if (format != null) {
+      this.logger.warn(
+        `Model "${modelId}" has unsupported format "${String(format)}", falling back to openai`,
+      );
+    }
+
+    return "openai";
+  }
+
+  private normalizeBaseURL(baseURL: string, format: AiModelFormat): string {
+    const trimmed = baseURL.replace(/\/+$/, "");
+    if (format === "claude") {
+      return trimmed.replace(/\/v1$/i, "");
+    }
+
+    return trimmed;
   }
 
   getAvailableModels(): Array<{ id: string; default?: boolean }> {
@@ -180,6 +221,8 @@ export class AiService {
       temperature: entry.temperature,
       reasoningEffort: entry.reasoningEffort,
       thinking: entry.thinking,
+      format: entry.format,
+      maxTokens: entry.maxTokens,
     };
 
     const expressionConfig: AiModelCallConfig = {
@@ -187,6 +230,8 @@ export class AiService {
       temperature: entry.expression?.temperature ?? entry.temperature,
       reasoningEffort: entry.expression?.reasoningEffort ?? entry.reasoningEffort,
       thinking: entry.expression?.thinking ?? entry.thinking,
+      format: entry.format,
+      maxTokens: entry.expression?.maxTokens ?? entry.maxTokens,
     };
 
     const connection = {
@@ -764,12 +809,15 @@ export class AiService {
     systemPrompt: string,
     userPrompt: string,
     modelConfig: AiModelCallConfig,
-    options?: { baseURL?: string; apiKey?: string; timeoutMs?: number },
+    options?: ModelConnectionOptions,
   ): Promise<{ content: string; usage?: ModelUsage }> {
     const baseURL = options?.baseURL ?? this.config.baseURL;
     const apiKey = options?.apiKey ?? this.config.apiKey;
     const timeoutMs = options?.timeoutMs ?? this.config.timeoutMs;
-    const url = `${baseURL}/chat/completions`;
+    const format = modelConfig.format ?? "openai";
+    const request = format === "claude"
+      ? this.buildClaudeRequest(baseURL, apiKey, systemPrompt, userPrompt, modelConfig)
+      : this.buildOpenAiRequest(baseURL, apiKey, systemPrompt, userPrompt, modelConfig);
 
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -778,22 +826,10 @@ export class AiService {
     );
 
     try {
-      const response = await fetch(url, {
+      const response = await fetch(request.url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: modelConfig.model,
-          temperature: modelConfig.temperature,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          ...(modelConfig.thinking !== false ? { thinking: { type: "enabled" } } : {}),
-          reasoning_effort: modelConfig.reasoningEffort,
-        }),
+        headers: request.headers,
+        body: JSON.stringify(request.body),
         signal: controller.signal,
       });
 
@@ -804,25 +840,126 @@ export class AiService {
         );
       }
 
-      const data = (await response.json()) as {
-        choices: Array<{ message: { content: string } }>;
-        usage?: {
-          prompt_tokens?: number;
-          completion_tokens?: number;
-          total_tokens?: number;
-          prompt_tokens_details?: { cached_tokens?: number };
-          cache_read_input_tokens?: number;
-          cache_creation_input_tokens?: number;
-        };
-      };
-
-      return {
-        content: data.choices?.[0]?.message?.content ?? "",
-        usage: data.usage,
-      };
+      const data = await response.json();
+      return format === "claude"
+        ? this.parseClaudeResponse(data)
+        : this.parseOpenAiResponse(data);
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private buildOpenAiRequest(
+    baseURL: string,
+    apiKey: string,
+    systemPrompt: string,
+    userPrompt: string,
+    modelConfig: AiModelCallConfig,
+  ) {
+    return {
+      url: `${baseURL}/chat/completions`,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: {
+        model: modelConfig.model,
+        temperature: modelConfig.temperature,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        ...(modelConfig.thinking !== false ? { thinking: { type: "enabled" } } : {}),
+        reasoning_effort: modelConfig.reasoningEffort,
+      },
+    };
+  }
+
+  private buildClaudeRequest(
+    baseURL: string,
+    apiKey: string,
+    systemPrompt: string,
+    userPrompt: string,
+    modelConfig: AiModelCallConfig,
+  ) {
+    return {
+      url: `${this.normalizeBaseURL(baseURL, "claude")}/v1/messages`,
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: {
+        model: modelConfig.model,
+        max_tokens: modelConfig.maxTokens ?? DEFAULT_CLAUDE_MAX_TOKENS,
+        temperature: modelConfig.temperature,
+        cache_control: { type: "ephemeral" },
+        system: systemPrompt,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userPrompt },
+            ],
+          },
+        ],
+      },
+    };
+  }
+
+  private parseOpenAiResponse(data: unknown): { content: string; usage?: ModelUsage } {
+    const parsed = data as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: ModelUsage;
+    };
+
+    return {
+      content: parsed.choices?.[0]?.message?.content ?? "",
+      usage: parsed.usage,
+    };
+  }
+
+  private parseClaudeResponse(data: unknown): { content: string; usage?: ModelUsage } {
+    const parsed = data as {
+      content?: Array<{ type?: string; text?: string }>;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_read_input_tokens?: number;
+        cache_creation_input_tokens?: number;
+      };
+    };
+    const content = (parsed.content ?? [])
+      .map((block) => block.text ?? "")
+      .join("");
+
+    return {
+      content,
+      usage: this.mapClaudeUsage(parsed.usage),
+    };
+  }
+
+  private mapClaudeUsage(usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  } | undefined): ModelUsage | undefined {
+    if (!usage) {
+      return undefined;
+    }
+
+    const totalTokens = usage.input_tokens != null && usage.output_tokens != null
+      ? usage.input_tokens + usage.output_tokens
+      : undefined;
+
+    return {
+      prompt_tokens: usage.input_tokens,
+      completion_tokens: usage.output_tokens,
+      total_tokens: totalTokens,
+      cache_read_input_tokens: usage.cache_read_input_tokens,
+      cache_creation_input_tokens: usage.cache_creation_input_tokens,
+    };
   }
 
   async streamModel(
@@ -968,7 +1105,9 @@ export class AiService {
   }
 
   private describeModelConfig(config: AiModelCallConfig): string {
-    return `${config.model}/temp=${config.temperature}/reasoning=${config.reasoningEffort}`;
+    const format = config.format ?? "openai";
+    const maxTokens = config.maxTokens != null ? `/maxTokens=${config.maxTokens}` : "";
+    return `${config.model}/format=${format}/temp=${config.temperature}/reasoning=${config.reasoningEffort}${maxTokens}`;
   }
 
   private parseSpeechResult(

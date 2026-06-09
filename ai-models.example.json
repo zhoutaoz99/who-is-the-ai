@@ -30,5 +30,21 @@
       "temperature": 0.9,
       "thinking": true
     }
+  },
+  {
+    "id": "claude-sonnet",
+    "default": false,
+    "format": "claude",
+    "baseURL": "https://api.anthropic.com",
+    "apiKey": "sk-ant-xxx",
+    "model": "claude-sonnet-4-6",
+    "temperature": 0.6,
+    "maxTokens": 1024,
+    "timeoutMs": 60000,
+    "expression": {
+      "model": "claude-sonnet-4-6",
+      "temperature": 0.9,
+      "maxTokens": 1024
+    }
   }
 ]
