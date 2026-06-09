@@ -14,14 +14,14 @@ export function getSimulatedHumanSpeechPromptFilename(
   intensity: SimulatedHumanIntensity = getSimulatedHumanIntensity(),
 ): string {
   return intensity === "high"
-    ? "system-sim-human-speech-high.txt"
-    : "system-sim-human-speech.txt";
+    ? "sim-human/system-sim-human-speech-high.txt"
+    : "sim-human/system-sim-human-speech.txt";
 }
 
 export function getSimulatedHumanVotePromptFilename(
   intensity: SimulatedHumanIntensity = getSimulatedHumanIntensity(),
 ): string {
   return intensity === "high"
-    ? "system-sim-human-vote-high.txt"
-    : "system-sim-human-vote.txt";
+    ? "sim-human/system-sim-human-vote-high.txt"
+    : "sim-human/system-sim-human-vote.txt";
 }

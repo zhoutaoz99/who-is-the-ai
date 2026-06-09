@@ -214,7 +214,7 @@ export class AiService {
 
     try {
       const callRecords: AiCallRecord[] = [];
-      const strategySystemPrompt = loadPrompt("system-speech-strategy.txt");
+      const strategySystemPrompt = loadPrompt("ai-player/system-speech-strategy.txt");
       const strategyUserPrompt = this.buildSpeechStrategyPrompt(context);
       this.logger.log(
         this.formatAiLog(
@@ -268,7 +268,7 @@ export class AiService {
         };
       }
 
-      const expressionSystemPrompt = loadPrompt("system-speech-expression.txt");
+      const expressionSystemPrompt = loadPrompt("ai-player/system-speech-expression.txt");
       const expressionUserPrompt = this.buildSpeechExpressionPrompt(
         context,
         strategyAction.strategy,
@@ -438,7 +438,7 @@ export class AiService {
       const systemPrompt = loadPrompt(
         isSimulatedHuman
           ? getSimulatedHumanVotePromptFilename(this.simulatedHumanIntensity)
-          : "system-vote.txt",
+          : "ai-player/system-vote.txt",
       );
       const userPrompt = isSimulatedHuman
         ? this.buildSimulatedHumanVotePrompt(context, aiPlayerId)
@@ -484,14 +484,14 @@ export class AiService {
 
   private buildSpeechStrategyPrompt(context: GameContext): string {
     return renderTemplate(
-      "user-speech-strategy-template.txt",
+      "ai-player/user-speech-strategy-template.txt",
       this.buildSpeechVars(context),
     );
   }
 
   private buildSimulatedHumanSpeechPrompt(context: GameContext): string {
     return renderTemplate(
-      "user-sim-human-speech-template.txt",
+      "sim-human/user-sim-human-speech-template.txt",
       this.buildSpeechVars(context),
     );
   }
@@ -539,7 +539,7 @@ export class AiService {
     context: GameContext,
     strategy: AiSpeechStrategy | null,
   ): string {
-    return renderTemplate("user-speech-expression-template.txt", {
+    return renderTemplate("ai-player/user-speech-expression-template.txt", {
       ...this.buildSpeechVars(context),
       speechStrategy: strategy ? JSON.stringify(strategy, null, 2) : "{{speechStrategy}}",
     });
@@ -646,7 +646,7 @@ export class AiService {
         .join("\n");
     }
 
-    return renderTemplate("user-vote-template.txt", vars);
+    return renderTemplate("ai-player/user-vote-template.txt", vars);
   }
 
   private buildSimulatedHumanVotePrompt(
@@ -694,7 +694,7 @@ export class AiService {
         .join("\n");
     }
 
-    return renderTemplate("user-sim-human-vote-template.txt", vars);
+    return renderTemplate("sim-human/user-sim-human-vote-template.txt", vars);
   }
 
   private formatShortMemory(context: GameContext): string {

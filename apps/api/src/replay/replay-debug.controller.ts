@@ -17,9 +17,9 @@ export class ReplayDebugController {
   getPrompts() {
     const dir = join(__dirname, "..", "ai", "prompts");
     return {
-      "speech-strategy": readFileSync(join(dir, "system-speech-strategy.txt"), "utf-8").trim(),
-      "speech-expression": readFileSync(join(dir, "system-speech-expression.txt"), "utf-8").trim(),
-      vote: readFileSync(join(dir, "system-vote.txt"), "utf-8").trim(),
+      "speech-strategy": readFileSync(join(dir, "ai-player", "system-speech-strategy.txt"), "utf-8").trim(),
+      "speech-expression": readFileSync(join(dir, "ai-player", "system-speech-expression.txt"), "utf-8").trim(),
+      vote: readFileSync(join(dir, "ai-player", "system-vote.txt"), "utf-8").trim(),
       "sim-human-speech": readFileSync(join(dir, getSimulatedHumanSpeechPromptFilename()), "utf-8").trim(),
       "sim-human-vote": readFileSync(join(dir, getSimulatedHumanVotePromptFilename()), "utf-8").trim(),
     };
