@@ -18,12 +18,16 @@ export function loadPrompt(filename: string): string {
   return readFile(filename).trim();
 }
 
-/** Render a template with {{var}} placeholders and {{#if var}}...{{/if}} conditionals. */
-export function renderTemplate(
-  filename: string,
+/**
+ * Render a template string with {{var}} placeholders and {{#if var}}...{{/if}}
+ * conditionals. Pure — operates on an in-memory template, so it is shared by
+ * both the file-based loader and the DB-backed PromptRegistry.
+ */
+export function renderTemplateString(
+  template: string,
   vars: Record<string, string>,
 ): string {
-  let result = readFile(filename);
+  let result = template;
 
   // Process {{#if var}}...{{/if}} blocks
   result = result.replace(
@@ -44,4 +48,17 @@ export function renderTemplate(
 
   // Collapse blank lines left by removed conditional blocks
   return result.replace(/\n{2,}/g, "\n").trim();
+}
+
+/** Render a template file with {{var}} placeholders and {{#if var}}...{{/if}} conditionals. */
+export function renderTemplate(
+  filename: string,
+  vars: Record<string, string>,
+): string {
+  return renderTemplateString(readFile(filename), vars);
+}
+
+/** Read a prompt file's raw (untrimmed) content — used to seed the DB version store. */
+export function readPromptFile(filename: string): string {
+  return readFile(filename);
 }

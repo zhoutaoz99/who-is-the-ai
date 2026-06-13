@@ -84,6 +84,8 @@ export interface Room {
   id: string;
   status: RoomStatus;
   ownerPlayerId: string;
+  /** 本局开局时生效的 AI 提示词版本代号(用于版本感知复盘);旧局可能缺失。 */
+  promptGenerationId?: string;
   debugAutoAi?: boolean;
   debugAutoAiFastMode?: boolean;
   players: Player[];

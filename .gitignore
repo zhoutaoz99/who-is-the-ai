@@ -8,3 +8,6 @@ ai-models.json
 next-env.d.ts
 *.tsbuildinfo
 replay*.json
+
+# eval 闭环产物(每轮对局记录与分数)
+eval/runs/

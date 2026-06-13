@@ -7,7 +7,7 @@ import {
   SPEAK_COOLDOWN_MS,
   VOTE_DURATION_MS,
 } from "./game.config";
-import { AI_PERSONAS, getAiPersonaById } from "../ai/ai.personas";
+import { getActivePersonas, getAiPersonaById } from "../ai/ai.personas";
 import {
   canStartDebugAutoAiRoom,
   countAi,
@@ -76,7 +76,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
       maxHumanPlayers: MAX_HUMAN_PLAYERS,
       aiPlayerCount,
       aiPersonas: DEBUG
-        ? AI_PERSONAS.map((persona) => ({
+        ? getActivePersonas().map((persona) => ({
             id: persona.id,
             name: persona.name,
           }))

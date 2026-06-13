@@ -2,7 +2,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 import { AiService } from "../ai/ai.service";
-import { AI_PERSONAS, getAiPersonaById } from "../ai/ai.personas";
+import { PromptRegistry } from "../ai/prompt-registry";
+import { getActivePersonas, getAiPersonaById } from "../ai/ai.personas";
 import { GameContext, RoundVoteSummary, VoteRecord } from "../ai/ai.types";
 import { AuthService } from "../auth/auth.service";
 import {
@@ -116,6 +117,7 @@ export class GameService {
     private readonly aiService: AiService,
     private readonly authService: AuthService,
     private readonly roomRepository: GameRoomRepository,
+    private readonly prompts: PromptRegistry,
   ) {}
 
   private snapshot(room: Room): RoomSnapshot {
@@ -506,6 +508,7 @@ export class GameService {
       }
 
       latest.status = "playing";
+      latest.promptGenerationId = this.prompts.getActiveGenerationId();
       latest.winner = null;
       latest.currentRound = 1;
       latest.phase = "discussion";
@@ -743,9 +746,10 @@ export class GameService {
         const selectedPersona = payload.personaId
           ? getAiPersonaById(payload.personaId)
           : isDebugAutoAiRoom
-            ? randomItem(AI_PERSONAS)
-            : (AI_PERSONAS.find((persona) => !usedPersonaIds.has(persona.id)) ??
-                AI_PERSONAS[0]);
+            ? randomItem(getActivePersonas())
+            : (getActivePersonas().find(
+                (persona) => !usedPersonaIds.has(persona.id),
+              ) ?? getActivePersonas()[0]);
         if (!selectedPersona) {
           failure = "AI 人格不存在";
           return false;

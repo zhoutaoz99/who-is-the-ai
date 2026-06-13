@@ -1,6 +1,10 @@
 import type { AiPersonaContext } from "./ai.types";
 
-export const AI_PERSONAS: AiPersonaContext[] = [
+/**
+ * 默认人格库 —— 同时用作 DB 版本库的播种内容(gen-0001)与读取失败时的兜底。
+ * 运行时实际生效的是 active 集合(由 PromptRegistry 按当前 generation 注入)。
+ */
+export const DEFAULT_AI_PERSONAS: AiPersonaContext[] = [
   {
     id: "active_icebreaker",
     name: "热心话痨型",
@@ -91,8 +95,33 @@ export const AI_PERSONAS: AiPersonaContext[] = [
   },
 ];
 
+/**
+ * 当前生效的人格库(active generation)。默认指向 DEFAULT_AI_PERSONAS,
+ * 由 PromptRegistry 在载入 active 代时通过 setActivePersonas 覆盖。
+ * active 代是进程级单例,故此处用可变模块状态,无并发写竞争。
+ */
+let activePersonas: AiPersonaContext[] = DEFAULT_AI_PERSONAS;
+
+/** 读取当前生效的人格库(纯函数消费者用此替代旧的 AI_PERSONAS 常量)。 */
+export function getActivePersonas(): AiPersonaContext[] {
+  return activePersonas;
+}
+
+/** 由 PromptRegistry 调用,切换当前生效的人格库;传入空数组时回退到默认库。 */
+export function setActivePersonas(personas: AiPersonaContext[]): void {
+  activePersonas = personas.length > 0 ? personas : DEFAULT_AI_PERSONAS;
+}
+
 export function getAiPersonaById(
   personaId: string | undefined,
 ): AiPersonaContext | null {
-  return AI_PERSONAS.find((persona) => persona.id === personaId) ?? null;
+  return activePersonas.find((persona) => persona.id === personaId) ?? null;
+}
+
+/** 在给定人格库中按 id 查找(版本感知复盘用,不依赖 active 集合)。 */
+export function findPersonaById(
+  personas: AiPersonaContext[],
+  personaId: string | undefined,
+): AiPersonaContext | null {
+  return personas.find((persona) => persona.id === personaId) ?? null;
 }

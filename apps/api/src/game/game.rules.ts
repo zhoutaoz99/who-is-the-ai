@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { AI_PERSONAS } from "../ai/ai.personas";
+import { getActivePersonas } from "../ai/ai.personas";
 import {
   ACTIVE_ICEBREAKER_PERSONA_ID,
   AI_NAMES,
@@ -200,8 +200,8 @@ export function createAiPlayer(
 ): Player {
   const names = AI_NAMES.filter((name) => !usedNames.includes(name));
   const selectedPersona =
-    AI_PERSONAS.find((persona) => persona.id === personaId) ??
-    randomItem(AI_PERSONAS);
+    getActivePersonas().find((persona) => persona.id === personaId) ??
+    randomItem(getActivePersonas());
 
   return {
     id: randomUUID(),
@@ -222,10 +222,10 @@ export function createAiPlayers(
   excludedPersonaIds: string[] = [],
 ): Player[] {
   const names = [...AI_NAMES].sort(() => Math.random() - 0.5);
-  const preferredPersonas = AI_PERSONAS.filter(
+  const preferredPersonas = getActivePersonas().filter(
     (persona) => !excludedPersonaIds.includes(persona.id),
   ).sort(() => Math.random() - 0.5);
-  const fallbackPersonas = [...AI_PERSONAS].sort(() => Math.random() - 0.5);
+  const fallbackPersonas = [...getActivePersonas()].sort(() => Math.random() - 0.5);
   const personas =
     preferredPersonas.length > 0 ? preferredPersonas : fallbackPersonas;
 
@@ -253,7 +253,7 @@ export function createDebugAutoAiPlayers(
 
   players.push(createAiPlayer(startSeatNo, ACTIVE_ICEBREAKER_PERSONA_ID, [], defaultModelId));
 
-  const otherPersonaIds = AI_PERSONAS.filter(
+  const otherPersonaIds = getActivePersonas().filter(
     (persona) => persona.id !== ACTIVE_ICEBREAKER_PERSONA_ID,
   )
     .sort(() => Math.random() - 0.5)
@@ -261,7 +261,7 @@ export function createDebugAutoAiPlayers(
 
   while (players.filter((player) => player.type === "ai").length < safeAiCount) {
     const aiIndex = players.filter((player) => player.type === "ai").length;
-    const personaId = otherPersonaIds[aiIndex - 1] ?? randomItem(AI_PERSONAS)?.id;
+    const personaId = otherPersonaIds[aiIndex - 1] ?? randomItem(getActivePersonas())?.id;
     players.push(
       createAiPlayer(
         startSeatNo + players.length,

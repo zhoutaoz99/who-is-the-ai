@@ -16,6 +16,7 @@ import {
   GameContext,
 } from "./ai.types";
 import { loadPrompt, renderTemplate } from "./prompt-loader";
+import { PromptRegistry } from "./prompt-registry";
 import {
   getSimulatedHumanIntensity,
   getSimulatedHumanSpeechPromptFilename,
@@ -65,7 +66,7 @@ export class AiService {
     }
   }
 
-  constructor() {
+  constructor(private readonly prompts: PromptRegistry) {
     this.loadModels();
 
     const defaultModel = this.getDefaultModel();
@@ -259,7 +260,7 @@ export class AiService {
 
     try {
       const callRecords: AiCallRecord[] = [];
-      const strategySystemPrompt = loadPrompt("ai-player/system-speech-strategy.txt");
+      const strategySystemPrompt = this.prompts.getPrompt("ai-player/system-speech-strategy.txt");
       const strategyUserPrompt = this.buildSpeechStrategyPrompt(context);
       this.logger.log(
         this.formatAiLog(
@@ -315,7 +316,7 @@ export class AiService {
         };
       }
 
-      const expressionSystemPrompt = loadPrompt("ai-player/system-speech-expression.txt");
+      const expressionSystemPrompt = this.prompts.getPrompt("ai-player/system-speech-expression.txt");
       const expressionUserPrompt = this.buildSpeechExpressionPrompt(
         context,
         strategyAction.strategy,
@@ -484,11 +485,9 @@ export class AiService {
 
     try {
       const isSimulatedHuman = this.isSimulatedHumanContext(context);
-      const systemPrompt = loadPrompt(
-        isSimulatedHuman
-          ? getSimulatedHumanVotePromptFilename(this.simulatedHumanIntensity)
-          : "ai-player/system-vote.txt",
-      );
+      const systemPrompt = isSimulatedHuman
+        ? loadPrompt(getSimulatedHumanVotePromptFilename(this.simulatedHumanIntensity))
+        : this.prompts.getPrompt("ai-player/system-vote.txt");
       const userPrompt = isSimulatedHuman
         ? this.buildSimulatedHumanVotePrompt(context, aiPlayerId)
         : this.buildVotePrompt(context, aiPlayerId);
@@ -532,7 +531,7 @@ export class AiService {
   }
 
   private buildSpeechStrategyPrompt(context: GameContext): string {
-    return renderTemplate(
+    return this.prompts.render(
       "ai-player/user-speech-strategy-template.txt",
       this.buildSpeechVars(context),
     );
@@ -632,7 +631,7 @@ export class AiService {
     context: GameContext,
     strategy: AiSpeechStrategy | null,
   ): string {
-    return renderTemplate("ai-player/user-speech-expression-template.txt", {
+    return this.prompts.render("ai-player/user-speech-expression-template.txt", {
       ...this.buildSpeechVars(context),
       speechStrategy: strategy ? JSON.stringify(strategy, null, 2) : "{{speechStrategy}}",
     });
@@ -742,7 +741,7 @@ export class AiService {
         .join("\n");
     }
 
-    return renderTemplate("ai-player/user-vote-template.txt", vars);
+    return this.prompts.render("ai-player/user-vote-template.txt", vars);
   }
 
   private buildSimulatedHumanVotePrompt(

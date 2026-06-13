@@ -146,5 +146,41 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
         updated_at timestamptz NOT NULL DEFAULT NOW()
       )
     `);
+
+    // --- AI 提示词版本管理(asset 版本 / 代 / active 指针)---
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS ai_prompt_assets (
+        id uuid PRIMARY KEY,
+        asset_key text NOT NULL,
+        version integer NOT NULL,
+        content text NOT NULL,
+        parent_version integer,
+        note text,
+        metadata jsonb,
+        created_at timestamptz NOT NULL DEFAULT NOW(),
+        UNIQUE (asset_key, version)
+      )
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS ai_prompt_generations (
+        id text PRIMARY KEY,
+        manifest jsonb NOT NULL,
+        parent_id text,
+        status text NOT NULL DEFAULT 'candidate',
+        is_best boolean NOT NULL DEFAULT false,
+        score jsonb,
+        note text,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS ai_prompt_state (
+        id integer PRIMARY KEY DEFAULT 1,
+        active_generation_id text,
+        CONSTRAINT ai_prompt_state_singleton CHECK (id = 1)
+      )
+    `);
   }
 }

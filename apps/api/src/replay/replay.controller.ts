@@ -1,8 +1,17 @@
-import { Body, Controller, Get, Param, Post, Res } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Res,
+} from "@nestjs/common";
 import { PostgresService } from "../data/postgres.service";
 import { normalizeRoomId } from "../game/game.rules";
 import { toRoomSnapshot } from "../game/game.snapshot";
 import { Room } from "../game/game.types";
+import { buildReplayExportData } from "./replay-export.builder";
 import { ReplayService } from "./replay.service";
 import { ReplayAnalyzeRequest, ReplayExportSaveRequest } from "./replay.types";
 
@@ -93,6 +102,35 @@ export class ReplayController {
     const snapshot = toRoomSnapshot(room);
     const aiCallLogs = await this.replayService.getAiCallLogs(normalized);
     return { ok: true, room: snapshot, aiCallLogs };
+  }
+
+  /**
+   * 服务端构建并返回该房间的 replay 导出 JSON(结构与 replay-*.json 一致,
+   * 额外带 promptGenerationId),供无头评估闭环拉取。无需前端参与。
+   */
+  @Get(":roomId/export")
+  async buildReplayExport(
+    @Param("roomId") roomId: string,
+    @Query("includeSkips") includeSkips?: string,
+    @Query("includeUserPrompt") includeUserPrompt?: string,
+  ) {
+    const normalized = normalizeRoomId(roomId);
+    const result = await this.postgres.query<RoomRow>(
+      "SELECT room_data FROM game_rooms WHERE id = $1",
+      [normalized],
+    );
+    const room = result.rows[0]?.room_data ?? null;
+    if (!room) {
+      return { ok: false, error: "房间不存在" };
+    }
+    const snapshot = toRoomSnapshot(room);
+    const aiCallLogs = await this.replayService.getAiCallLogs(normalized);
+    const data = buildReplayExportData(snapshot, aiCallLogs, {
+      includeSkips: includeSkips !== "false",
+      includeUserPrompt: includeUserPrompt === "true",
+      promptGenerationId: room.promptGenerationId,
+    });
+    return { ok: true, data };
   }
 
   @Get("export/:roomId")

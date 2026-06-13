@@ -1,4 +1,18 @@
-下面是本局由复盘页导出的 JSON。请基于这份数据进行复盘分析。
+请只依据以下两类材料做复盘分析：① 本局对局记录（复盘 JSON）；② 当前驱动 AI 玩家行为的提示词与人格库。不要引用任何外部文档或历史对局。
 
-复盘 JSON：
+== 一、AI 玩家提示词（AI 行为的成因，用于判断问题根源并给出可落地修改）==
+
+【发言策略层 system-speech-strategy.txt】
+{{aiSpeechStrategyPrompt}}
+
+【发言表达层 system-speech-expression.txt】
+{{aiSpeechExpressionPrompt}}
+
+【投票 system-vote.txt】
+{{aiVotePrompt}}
+
+【人格库 ai.personas.ts（AI_PERSONAS）】
+{{aiPersonas}}
+
+== 二、本局对局记录（复盘 JSON）==
 {{replayJson}}
