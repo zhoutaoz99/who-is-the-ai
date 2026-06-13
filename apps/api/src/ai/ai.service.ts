@@ -272,11 +272,13 @@ export class AiService {
         ),
       );
       const strategyStartedAt = new Date().toISOString();
+      const claudeCacheCtx = { recentMessages: context.recentMessages };
       const { content: strategyResult, usage: strategyUsage } = await this.callModel(
         strategySystemPrompt,
         strategyUserPrompt,
         strategyConfig,
         callOptions,
+        claudeCacheCtx,
       );
       this.logger.log(
         this.formatAiLog(
@@ -334,6 +336,7 @@ export class AiService {
         expressionUserPrompt,
         expressionConfig,
         callOptions,
+        claudeCacheCtx,
       );
       this.logger.log(
         this.formatAiLog(
@@ -417,6 +420,7 @@ export class AiService {
         userPrompt,
         modelConfig,
         callOptions,
+        { recentMessages: context.recentMessages },
       );
       this.logger.log(
         this.formatAiLog(
@@ -492,7 +496,7 @@ export class AiService {
         this.formatAiLog(context.myName, "Vote Prompt", userPrompt, context.roundNo, context.mySeatNo, isSimulatedHuman),
       );
       const voteStartedAt = new Date().toISOString();
-      const { content: result, usage } = await this.callModel(systemPrompt, userPrompt, modelConfig, callOptions);
+      const { content: result, usage } = await this.callModel(systemPrompt, userPrompt, modelConfig, callOptions, { recentMessages: context.recentMessages });
       this.logger.log(
         this.formatAiLog(
           context.myName,
@@ -543,14 +547,27 @@ export class AiService {
 
   private logUsage(model: string, usage?: ModelUsage): void {
     if (!usage) return;
-    const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens;
+
+    const isClaudeFormat = usage.cache_read_input_tokens != null
+      || usage.cache_creation_input_tokens != null;
+
+    const cachedTokens = usage.prompt_tokens_details?.cached_tokens
+      ?? usage.cache_read_input_tokens;
+    const cacheWrite = usage.cache_creation_input_tokens;
+
+    // Claude input_tokens excludes cached/written tokens; OpenAI prompt_tokens includes cached
+    const totalInputTokens = isClaudeFormat
+      ? (usage.prompt_tokens ?? 0)
+        + (cachedTokens ?? 0)
+        + (cacheWrite ?? 0)
+      : (usage.prompt_tokens ?? 0);
+
     const parts = [`model=${model}`, `prompt=${usage.prompt_tokens ?? "-"}`, `completion=${usage.completion_tokens ?? "-"}`];
     if (cachedTokens != null && cachedTokens > 0) {
-      const promptTokens = usage.prompt_tokens ?? 0;
-      parts.push(`cached=${cachedTokens}`, `hit=${promptTokens > 0 ? ((cachedTokens / promptTokens) * 100).toFixed(1) + "%" : "?"}`);
+      parts.push(`cached=${cachedTokens}`, `hit=${totalInputTokens > 0 ? ((cachedTokens / totalInputTokens) * 100).toFixed(1) + "%" : "?"}`);
     }
-    if (usage.cache_creation_input_tokens != null && usage.cache_creation_input_tokens > 0) {
-      parts.push(`cache_write=${usage.cache_creation_input_tokens}`);
+    if (cacheWrite != null && cacheWrite > 0) {
+      parts.push(`cache_write=${cacheWrite}`);
     }
     const sep = "-".repeat(72);
     this.logger.log(`\n${sep}\n[Cache Hit] ${parts.join(", ")}\n${sep}\n`);
@@ -564,6 +581,7 @@ export class AiService {
     seatNo?: number,
     simulated?: boolean,
   ): string {
+    const cleanContent = content.split(AiService.CACHE_SPLIT).join("");
     const playerTypeTag = simulated ? "模拟真人" : "AI";
     const prefix = roundNo != null && seatNo != null ? `[第${roundNo}轮 #${seatNo} ${playerTypeTag}] ` : "";
     const separator = "=".repeat(72);
@@ -573,9 +591,39 @@ export class AiService {
       separator,
       `${prefix}[${playerName}] ${title}`,
       subSeparator,
-      content,
+      cleanContent,
       separator,
       "",
+      "",
+    ].join("\n");
+  }
+
+  private formatRawRequestLog(
+    url: string,
+    headers: Record<string, string>,
+    body: unknown,
+  ): string {
+    const separator = "=".repeat(72);
+    const subSeparator = "-".repeat(72);
+    const maskedHeaders: Record<string, string> = { ...headers };
+    if (maskedHeaders["x-api-key"]) {
+      maskedHeaders["x-api-key"] = `${maskedHeaders["x-api-key"].slice(0, 4)}****`;
+    }
+    if (maskedHeaders["Authorization"]) {
+      maskedHeaders["Authorization"] = `${maskedHeaders["Authorization"].slice(0, 11)}****`;
+    }
+    const bodyStr = JSON.stringify(body, null, 2);
+    return [
+      "",
+      separator,
+      "[Raw Model Request]",
+      subSeparator,
+      `URL: ${url}`,
+      `Headers: ${JSON.stringify(maskedHeaders)}`,
+      subSeparator,
+      `Body:`,
+      bodyStr,
+      separator,
       "",
     ].join("\n");
   }
@@ -661,6 +709,9 @@ export class AiService {
       voteHistory: "无",
       currentVoteInfo: "同时盲投，当前票数不可见",
       shortMemory: this.formatShortMemory(context),
+      alivePlayersList: context.alivePlayers
+        .map((p) => `${p.seatNo}号位(ID:${p.id})`)
+        .join("、"),
       voteTargets: targets
         .map((p) => `${p.seatNo}号位 - ID: ${p.id}`)
         .join("\n"),
@@ -709,6 +760,9 @@ export class AiService {
       voteHistory: "无",
       currentVoteInfo: "同时盲投，当前票数不可见",
       shortMemory: this.formatShortMemory(context),
+      alivePlayersList: context.alivePlayers
+        .map((p) => `${p.seatNo}号位(ID:${p.id})`)
+        .join("、"),
       voteTargets: targets
         .map((p) => `${p.seatNo}号位 - ID: ${p.id}`)
         .join("\n"),
@@ -810,19 +864,24 @@ export class AiService {
     userPrompt: string,
     modelConfig: AiModelCallConfig,
     options?: ModelConnectionOptions,
+    cacheContext?: { recentMessages: ChatMessageInput[] },
   ): Promise<{ content: string; usage?: ModelUsage }> {
     const baseURL = options?.baseURL ?? this.config.baseURL;
     const apiKey = options?.apiKey ?? this.config.apiKey;
     const timeoutMs = options?.timeoutMs ?? this.config.timeoutMs;
     const format = modelConfig.format ?? "openai";
     const request = format === "claude"
-      ? this.buildClaudeRequest(baseURL, apiKey, systemPrompt, userPrompt, modelConfig)
+      ? this.buildClaudeRequest(baseURL, apiKey, systemPrompt, userPrompt, modelConfig, cacheContext)
       : this.buildOpenAiRequest(baseURL, apiKey, systemPrompt, userPrompt, modelConfig);
 
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
       timeoutMs,
+    );
+
+    this.logger.debug(
+      this.formatRawRequestLog(request.url, request.headers, request.body),
     );
 
     try {
@@ -856,6 +915,7 @@ export class AiService {
     userPrompt: string,
     modelConfig: AiModelCallConfig,
   ) {
+    const cleanUserPrompt = userPrompt.split(AiService.CACHE_SPLIT).join("");
     return {
       url: `${baseURL}/chat/completions`,
       headers: {
@@ -867,12 +927,18 @@ export class AiService {
         temperature: modelConfig.temperature,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
+          { role: "user", content: cleanUserPrompt },
         ],
         ...(modelConfig.thinking !== false ? { thinking: { type: "enabled" } } : {}),
         reasoning_effort: modelConfig.reasoningEffort,
       },
     };
+  }
+
+  private static readonly CACHE_SPLIT = "<<CACHE_SPLIT>>";
+
+  static stripCacheMarker(prompt: string): string {
+    return prompt.split(AiService.CACHE_SPLIT).join("");
   }
 
   private buildClaudeRequest(
@@ -881,7 +947,64 @@ export class AiService {
     systemPrompt: string,
     userPrompt: string,
     modelConfig: AiModelCallConfig,
+    cacheContext?: { recentMessages: ChatMessageInput[] },
   ) {
+    const blocks: Array<Record<string, unknown>> = [];
+    const marker = AiService.CACHE_SPLIT;
+
+    if (userPrompt.includes(marker)) {
+      const parts = userPrompt.split(marker);
+
+      // Layer 0: static instructions (globally unchanging)
+      if (parts[0] && parts[0].trim()) {
+        blocks.push({
+          type: "text",
+          text: parts[0],
+          cache_control: { type: "ephemeral" },
+        });
+      }
+
+      // Layer 1: player-fixed info
+      if (parts[1] && parts[1].trim()) {
+        blocks.push({
+          type: "text",
+          text: parts[1],
+          cache_control: { type: "ephemeral" },
+        });
+      }
+
+      // Layer 2: round-stable
+      if (parts[2] && parts[2].trim()) {
+        blocks.push({
+          type: "text",
+          text: parts[2],
+          cache_control: { type: "ephemeral" },
+        });
+      }
+
+      // Layer 3: recentMessages per-message (sliding cache)
+      if (cacheContext?.recentMessages && cacheContext.recentMessages.length > 0) {
+        for (let i = 0; i < cacheContext.recentMessages.length; i++) {
+          const msg = cacheContext.recentMessages[i];
+          const isLast = i === cacheContext.recentMessages.length - 1;
+          blocks.push({
+            type: "text",
+            text: `  ${msg.playerName}：${msg.content}`,
+            ...(isLast ? { cache_control: { type: "ephemeral" } } : {}),
+          });
+        }
+      } else if (parts[3] && parts[3].trim()) {
+        blocks.push({ type: "text", text: parts[3] });
+      }
+
+      // Uncached suffix
+      if (parts[4] && parts[4].trim()) {
+        blocks.push({ type: "text", text: parts[4] });
+      }
+    } else {
+      blocks.push({ type: "text", text: userPrompt });
+    }
+
     return {
       url: `${this.normalizeBaseURL(baseURL, "claude")}/v1/messages`,
       headers: {
@@ -893,14 +1016,11 @@ export class AiService {
         model: modelConfig.model,
         max_tokens: modelConfig.maxTokens ?? DEFAULT_CLAUDE_MAX_TOKENS,
         temperature: modelConfig.temperature,
-        cache_control: { type: "ephemeral" },
         system: systemPrompt,
         messages: [
           {
             role: "user",
-            content: [
-              { type: "text", text: userPrompt },
-            ],
+            content: blocks,
           },
         ],
       },
@@ -1003,7 +1123,7 @@ export class AiService {
           temperature: modelConfig.temperature,
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
+            { role: "user", content: userPrompt.split(AiService.CACHE_SPLIT).join("") },
           ],
           ...(modelConfig.thinking !== false ? { thinking: { type: "enabled" } } : {}),
           reasoning_effort: modelConfig.reasoningEffort,

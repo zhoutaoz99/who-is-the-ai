@@ -22,6 +22,7 @@ export class DebugAiRecorder implements AiCallRecorder, OnModuleInit {
     void this.replayService.saveAiCallLog({
       id: randomUUID(),
       ...call,
+      userPrompt: AiService.stripCacheMarker(call.userPrompt),
       createdAt: call.createdAt ?? new Date().toISOString(),
     });
   }
