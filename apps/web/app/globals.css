@@ -3960,3 +3960,102 @@ p {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* ===== Replay preview (导出预览) ===== */
+.replay-preview-section {
+  border-color: rgba(15, 118, 110, 0.24);
+}
+
+.replay-preview-active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.replay-preview-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.replay-preview-head h2 {
+  margin: 0;
+}
+
+.replay-preview-source-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.replay-preview-source-badge.db {
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--accent-strong);
+  border-color: rgba(15, 118, 110, 0.3);
+}
+
+.replay-preview-source-badge.local {
+  background: #f1f5f9;
+  color: #64748b;
+  border-color: #cbd5e1;
+}
+
+.replay-preview-toggles-summary {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.replay-preview-close-btn {
+  margin-left: auto;
+}
+
+.replay-preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.replay-preview-json {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  height: 400px;
+  margin: 0;
+  max-height: 90vh;
+  min-height: 160px;
+  overflow: auto;
+  padding: 14px;
+  resize: vertical;
+  white-space: pre;
+}
+
+.replay-preview-json.wrap {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.replay-preview-message {
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.replay-preview-message.success {
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--accent-strong);
+}
+
+.replay-preview-message.error {
+  background: rgba(180, 35, 24, 0.08);
+  color: #b42318;
+}

@@ -34,3 +34,15 @@ export interface ReplayResponse {
 export interface ReplayAnalyzeRequest {
   replay?: unknown;
 }
+
+export interface ReplayExportRecord {
+  data: unknown;
+  includeSkips: boolean;
+  includeUserPrompt: boolean;
+}
+
+export interface ReplayExportSaveRequest {
+  data: unknown;
+  includeSkips: boolean;
+  includeUserPrompt: boolean;
+}

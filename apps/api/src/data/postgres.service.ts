@@ -135,5 +135,16 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
     await this.query(`
       ALTER TABLE ai_call_logs DROP COLUMN IF EXISTS system_prompt
     `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS replay_exports (
+        room_id varchar(16) PRIMARY KEY,
+        data jsonb NOT NULL,
+        include_skips boolean NOT NULL,
+        include_user_prompt boolean NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT NOW(),
+        updated_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
   }
 }

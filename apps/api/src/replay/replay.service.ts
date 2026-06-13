@@ -3,7 +3,7 @@ import { AiService } from "../ai/ai.service";
 import type { AiModelCallConfig } from "../ai/ai.types";
 import { loadPrompt, renderTemplate } from "../ai/prompt-loader";
 import { PostgresService } from "../data/postgres.service";
-import { AiCallLog } from "./replay.types";
+import { AiCallLog, ReplayExportRecord } from "./replay.types";
 
 const REPLAY_ANALYSIS_TIMEOUT_MS = 300_000;
 
@@ -58,6 +58,42 @@ export class ReplayService {
       [roomId],
     );
     return result.rows;
+  }
+
+  async getReplayExport(roomId: string): Promise<ReplayExportRecord | null> {
+    const result = await this.postgres.query<{
+      data: unknown;
+      includeSkips: boolean;
+      includeUserPrompt: boolean;
+    }>(
+      `SELECT
+        data,
+        include_skips AS "includeSkips",
+        include_user_prompt AS "includeUserPrompt"
+      FROM replay_exports
+      WHERE room_id = $1`,
+      [roomId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async saveReplayExport(
+    roomId: string,
+    data: unknown,
+    includeSkips: boolean,
+    includeUserPrompt: boolean,
+  ): Promise<void> {
+    await this.postgres.query(
+      `INSERT INTO replay_exports
+        (room_id, data, include_skips, include_user_prompt)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (room_id) DO UPDATE
+       SET data = EXCLUDED.data,
+           include_skips = EXCLUDED.include_skips,
+           include_user_prompt = EXCLUDED.include_user_prompt,
+           updated_at = NOW()`,
+      [roomId, JSON.stringify(data), includeSkips, includeUserPrompt],
+    );
   }
 
   async streamReplayAnalysisExport(

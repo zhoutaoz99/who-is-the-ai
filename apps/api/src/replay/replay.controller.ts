@@ -4,7 +4,7 @@ import { normalizeRoomId } from "../game/game.rules";
 import { toRoomSnapshot } from "../game/game.snapshot";
 import { Room } from "../game/game.types";
 import { ReplayService } from "./replay.service";
-import { ReplayAnalyzeRequest } from "./replay.types";
+import { ReplayAnalyzeRequest, ReplayExportSaveRequest } from "./replay.types";
 
 interface RoomRow {
   room_data: Room;
@@ -93,5 +93,46 @@ export class ReplayController {
     const snapshot = toRoomSnapshot(room);
     const aiCallLogs = await this.replayService.getAiCallLogs(normalized);
     return { ok: true, room: snapshot, aiCallLogs };
+  }
+
+  @Get("export/:roomId")
+  async getReplayExport(@Param("roomId") roomId: string) {
+    const normalized = normalizeRoomId(roomId);
+    const record = await this.replayService.getReplayExport(normalized);
+    if (!record) {
+      return { ok: true, exists: false };
+    }
+    return {
+      ok: true,
+      exists: true,
+      data: record.data,
+      includeSkips: record.includeSkips,
+      includeUserPrompt: record.includeUserPrompt,
+    };
+  }
+
+  @Post("export/:roomId")
+  async saveReplayExport(
+    @Param("roomId") roomId: string,
+    @Body() body: ReplayExportSaveRequest,
+  ) {
+    if (!body || body.data === undefined || body.data === null) {
+      return { ok: false, error: "缺少导出数据" };
+    }
+    if (
+      typeof body.includeSkips !== "boolean" ||
+      typeof body.includeUserPrompt !== "boolean"
+    ) {
+      return { ok: false, error: "缺少开关参数" };
+    }
+
+    const normalized = normalizeRoomId(roomId);
+    await this.replayService.saveReplayExport(
+      normalized,
+      body.data,
+      body.includeSkips,
+      body.includeUserPrompt,
+    );
+    return { ok: true };
   }
 }
