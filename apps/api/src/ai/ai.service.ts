@@ -820,14 +820,23 @@ export class AiService {
       return "无固定人格，保持自然、短句、不要模板化。";
     }
 
-    return [
+    const lines = [
       `人格：${persona.name}`,
       `说话风格：${persona.speechStyle}`,
       `句式偏好：${persona.sentenceStyle}`,
       `回应倾向：${persona.responseBias}`,
       `语气规则：${persona.toneRules.join("；")}`,
       `额外避免：${persona.avoidPhrases.join("、")}`,
-    ].join("\n");
+    ];
+
+    if (persona.typingHabit) {
+      lines.push(`打字习惯：${persona.typingHabit}`);
+    }
+    if (persona.sampleLines && persona.sampleLines.length > 0) {
+      lines.push(`口吻示例：${persona.sampleLines.join(" / ")}`);
+    }
+
+    return lines.join("\n");
   }
 
   private formatHistoricalMessages(

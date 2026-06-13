@@ -68,6 +68,8 @@ export interface AiPersonaContext {
   responseBias: string;
   toneRules: string[];
   avoidPhrases: string[];
+  typingHabit?: string;
+  sampleLines?: string[];
 }
 
 export type AiSpeechStrategyAction =
