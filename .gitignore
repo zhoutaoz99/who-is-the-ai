@@ -7,3 +7,4 @@ ai-models.json
 *.log
 next-env.d.ts
 *.tsbuildinfo
+replay*.json
