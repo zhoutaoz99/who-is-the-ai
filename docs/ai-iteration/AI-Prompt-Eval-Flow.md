@@ -1,16 +1,25 @@
 # AI 提示词自动对局评估自迭代 · 整体流程
 
-> 本文聚焦**整体流程与运行逻辑**,配合流程图说明「自动对局评估自迭代」如何运转。
-> 设计动机与取舍见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md);拟人化迭代记录见 [`AI-Human-Likeness.md`](AI-Human-Likeness.md)。
-> 与「复盘」([`Replay-Analysis.md`](./Replay-Analysis.md))的区别:复盘是单局定性分析(开放文本、不改状态,给人读);本文是批量定量评估(结构化 JSON 分数、聚合 scorecard、驱动版本激活/回滚)。两者共用复盘导出 JSON 与 `REPLAY_ANALYSIS_*` 模型,但尺子(`eval/prompts/system-replay-score.txt`)与输出不同。
+| 字段 | 内容 |
+| --- | --- |
+| 文档类型 | Design |
+| 文档状态 | Active |
+| 适用范围 | 自动对局评估自迭代的整体流程、状态流转与数据模型 |
+| 目标读者 | 后端开发、评审者 |
+| 责任人 | AI / Evaluation 维护者 |
+| 最近核对日期 | 2026-06-15 |
+| 关联代码 | `apps/api/src/ai/`、`apps/api/src/replay/`、`apps/web/app/iteration/` |
+| 关联文档 | [AI-Prompt-Eval-Details.md](./AI-Prompt-Eval-Details.md)、[AI-Human-Likeness.md](./AI-Human-Likeness.md)、[Replay-Analysis.md](./Replay-Analysis.md) |
 
-## 一句话概览
+本文聚焦整体流程与运行逻辑，配合流程图说明「自动对局评估自迭代」如何运转。设计动机与取舍见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)，拟人化迭代记录见 [`AI-Human-Likeness.md`](AI-Human-Likeness.md)。与「复盘」([`Replay-Analysis.md`](./Replay-Analysis.md)) 的区别是：复盘是单局定性分析（开放文本、不改状态，给人读）；本文是批量定量评估（结构化 JSON 分数、聚合 scorecard、驱动版本激活/回滚）。两者共用复盘导出 JSON 与 `REPLAY_ANALYSIS_*` 模型，但尺子(`eval/prompts/system-replay-score.txt`)与输出不同。
+
+## 1. 概览
 
 点击「开始迭代」→ 服务端**进程内**用当前提示词版本跑一批无头对局 → 用**冻结的打分尺子**逐局量化打分 → 聚合成 scorecard → 轮间由人工在页面上创建/激活新版本 → 继续下一轮,循环 K 轮。全程实时可见进度,版本可一键回滚。
 
 ---
 
-## 一、组件总览
+## 2. 组件总览
 
 ```mermaid
 flowchart LR
@@ -61,7 +70,7 @@ flowchart LR
 
 ---
 
-## 二、核心概念
+## 3. 核心概念
 
 | 概念 | 说明 |
 | --- | --- |
@@ -73,7 +82,7 @@ flowchart LR
 
 ---
 
-## 三、整体迭代流程(主循环)
+## 4. 整体迭代流程(主循环)
 
 ```mermaid
 flowchart TD
@@ -107,7 +116,7 @@ flowchart TD
 
 ---
 
-## 四、单轮内部流程(B 局并发)
+## 5. 单轮内部流程(B 局并发)
 
 ```mermaid
 flowchart TD
@@ -131,7 +140,7 @@ flowchart TD
 
 ---
 
-## 五、单局流程(对局驱动 + 打分)
+## 6. 单局流程(对局驱动 + 打分)
 
 ```mermaid
 flowchart TD
@@ -151,7 +160,7 @@ flowchart TD
 
 ---
 
-## 六、打分与聚合(冻结尺子)
+## 7. 打分与聚合(冻结尺子)
 
 每局 replay 由冻结尺子 `eval/prompts/system-replay-score.txt` 打分,输出严格 JSON(`aiWin` / `aiSurvivors` / `roundsPlayed` / `humanLikeScore` / `naturalnessAiVsHuman` / `voteThreatTargeting` / `tells`(8 项)/ `topIssues`);一轮 B 局的分数由 `aggregateScores` 聚合成 scorecard,回写该代的 `ai_prompt_generations.score`,谱系面板即可看到每代分数。
 
@@ -159,7 +168,7 @@ flowchart TD
 
 ---
 
-## 七、实时事件流
+## 8. 实时事件流
 
 ```mermaid
 sequenceDiagram
@@ -194,7 +203,7 @@ sequenceDiagram
 
 ---
 
-## 八、数据模型
+## 9. 数据模型
 
 ```mermaid
 erDiagram
@@ -232,7 +241,7 @@ erDiagram
 
 ---
 
-## 九、关键配置与常量
+## 10. 关键配置与常量
 
 | 常量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -252,7 +261,7 @@ erDiagram
 
 ---
 
-## 十、使用方式
+## 11. 使用方式
 
 **前端 `/iteration` 页面(唯一入口)**
 设置 B/K/时长 → 开始迭代 → 实时看进度 → 轮间在「版本谱系与激活」面板:左侧选版本、右侧查看/编辑提示词、「与父代对比」看差异(高亮增删行)→ 创建新代 → 激活 → 继续下一轮。

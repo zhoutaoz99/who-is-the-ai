@@ -1,8 +1,19 @@
-# 复盘分析实现
+# 对局复盘分析
 
-> **与「自动对局评估自迭代」的区别**:本文是**单局定性复盘**(`POST /replay/analyze`,流式输出开放式文本,只读不改)。自迭代([`AI-Prompt-Eval-Flow.md`](./AI-Prompt-Eval-Flow.md))则是批量跑无头对局、用冻结尺子输出可比的 JSON 分数给提示词版本排名、驱动版本激活/回滚。两者共用「复盘导出 JSON + `REPLAY_ANALYSIS_*` 评审模型」,但**尺子与输出不同**:复盘用 `prompts/system-replay-analysis.txt` 出文本,自迭代用 `eval/prompts/system-replay-score.txt` 出结构化分数。
+| 字段 | 内容 |
+| --- | --- |
+| 文档类型 | Design |
+| 文档状态 | Active |
+| 适用范围 | 单局复盘分析的后端接口、流式输出、版本感知注入与前端展示 |
+| 目标读者 | 后端开发、评审者 |
+| 责任人 | AI / Replay 维护者 |
+| 最近核对日期 | 2026-06-15 |
+| 关联代码 | `apps/api/src/replay/`、`apps/web/app/replay/`、`apps/api/src/ai/prompts/` |
+| 关联文档 | [AI-Prompt-Eval-Flow.md](./AI-Prompt-Eval-Flow.md)、[AI-Prompt-Eval-Details.md](./AI-Prompt-Eval-Details.md) |
 
-## 目标
+本文是单局定性复盘(`POST /replay/analyze`，流式输出开放式文本，只读不改)。自迭代([`AI-Prompt-Eval-Flow.md`](./AI-Prompt-Eval-Flow.md)) 则是批量跑无头对局、用冻结尺子输出可比的 JSON 分数给提示词版本排名、驱动版本激活/回滚。两者共用「复盘导出 JSON + `REPLAY_ANALYSIS_*` 评审模型」，但尺子与输出不同：复盘用 `prompts/system-replay-analysis.txt` 出文本，自迭代用 `eval/prompts/system-replay-score.txt` 出结构化分数。
+
+## 1. 背景与目标
 
 复盘页提供“一键复盘”能力，用独立配置的大模型分析对局记录，输出开放式文本结果。分析重点包括：
 
@@ -11,7 +22,7 @@
 - 发现 AI 行为、提示词、投票逻辑、发言质量上的优化方向。
 - 识别明显对局 bug 或疑似规则异常。
 
-## 数据来源
+## 2. 数据来源
 
 复盘分析以“复盘导出 JSON”为输入。该 JSON 有两个等价的构造来源：
 
@@ -43,7 +54,7 @@
 
 复盘分析(`/replay/analyze`)对此做了兜底：即使提交的 replay JSON 没带 `promptGenerationId`(前端一键复盘正是如此)，也会按 `roomId` 回查 `game_rooms.room_data` 补全，再退到当前 active 代(见“版本感知复盘”的回退链)。
 
-## 后端接口
+## 3. 后端接口
 
 **复盘分析接口**(流式)：
 
@@ -80,7 +91,7 @@ GET /replay/:roomId/export?includeSkips=true&includeUserPrompt=true
 
 返回 `{ ok, data }`，`data` 即上述服务端构造的导出 JSON(含 `promptGenerationId`)。
 
-## 流式输出
+## 4. 流式输出
 
 后端 `ReplayController.streamAnalyzeReplay` 会：
 
@@ -104,7 +115,7 @@ GET /replay/:roomId/export?includeSkips=true&includeUserPrompt=true
 - 分析中按钮：`中断`
 - 完成、失败或中断后按钮：`重试复盘`
 
-## 模型配置
+## 5. 模型配置
 
 复盘分析使用独立模型配置，不复用对局 AI 模型。
 
@@ -139,7 +150,7 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 - `choices[0].message.content`
 - `choices[0].text`
 
-## 版本感知复盘
+## 6. 版本感知复盘
 
 复盘分析只依据两类材料：① 本局对局记录(复盘 JSON)；② **该局当时实际运行**的 AI 提示词与人格库。提示词随 AI 提示词 DB 版本库一起迭代([`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md))，因此复盘必须按“这一局的版本”注入，而不是当前 active，避免迭代后回看旧局张冠李戴。
 
@@ -154,7 +165,7 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 
 > 复盘分析尺子(`system-replay-analysis.txt` + `user-replay-analysis-template.txt`)始终冻结、来自文件，**不**随版本库变动；只有被分析对象的 AI 提示词是版本感知的。
 
-## Prompt 文件
+## 7. Prompt 文件
 
 复盘分析 prompt 分为系统提示词和用户提示词模板。两者都**冻结**(来自文件，不随版本库变动)。
 
@@ -189,11 +200,11 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 
 - `ReplayService.buildReplayAnalysisPrompt`(异步，见“版本感知复盘”)
 
-## 前端展示
+## 8. 前端展示
 
 复盘页(`apps/web/app/replay/[roomId]/page.tsx`)头部操作区有三组控件：导出开关、一键复盘、预览/导航。
 
-### 头部开关(控制预览/导出，不影响一键复盘)
+### 8.1 头部开关(控制预览/导出，不影响一键复盘)
 
 两个 toggle 开关：
 
@@ -202,7 +213,7 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 
 这两个开关**只影响预览面板和导出 JSON**；一键复盘固定用 `includeSkips=true / includeUserPrompt=true`(见下)，与开关状态无关。开关变化时若预览已展开，会调 `refreshPreviewFromToggles` 本地重建预览。
 
-### 一键复盘
+### 8.2 一键复盘
 
 `handleAnalyzeReplay` 流程：
 
@@ -222,7 +233,7 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 
 相关状态：`analysisText`、`analysisLoading`、`analysisError`、`analysisInterrupted`、`analysisAbortRef`。
 
-### 预览 + 保存到数据库
+### 8.3 预览 + 保存到数据库
 
 预览面板(`replay-preview-section`)由“预览”按钮切换，用于在导出/保存前检查 JSON。展开时(`showPreview=true`)的 `useEffect`：
 
@@ -244,7 +255,7 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 
 相关状态：`showPreview`、`previewData`、`previewSource`(`"db" | "local" | null`)、`previewLoading`、`previewSaving`、`previewMessage`、`previewWrap`。
 
-### 相关样式
+### 8.4 相关样式
 
 `apps/web/app/styles/replay.css`（由 `globals.css` 统一 `@import`，前台样式已按页面拆分）：
 
@@ -253,7 +264,7 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 - 通用开关：`.replay-toggle-switch`、`.replay-toggle-slider`、`.replay-toggle-label`
 - 错误：`.replay-debug-error`
 
-## 请求体大小
+## 9. 请求体大小
 
 因为复盘 JSON 默认包含 AI 用户提示词，体积可能较大。
 
@@ -264,7 +275,7 @@ app.useBodyParser("json", { limit: "5mb" });
 app.useBodyParser("urlencoded", { extended: true, limit: "5mb" });
 ```
 
-## 验证
+## 10. 验证
 
 当前实现已通过：
 
