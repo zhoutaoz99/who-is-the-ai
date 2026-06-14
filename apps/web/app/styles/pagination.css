@@ -1,0 +1,82 @@
+/* ===== Pagination ===== */
+.pagination-bar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  padding: 6px 0;
+}
+
+.page-btn {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 34px;
+  padding: 0 14px;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.page-btn:hover:not(:disabled) {
+  background: #edf7f5;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.page-btn:disabled {
+  background: #f1f5f9;
+  border-color: var(--line);
+  color: #9ca3af;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.page-numbers {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.page-num {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  font-size: 13px;
+  font-weight: 700;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  place-items: center;
+  transition: all 0.12s ease;
+  width: 34px;
+}
+
+.page-num:hover:not(.active) {
+  background: #f8fafc;
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.page-num.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.room-list-footer {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding-top: 6px;
+  text-align: center;
+}
+

@@ -1,0 +1,637 @@
+/* ===== Game / Immersive enhancements ===== */
+
+/* Phase pill */
+.phase-pill {
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.25);
+  border: 1px solid rgba(45, 212, 191, 0.3);
+  color: #2dd4bf;
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  padding: 5px 14px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Game topline refinements */
+.game-topline-left {
+  align-items: center;
+  display: flex;
+}
+
+.connection-badge {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+  padding: 5px 12px;
+}
+
+.connection-badge.online {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #34d399;
+}
+
+.connection-badge.offline {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
+
+.connection-dot {
+  border-radius: 50%;
+  display: inline-block;
+  height: 7px;
+  width: 7px;
+}
+
+.connection-badge.online .connection-dot {
+  background: #34d399;
+}
+
+.connection-badge.offline .connection-dot {
+  background: #f87171;
+}
+
+/* Timer refinements */
+.timer-box {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.timer-track {
+  background: rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  height: 4px;
+  margin-top: 4px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.timer-fill {
+  background: linear-gradient(90deg, #2dd4bf, #0d9488);
+  border-radius: 999px;
+  height: 100%;
+}
+
+/* Result banner refinements */
+.game-result-banner {
+  align-items: center;
+  border-radius: 12px;
+  display: flex;
+  gap: 18px;
+  margin: 0 auto 14px;
+  padding: 14px 18px;
+  width: min(1440px, 100%);
+}
+
+.game-result-banner.win {
+  background: #064e3b;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #d1fae5;
+}
+
+.game-result-banner.loss {
+  background: #450a0a;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fecaca;
+}
+
+.result-banner-left {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  gap: 14px;
+}
+
+.result-icon {
+  align-items: center;
+  border-radius: 12px;
+  display: grid;
+  flex-shrink: 0;
+  height: 48px;
+  place-items: center;
+  width: 48px;
+}
+
+.game-result-banner.win .result-icon {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+}
+
+.game-result-banner.loss .result-icon {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.game-result-banner h2 {
+  color: #ffffff;
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.game-result-banner p {
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
+  opacity: 0.9;
+}
+
+.result-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Panel header with icon */
+.panel-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.panel-header-icon {
+  align-items: center;
+  border-radius: 10px;
+  display: grid;
+  flex-shrink: 0;
+  height: 36px;
+  place-items: center;
+  width: 36px;
+}
+
+.player-icon {
+  background: rgba(45, 212, 191, 0.12);
+  color: #2dd4bf;
+}
+
+.chat-icon {
+  background: rgba(96, 165, 250, 0.12);
+  color: #60a5fa;
+}
+
+.action-icon {
+  background: rgba(251, 191, 36, 0.12);
+  color: #fcd34d;
+}
+
+.panel-count {
+  color: #a7b4c7;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Player rows in game */
+.game-player-row {
+  align-items: center;
+  border-radius: 10px;
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  transition: background 0.15s ease;
+}
+
+.game-player-row:hover {
+  background: rgba(30, 41, 59, 0.6);
+}
+
+.game-player-row.is-self {
+  background: rgba(15, 118, 110, 0.18);
+  border: 1px solid rgba(45, 212, 191, 0.2);
+}
+
+.game-player-row.is-dead {
+  opacity: 0.55;
+}
+
+.game-player-avatar {
+  align-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  display: grid;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 800;
+  height: 32px;
+  place-items: center;
+  width: 32px;
+}
+
+.game-player-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.game-player-name {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.game-player-name strong {
+  color: #e5edf6;
+  font-size: 14px;
+}
+
+.identity-tag {
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+}
+
+.identity-tag.ai {
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #f87171;
+}
+
+.identity-tag.human {
+  background: rgba(16, 185, 129, 0.18);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: #34d399;
+}
+
+.identity-tag.human.simulated {
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #fbbf24;
+}
+
+.game-player-status {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.game-player-persona {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.game-player-model {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #6366f1;
+}
+
+.offline-tag {
+  align-items: center;
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  display: inline-flex;
+  gap: 2px;
+}
+
+/* Transcript refinements */
+.msg-count {
+  color: #a7b4c7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.transcript-empty {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.transcript-empty p {
+  color: #a7b4c7;
+  margin: 0;
+}
+
+/* Message cards */
+.immersive-message {
+  background: rgba(30, 41, 59, 0.7);
+  border-left: 3px solid #2dd4bf;
+  border-radius: 0 10px 10px 0;
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  transition: background 0.15s ease;
+}
+
+.immersive-message:hover {
+  background: rgba(30, 41, 59, 0.9);
+}
+
+.immersive-message.is-ai {
+  border-left-color: #60a5fa;
+  background: rgba(30, 58, 138, 0.2);
+}
+
+.immersive-message.is-ai:hover {
+  background: rgba(30, 58, 138, 0.3);
+}
+
+.immersive-message.is-self-msg {
+  border-left-color: #34d399;
+  background: rgba(6, 78, 59, 0.25);
+}
+
+.immersive-message.is-self-msg:hover {
+  background: rgba(6, 78, 59, 0.35);
+}
+
+.message-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.immersive-message .msg-avatar {
+  align-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  display: grid;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 800;
+  height: 28px;
+  place-items: center;
+  width: 28px;
+}
+
+.msg-meta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.msg-meta strong {
+  color: #e5edf6;
+  font-size: 14px;
+}
+
+.msg-meta span {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.msg-source {
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 8px;
+}
+
+.msg-source.ai {
+  background: rgba(96, 165, 250, 0.15);
+  color: #93c5fd;
+}
+
+.msg-source.human {
+  background: rgba(52, 211, 153, 0.15);
+  color: #6ee7b7;
+}
+
+.msg-source.human.simulated {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+}
+
+.msg-source.msg-persona {
+  background: rgba(148, 163, 184, 0.18);
+  color: #94a3b8;
+}
+
+.msg-source.msg-model {
+  background: rgba(129, 140, 248, 0.15);
+  color: #a5b4fc;
+}
+
+.msg-content {
+  color: #e5edf6;
+  font-size: 14.5px;
+  line-height: 1.65;
+  margin: 0;
+  padding-left: 38px;
+}
+
+/* Vote result card */
+.vote-result-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.vote-result-body {
+  align-items: center;
+  color: #e5edf6;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 14px;
+  gap: 8px;
+  line-height: 1.5;
+}
+
+.vote-result-sep {
+  color: #94a3b8;
+  opacity: 0.6;
+}
+
+/* Composer refinements */
+.send-btn {
+  align-items: center;
+  display: inline-grid;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0;
+  width: 48px;
+}
+
+/* Phase hint refinements */
+.phase-hint-title {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.phase-hint-title strong {
+  color: #e5edf6;
+}
+
+.voted-hint {
+  background: rgba(6, 78, 59, 0.2);
+  border-color: rgba(52, 211, 153, 0.2);
+}
+
+/* Vote section */
+.vote-section-title {
+  color: #a7b4c7;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vote-btn {
+  align-items: center;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  color: #e5edf6;
+  cursor: pointer;
+  display: flex;
+  font-size: 15px;
+  font-weight: 700;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 12px;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.1s ease;
+}
+
+.vote-btn:hover:not(:disabled) {
+  background: rgba(30, 41, 59, 0.85);
+  border-color: rgba(148, 163, 184, 0.4);
+  transform: translateY(-1px);
+}
+
+.vote-btn.selected {
+  background: rgba(251, 191, 36, 0.15);
+  border-color: rgba(251, 191, 36, 0.5);
+  color: #fde68a;
+}
+
+.vote-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.vote-btn-avatar {
+  align-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  display: grid;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 800;
+  height: 30px;
+  place-items: center;
+  width: 30px;
+}
+
+/* Scrollbar in transcript */
+.transcript-messages::-webkit-scrollbar {
+  width: 5px;
+}
+
+.transcript-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.transcript-messages::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 999px;
+}
+
+.transcript-messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
+}
+
+/* ===== Timer alerts ===== */
+
+.timer-alert {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 2px;
+  padding: 3px 12px;
+  white-space: nowrap;
+}
+
+.timer-alert.warning {
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  color: #fcd34d;
+}
+
+.timer-alert.critical {
+  animation: pulse-alert 1s ease-in-out infinite;
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.alert-pulse {
+  animation: pulse-dot 1s ease-in-out infinite;
+  background: #ef4444;
+  border-radius: 50%;
+  display: inline-block;
+  height: 7px;
+  width: 7px;
+}
+
+@keyframes pulse-alert {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.3);
+  }
+}
+
+/* Timer box color states */
+.round-meter.warning .timer-box strong {
+  color: #fcd34d;
+}
+
+.round-meter.critical .timer-box strong {
+  animation: pulse-text 1s ease-in-out infinite;
+  color: #f87171;
+}
+
+.round-meter.critical .timer-fill {
+  background: linear-gradient(90deg, #ef4444, #f87171);
+}
+
+@keyframes pulse-text {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.75;
+  }
+}
+

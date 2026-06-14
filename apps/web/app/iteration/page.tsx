@@ -122,6 +122,16 @@ export default function IterationPage() {
   // 版本差异弹窗(父代 vs 选中代)
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffAsset, setDiffAsset] = useState(ASSET_KEYS[0]);
+
+  // 弹窗打开时锁定底层页面滚动
+  useEffect(() => {
+    if (!diffOpen) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, [diffOpen]);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffParent, setDiffParent] = useState<GenDetail | null>(null);
   const [diffSelected, setDiffSelected] = useState<GenDetail | null>(null);
