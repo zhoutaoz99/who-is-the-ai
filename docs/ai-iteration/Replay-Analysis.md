@@ -1,5 +1,7 @@
 # 复盘分析实现
 
+> **与「自动对局评估自迭代」的区别**:本文是**单局定性复盘**(`POST /replay/analyze`,流式输出开放式文本,只读不改)。自迭代([`AI-Prompt-Eval-Flow.md`](./AI-Prompt-Eval-Flow.md))则是批量跑无头对局、用冻结尺子输出可比的 JSON 分数给提示词版本排名、驱动版本激活/回滚。两者共用「复盘导出 JSON + `REPLAY_ANALYSIS_*` 评审模型」,但**尺子与输出不同**:复盘用 `prompts/system-replay-analysis.txt` 出文本,自迭代用 `eval/prompts/system-replay-score.txt` 出结构化分数。
+
 ## 目标
 
 复盘页提供“一键复盘”能力，用独立配置的大模型分析对局记录，输出开放式文本结果。分析重点包括：
@@ -139,7 +141,7 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 
 ## 版本感知复盘
 
-复盘分析只依据两类材料：① 本局对局记录(复盘 JSON)；② **该局当时实际运行**的 AI 提示词与人格库。提示词随 AI 提示词 DB 版本库一起迭代([`AI-Prompt-Eval-Loop.md`](./AI-Prompt-Eval-Loop.md))，因此复盘必须按“这一局的版本”注入，而不是当前 active，避免迭代后回看旧局张冠李戴。
+复盘分析只依据两类材料：① 本局对局记录(复盘 JSON)；② **该局当时实际运行**的 AI 提示词与人格库。提示词随 AI 提示词 DB 版本库一起迭代([`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md))，因此复盘必须按“这一局的版本”注入，而不是当前 active，避免迭代后回看旧局张冠李戴。
 
 `ReplayService` 注入 `PromptRegistry`，`buildReplayAnalysisPrompt` 改为**异步**，流程：
 
@@ -169,7 +171,7 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 - 定义开放式 bug / 规则异常分析方式。
 - 定义输出格式建议(并要求区分“本局做得好”与“本局暴露的问题”、把建议映射到具体文件)。
 
-该系统提示词**自包含**：不引用任何外部文档(如 `AI-human-like.md`)或历史对局，只依据本局记录与随附 AI 提示词做判断，保证单局复盘结论稳定、可复现。
+该系统提示词**自包含**：不引用任何外部文档(如 `AI-Human-Likeness.md`)或历史对局，只依据本局记录与随附 AI 提示词做判断，保证单局复盘结论稳定、可复现。
 
 用户提示词模板：
 
@@ -244,7 +246,7 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 
 ### 相关样式
 
-`apps/web/app/globals.css`：
+`apps/web/app/styles/replay.css`（由 `globals.css` 统一 `@import`，前台样式已按页面拆分）：
 
 - 一键复盘：`.replay-analyze-btn`、`.replay-analysis-section`、`.replay-analysis-status`、`.replay-analysis-content`
 - 预览：`.replay-preview-section`、`.replay-preview-head`、`.replay-preview-source-badge`(含 `.db`/`.local`)、`.replay-preview-toggles-summary`、`.replay-preview-toolbar`、`.replay-preview-message`(含 `.success`/`.error`)、`.replay-preview-active`、`.replay-preview-close-btn`

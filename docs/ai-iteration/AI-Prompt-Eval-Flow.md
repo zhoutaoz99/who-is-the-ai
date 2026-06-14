@@ -1,7 +1,8 @@
-# 自动对局评估自迭代 · 流程说明
+# AI 提示词自动对局评估自迭代 · 整体流程
 
 > 本文聚焦**整体流程与运行逻辑**,配合流程图说明「自动对局评估自迭代」如何运转。
-> 设计动机与取舍见 [`AI-Prompt-Eval-Loop.md`](./AI-Prompt-Eval-Loop.md);拟人化迭代记录见 [`AI-human-like.md`](./AI-human-like.md)。
+> 设计动机与取舍见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md);拟人化迭代记录见 [`AI-Human-Likeness.md`](AI-Human-Likeness.md)。
+> 与「复盘」([`Replay-Analysis.md`](./Replay-Analysis.md))的区别:复盘是单局定性分析(开放文本、不改状态,给人读);本文是批量定量评估(结构化 JSON 分数、聚合 scorecard、驱动版本激活/回滚)。两者共用复盘导出 JSON 与 `REPLAY_ANALYSIS_*` 模型,但尺子(`eval/prompts/system-replay-score.txt`)与输出不同。
 
 ## 一句话概览
 
@@ -76,7 +77,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  START([用户在 /iteration 设置 B/K/分钟<br/>点「开始迭代」]) --> ACK
+  START([用户在 /iteration 设置 B/K/讨论时长<br/>点「开始迭代」]) --> ACK
   ACK["socket iteration.start"] --> INIT["IterationService.start()<br/>校验 DEBUG + 单 run 互斥<br/>建 iteration_runs 行 status=running round=1<br/>emit status"]
   INIT --> ROUND
 
@@ -145,33 +146,16 @@ flowchart TD
 ```
 
 说明:
-- **版本感知**:每局开局盖戳 `promptGenerationId`;复盘分析时注入「该局当时跑的那一代」的提示词,不张冠李戴。
+- **版本感知**:每局开局盖戳 `promptGenerationId`(解析优先级与回退链见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §1.4)。
 - **卡死兜底**:服务端进程若在对局中途重启(如 `nest --watch` 重编译),内存定时器丢失会致对局卡住;单局判失败并记 `error`,不影响整轮。
 
 ---
 
 ## 六、打分与聚合(冻结尺子)
 
-打分提示词 `eval/prompts/system-replay-score.txt` **固定不变**,对每局 replay 输出严格 JSON:
+每局 replay 由冻结尺子 `eval/prompts/system-replay-score.txt` 打分,输出严格 JSON(`aiWin` / `aiSurvivors` / `roundsPlayed` / `humanLikeScore` / `naturalnessAiVsHuman` / `voteThreatTargeting` / `tells`(8 项)/ `topIssues`);一轮 B 局的分数由 `aggregateScores` 聚合成 scorecard,回写该代的 `ai_prompt_generations.score`,谱系面板即可看到每代分数。
 
-```json
-{
-  "aiWin": true,
-  "aiSurvivors": 2,
-  "roundsPlayed": 4,
-  "humanLikeScore": 78,
-  "naturalnessAiVsHuman": 4,
-  "voteThreatTargeting": 4,
-  "tells": {
-    "round1PushVote": 0, "singleCharWhenNamed": 0, "sampleLineCopy": 0,
-    "lockstepBlockVote": 1, "formulaicVoteReason": 0, "teammateMisfire": 0,
-    "postProvocationSkip": 0, "templatePhrase": 1
-  },
-  "topIssues": ["..."]
-}
-```
-
-`aggregateScores(scores)` 聚合成 scorecard:AI 胜率、`humanLikeScore` 均值±标准误、各 tell 的总命中次数与命中对局占比、高频 topIssues。聚合分回写该代(`ai_prompt_generations.score`),谱系面板即可看到每代分数。
+> 字段定义、判定要点、scorecard 计算公式属于**详细逻辑**,见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §2.3(尺子 JSON 与判定要点)与 §3(聚合公式)。
 
 ---
 
@@ -184,7 +168,7 @@ sequenceDiagram
   participant IT as IterationService
   participant GE as GameService/模型
 
-  U->>GW: emit iteration.start {B,K,分钟}
+  U->>GW: emit iteration.start {B,K,discussionSeconds}
   GW->>IT: start()
   IT-->>GW: ack {ok, runId}(立即返回,不阻塞)
   IT->>GE: 并发跑 B 局 + 打分(异步)
@@ -254,10 +238,12 @@ erDiagram
 | --- | --- | --- |
 | `DEFAULT_ROUNDS` (K) | 4 | 一个 run 的轮数 |
 | `DEFAULT_GAMES_PER_ROUND` (B) | 6 | 每轮局数 |
-| `DEFAULT_DISCUSSION_MINUTES` | 1 | 每轮讨论时长(分钟) |
+| `DEFAULT_DISCUSSION_SECONDS` | 60 | 每轮讨论时长(秒,默认 60s) |
 | `GAME_CONCURRENCY` | 3 | 单轮内并发对局上限 |
 | `POLL_INTERVAL_MS` | 2500 | 轮询对局完成间隔 |
 | `STUCK_AFTER_MS` | 90000 | 卡死判定阈值 |
+
+> UI 可按「分/秒」输入讨论时长,后端统一按秒存储与计时(字段 `discussionSeconds`)。
 
 环境变量:
 - `DEBUG=true`:开启 debug 自动对局与迭代入口。

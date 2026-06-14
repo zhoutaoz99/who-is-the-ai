@@ -1,13 +1,13 @@
-# AI 提示词自动对局评估闭环 · 详细逻辑
+# AI 提示词自动对局评估自迭代 · 详细逻辑
 
 > **文档分工**
 > - 本文 = **每个关键步骤的内部详细逻辑**(版本库机制、单局打分、轮聚合的计算/判定细节)。
-> - [`Auto-Eval-Iteration-Flow.md`](./Auto-Eval-Iteration-Flow.md) = **步骤之间的串联、状态流转、实时事件、数据模型关系**(整体流程图)。
+> - [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md) = **步骤之间的串联、状态流转、实时事件、数据模型关系**(整体流程图)。
 > - 两者互补不重叠:本文讲「某一步内部怎么算」,Flow 文档讲「步骤之间怎么连」。
 
 ## 背景与设计原则
 
-[`AI-human-like.md`](./AI-human-like.md) 记录了 AI 拟人化的迭代。瓶颈已从"句子级像不像真人"转移到**生存策略 / 投票协同 / 策略层 tell**,而旧的"人工跑几局 + 凭感觉改提示词"有三个硬伤:单局方差极大(按单局改 = 追噪声)、无法归因、无版本可回滚。
+[`AI-Human-Likeness.md`](AI-Human-Likeness.md) 记录了 AI 拟人化的迭代。瓶颈已从"句子级像不像真人"转移到**生存策略 / 投票协同 / 策略层 tell**,而旧的"人工跑几局 + 凭感觉改提示词"有三个硬伤:单局方差极大(按单局改 = 追噪声)、无法归因、无版本可回滚。
 
 本闭环用「DB 版本管理 + 批量无头对局 + 冻结尺子量化打分」形成"假设 → 批量验证 → 采纳/回滚"的循环。三条核心原则:
 
@@ -15,7 +15,7 @@
 - **批量平均,不逐局改**:每轮跑 B 局聚合成 scorecard,只做一处有针对性的改动。
 - **版本谱系可回滚**:每次改动 = 一个新"代(generation)",回滚 = 改 active 指针,不动 git、不重启。
 
-> 范围:版本库 + 评估闭环已落地(进程内 `IterationService` + `/iteration` 页面);新版本由人工按 scorecard 手动创建(自动编辑器未做);对手保持 normal 难度;默认 B=6、K=4。
+> 范围:版本库 + 评估闭环已落地(进程内 `IterationService` + `/iteration` 页面);新版本由人工按 scorecard 手动创建(自动编辑器未做);对手保持 normal 难度;默认 B/K 等常量见 [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md) §九。
 > 另:AI 近期连胜、纯胜率区分度低,故主要靠 tell 命中率 / 自然度等先行指标区分版本好坏。
 
 ## 1. DB 版本管理(详细逻辑)
@@ -92,24 +92,24 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 ### 2.2 打分模型配置
 
-复用复盘分析那套 **`REPLAY_ANALYSIS_*`** 环境变量(不是 AI 玩家的模型),由 `resolveScoreModel()` 解析:
+复用复盘分析那套 **`REPLAY_ANALYSIS_*`** 环境变量(不是 AI 玩家的模型),由 `resolveScoreModel()` 解析。下表只列环境变量与**代码默认值**;实际取值以 `.env` 为准。
 
-| 项 | 来源 | 当前 `.env` 值 |
+| 项 | 环境变量 | 代码默认 |
 |---|---|---|
-| baseURL | `REPLAY_ANALYSIS_BASE_URL` | `https://api.deepseek.com` |
-| model | `REPLAY_ANALYSIS_MODEL` | **`deepseek-v4-pro`** |
-| apiKey | `REPLAY_ANALYSIS_API_KEY` | (已配置) |
-| temperature | `REPLAY_ANALYSIS_TEMPERATURE`(缺省 0.2) | `0.2` |
-| reasoning_effort | `REPLAY_ANALYSIS_REASONING_EFFORT`(缺省 high) | `max` |
-| thinking | `REPLAY_ANALYSIS_THINKING`(bool,缺省 true) | `true`(true/1/yes/on → 启用) |
-| timeout | `REPLAY_ANALYSIS_TIMEOUT_MS`(缺省 `SCORE_TIMEOUT_MS=120000`) | `300000`(5 分钟) |
-| 请求格式 | `modelConfig.format` 未设 → 默认 `openai` | `POST {baseURL}/chat/completions`,`Bearer` 鉴权 |
+| baseURL | `REPLAY_ANALYSIS_BASE_URL` | (必填,无默认) |
+| model | `REPLAY_ANALYSIS_MODEL` | (必填,无默认) |
+| apiKey | `REPLAY_ANALYSIS_API_KEY` | (必填,无默认) |
+| temperature | `REPLAY_ANALYSIS_TEMPERATURE` | `0.2` |
+| reasoningEffort | `REPLAY_ANALYSIS_REASONING_EFFORT` | `high` |
+| thinking | `REPLAY_ANALYSIS_THINKING`(bool,true/1/yes/on → 启用) | `true` |
+| timeout | `REPLAY_ANALYSIS_TIMEOUT_MS` | `SCORE_TIMEOUT_MS = 120000` |
+| 请求格式 | `modelConfig.format` 未设 → `openai` | `POST {baseURL}/chat/completions`,`Bearer` 鉴权 |
 
 请求体:`{ model, temperature, messages:[{system}, {user}], thinking:{type:"enabled"}, reasoning_effort }`(thinking 仅在 `thinking !== false` 时带)。**不强制 `response_format:json_object`**,靠 system 指令 + 容错解析兜。
 
 ### 2.3 system 尺子(冻结)`eval/prompts/system-replay-score.txt`
 
-**冻结**:输出格式与指标定义固定不变(只进化被测的 AI 提示词/人格,尺子不动),保证跨版本打分可比。要求**只输出一个 JSON 对象**,字段即 [`AI-human-like.md`](./AI-human-like.md) 迭代沉淀的 tell 清单结构化版:
+冻结尺子(原则见 §背景),要求**只输出一个 JSON 对象**,字段即 [`AI-Human-Likeness.md`](AI-Human-Likeness.md) 迭代沉淀的 tell 清单结构化版:
 
 ```json
 {
@@ -183,9 +183,9 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 **实现位置**:`apps/api/src/iteration/iteration-score.ts` 的 `aggregateScores()`,由 `IterationService.buildAggregate` 调用。
 
-## 4. 文件清单
+## 4. 实现位置索引
 
-新增 / 改动:
+相关代码分布(便于定位,非变更记录):
 
 ```
 apps/api/src/data/postgres.service.ts          # 版本表 + iteration_runs(migrate)

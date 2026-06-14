@@ -7,7 +7,7 @@
 - 数据存储：`PostgreSQL`
 - 缓存与会话：`Redis`
 
-当前版本先跑通实时玩法闭环。规划事项统一维护在 [`docs/FollowUpPlan.md`](docs/FollowUpPlan.md)。
+当前版本先跑通实时玩法闭环。规划与待办事项统一维护在 [`docs/Roadmap.md`](docs/Roadmap.md)，文档总览见 [`docs/README.md`](docs/README.md)。
 
 ## 功能范围
 
@@ -24,10 +24,11 @@
 - 15 秒发言冷却
 - 服务端轮次倒计时
 - 投票阶段投票出局
-- AI 模板发言和规则投票
-- 4 轮后仍有 AI 模拟玩家存活则人类玩家失败
-- AI 模拟玩家全部出局则真人胜利，存活真人玩家平分 2000 积分
+- AI 玩家由大模型驱动发言（策略层 + 表达层）与投票
+- 4 轮后仍有 AI 玩家存活则人类玩家失败
+- AI 玩家全部出局则真人胜利，存活真人玩家平分 2000 积分
 - 游戏结束后揭示玩家身份
+- 一键复盘：用独立模型分析对局记录（见 [docs/ai-iteration/Replay-Analysis.md](docs/ai-iteration/Replay-Analysis.md)）
 
 账号数据持久化在 PostgreSQL。登录会话写入 Redis；房间和对局状态写入 PostgreSQL 的 `jsonb` 字段，并通过 Redis 缓存热房间数据。
 
@@ -46,6 +47,8 @@ npm run dev
 ```
 
 启动 API 前需先准备 PostgreSQL 和 Redis。项目 PostgreSQL 使用宿主机 `5432`，Redis 使用 `6379`。
+
+对局 AI 的模型与密钥配置在根目录 `ai-models.json`（从 `ai-models.example.json` 复制并填入每个模型条目的 `apiKey`）；未配置时 AI 会跳过发言。一键复盘使用独立的 `REPLAY_ANALYSIS_*` 配置，详见 [docs/ai-iteration/Replay-Analysis.md](docs/ai-iteration/Replay-Analysis.md)。
 
 ```bash
 docker run -d \
@@ -85,13 +88,14 @@ docker run -d \
 cp .env.example .env
 ```
 
-编辑 `.env`，至少填写 `AI_API_KEY`：
+复制 AI 模型配置示例文件并填入各模型条目的 `apiKey`（对局 AI 的模型与密钥都在 `ai-models.json` 中配置，不读 `.env`）：
 
 ```bash
-AI_API_KEY=sk-your-key-here
+cp ai-models.example.json ai-models.json
+# 编辑 ai-models.json，把每个条目的 apiKey 改成你自己的密钥
 ```
 
-一键复盘分析使用独立模型配置，不复用对局 AI 模型：
+一键复盘分析使用独立模型配置，在 `.env` 中填写（不复用对局 AI 模型）：
 
 ```bash
 REPLAY_ANALYSIS_BASE_URL=https://api.example.com/v1
@@ -149,12 +153,12 @@ REDIS_URL=redis://127.0.0.1:6379
 SESSION_TTL_SECONDS=604800
 ROOM_CACHE_TTL_SECONDS=3600
 ROUND_DURATION_MS=300000
-VOTE_DURATION_MS=30000
+VOTE_DURATION_MS=60000
 ```
 
 `ROUND_DURATION_MS` 是创建房间时未传入配置的后端默认值。前端创建房间时会传入分钟数，并由后端强制限制最小 1 分钟。
 
-服务启动时会自动创建所需的 `accounts` 和 `game_rooms` 表。未设置 `DATABASE_URL` 时，后端默认连接 `127.0.0.1:5432/ai_werewolf`，用户名和密码均为 `postgres`；未设置 `REDIS_URL` 时默认连接 `redis://127.0.0.1:6379`。
+服务启动时会自动创建所需的数据库表（`accounts`、`game_rooms`、`ai_call_logs`、`replay_exports`，以及提示词版本库与迭代评估相关表）。未设置 `DATABASE_URL` 时，后端默认连接 `127.0.0.1:5432/ai_werewolf`，用户名和密码均为 `postgres`；未设置 `REDIS_URL` 时默认连接 `redis://127.0.0.1:6379`。
 
 前端支持以下环境变量：
 

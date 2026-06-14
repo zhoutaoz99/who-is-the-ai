@@ -1,6 +1,6 @@
 # AI 拟人化优化方案
 
-> 相关:提示词的 DB 版本管理与批量自动对局评估闭环见 [`AI-Prompt-Eval-Loop.md`](./AI-Prompt-Eval-Loop.md)。本文是迭代记录,那篇是可持续迭代的工程化方案。
+> 相关:提示词的 DB 版本管理与批量自动对局评估闭环见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)。本文是迭代记录,那篇是可持续迭代的工程化方案。
 
 ## 背景
 
@@ -106,7 +106,7 @@
 
 ### 5. 调度过机械
 
-固定间隔和固定概率会让 AI 像自动填充对话。调度优化见 [`AI-Scheduling.md`](AI-Scheduling.md)。
+固定间隔和固定概率会让 AI 像自动填充对话。调度优化见 [`AI-Scheduling.md`](../gameplay/AI-Scheduling.md)。
 
 ## 已落地优化
 
@@ -215,9 +215,11 @@ Prompt 使用方式：
 
 目标：让不同 AI 的发言节奏、句式和攻击性有差异。
 
-第一版已落地：创建 AI 玩家时随机分配一个 `aiPersonaId`，构建 `GameContext` 时解析成完整 persona，并注入发言策略、表达转换和投票 prompt。游戏结束后的 replay 快照会揭示 AI 的人格名称，方便复盘。
+创建 AI 玩家时随机分配一个 `aiPersonaId`，构建 `GameContext` 时解析成完整 persona，并注入发言策略、表达转换和投票 prompt。游戏结束后的 replay 快照会揭示 AI 的人格名称，方便复盘。
 
-当前 persona 结构：
+> 人格库已在「迭代 1」重写为 8 个多元生活化人格（见下文「迭代记录」），并随 AI 提示词 DB 版本库一起迭代（可变 active 集，见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)）。当前 8 个人格见 [`AI-Interaction-Flow.md`](../gameplay/AI-Interaction-Flow.md) 的「AI 人格」一节。
+
+当前 persona 结构（迭代 1 后新增可选 `typingHabit`、`sampleLines`）：
 
 ```ts
 type AiPersona = {
@@ -228,20 +230,22 @@ type AiPersona = {
   responseBias: string;
   toneRules: string[];
   avoidPhrases: string[];
+  typingHabit?: string;   // 打字习惯（可选）
+  sampleLines?: string[]; // 语感参考片段；表达层禁止照抄（见迭代 2 Fix1）
 };
 ```
 
-示例：
+示例（`active_icebreaker`，破冰调度依赖此 id）：
 
 ```json
 {
-  "id": "short_skeptic",
-  "name": "短句怀疑型",
-  "speechStyle": "话少，直接，常用短反问，不喜欢铺垫。",
-  "sentenceStyle": "多数时候 1 句，最多 2 句；少用连接词。",
-  "responseBias": "被点名或看到过快下结论时更愿意接话，平时不主动长篇分析。",
-  "toneRules": ["可以有一点不服", "不要太礼貌圆滑", "不要完整论证自己"],
-  "avoidPhrases": ["先看看", "观察一下", "不站死", "有点可疑"]
+  "id": "active_icebreaker",
+  "name": "热心话痨型",
+  "speechStyle": "自来熟，话密，爱找话题，冷场先开口。",
+  "sentenceStyle": "多句连发，口语化，常带语气词。",
+  "responseBias": "主动起话头，被冷落时更想接话。",
+  "toneRules": ["热情但不油腻", "可以带点小情绪", "别长篇分析"],
+  "avoidPhrases": ["先看看", "观察一下", "不站死"]
 }
 ```
 

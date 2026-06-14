@@ -1,5 +1,10 @@
 # AI 发言调度机制
 
+> **本文定位**:这是发言调度的**设计动机与第一版方案**,讲清「为什么不用固定概率、为什么不做 1 秒模型轮询、策略层应输出什么」。设计原则至今有效。
+> **与实现的差异**(后续迭代已超出本文):
+> - 上下文失效判断已简化:普通模式只比对 `{ roundNo, voteCount }` 两个字段,**新增聊天消息不再导致发言被丢弃**(只有轮次变化或投票数变化才丢弃),详见 [`AI-Interaction-Flow.md`](AI-Interaction-Flow.md)「触发机制」。
+> - 调度器已拆分为「AI 调度器」和「模拟真人调度器」两个互相独立的调度器(各自独立的 timer key、speaking 锁和冷却常量),普通对局与「AI 自动对抗」共用此结构,详见 [`AI-Auto-Adversarial-Match.md`](../ai-iteration/AI-Auto-Adversarial-Match.md)「发言调度」。
+
 ## 目标
 
 AI 发言调度的目标不是让 AI 高频填充对话，而是让 AI 在合适的时机像真人一样发言：
@@ -107,7 +112,9 @@ remainingDelayMs = targetResponseDelayMs - modelElapsedMs
 
 ## 旧上下文处理
 
-调用模型前记录上下文版本：
+> 注意:下面的「记录 messageCount / lastMessageId 并在出现新消息时丢弃」是第一版设想。**当前普通模式实现已简化为只比对 `{ roundNo, voteCount }`**——新增聊天消息不再触发丢弃,只有轮次变化或投票数变化才丢弃(见 [`AI-Interaction-Flow.md`](AI-Interaction-Flow.md))。这样做的取舍:AI 与模拟真人两个调度器互相独立后,大量模型调用若因聊天变化被误杀会严重影响节奏;允许基于稍早上下文的发言,只要仍在同一轮发言阶段、投票状态未变即可保存。`round1PushVote` / 单局上下文一致性的更细判断交给打分尺子([`AI-Prompt-Eval-Details.md`](../ai-iteration/AI-Prompt-Eval-Details.md))去衡量。
+
+第一版设想的上下文版本字段(供设计参考,部分已不再用于丢弃判断):
 
 ```text
 roundNo
@@ -116,9 +123,7 @@ lastMessageId
 voteCount
 ```
 
-模型返回后检查一次，真正发送前再检查一次。
-
-第一版规则简单处理：只要生成期间或等待发送期间出现新消息或轮次变化，就丢弃旧回答，并在 `500-1500ms` 后重新观察。这样可以避免 AI 无视刚刚的新发言。
+第一版规则设想:只要生成期间或等待发送期间出现新消息或轮次变化,就丢弃旧回答,并在 `500-1500ms` 后重新观察,避免 AI 无视刚刚的新发言。轮次/投票变化仍按此处理;纯新消息在当前实现中不再丢弃。
 
 ## 后续可优化
 
