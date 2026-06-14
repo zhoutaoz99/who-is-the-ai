@@ -15,11 +15,14 @@ import { useAuth } from "./auth-client";
 import { applyRoundTickToRooms } from "./game-state";
 import {
   ActionResult,
+  IterationGameResult,
+  IterationRunStatus,
   RoomSnapshot,
   RoundTickPayload,
   ServerReadyPayload,
-  SpeechGeneratingPayload,
   SpeechDiscardedPayload,
+  SpeechGeneratingPayload,
+  StartIterationPayload,
 } from "./game-types";
 
 type GameClientContextValue = {
@@ -66,6 +69,11 @@ type GameClientContextValue = {
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
   stopGame: (roomId: string) => Promise<ActionResult>;
   fetchRoom: (roomId: string) => Promise<RoomSnapshot | null>;
+  iterationRun: IterationRunStatus | null;
+  startIteration: (payload: StartIterationPayload) => Promise<ActionResult>;
+  continueIteration: () => Promise<ActionResult>;
+  stopIteration: () => Promise<ActionResult>;
+  refreshIteration: () => Promise<void>;
 };
 
 const API_URL =
@@ -129,6 +137,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
   const [roomCode, setRoomCode] = useState("");
   const [speechGeneratings, setSpeechGeneratings] = useState<SpeechGeneratingPayload[]>([]);
   const [speechDiscarded, setSpeechDiscarded] = useState<SpeechDiscardedPayload | null>(null);
+  const [iterationRun, setIterationRun] = useState<IterationRunStatus | null>(null);
   const speechGeneratingClearTimersRef = useRef<Record<string, number>>({});
   const speechDiscardedClearTimerRef = useRef<number | null>(null);
 
@@ -248,7 +257,10 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     });
     socketRef.current = socket;
 
-    socket.on("connect", () => setConnected(true));
+    socket.on("connect", () => {
+      setConnected(true);
+      void refreshIteration();
+    });
     socket.on("disconnect", () => {
       setConnected(false);
       clearSpeechGeneratingTimers();
@@ -269,6 +281,24 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("vote.updated", syncRoom);
     socket.on("game.ended", syncRoom);
     socket.on("round.tick", applyRoundTick);
+
+    // 迭代 run 实时事件:status 全量快照;game 单局完成追加到当前轮。
+    socket.on("iteration.status", (payload: IterationRunStatus) =>
+      setIterationRun(payload),
+    );
+    socket.on("iteration.game", (payload: IterationGameResult) =>
+      setIterationRun((current) =>
+        current && current.status === "running"
+          ? { ...current, currentRoundGames: [...current.currentRoundGames, payload] }
+          : current,
+      ),
+    );
+    socket.on("iteration.round", () => {
+      /* round 聚合已包含在随后的 iteration.status 全量快照中 */
+    });
+    socket.on("iteration.done", () => {
+      /* completed 状态由随后的 iteration.status 全量快照携带 */
+    });
 
     socket.on("player.speech.generating", (payload: SpeechGeneratingPayload) => {
       const nextPayload = {
@@ -459,6 +489,19 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     [connected, rememberPlayer, upsertRoom],
   );
 
+  /** 拉取当前/最近一次迭代 run 的状态(首屏与断线重连兜底)。 */
+  const refreshIteration = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/debug/iterations`);
+      const json = await res.json();
+      if (json?.ok) {
+        setIterationRun(json.run ?? null);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const value = useMemo<GameClientContextValue>(() => {
     const normalizedName = (user?.displayName ?? playerName).trim();
 
@@ -472,6 +515,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       roomCode,
       speechGeneratings,
       speechDiscarded,
+      iterationRun,
       setPlayerName,
       setRoomCode,
       setError,
@@ -560,6 +604,11 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       },
       createDebugAutoAiRoom: async () =>
         emitAction("debug.ai-room.create", {}),
+      startIteration: async (payload: StartIterationPayload) =>
+        emitAction<StartIterationPayload>("iteration.start", payload ?? {}),
+      continueIteration: async () => emitAction("iteration.continue", {}),
+      stopIteration: async () => emitAction("iteration.stop", {}),
+      refreshIteration,
       joinRoom: async (roomId?: string) => {
         const targetRoomId = (roomId ?? roomCode).trim().toUpperCase();
         if (!normalizedName) {
@@ -720,9 +769,11 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     emitAction,
     error,
     forgetPlayer,
+    iterationRun,
     pending,
     playerIds,
     playerName,
+    refreshIteration,
     roomCode,
     rooms,
     speechGeneratings,

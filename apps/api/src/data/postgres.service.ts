@@ -182,5 +182,26 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
         CONSTRAINT ai_prompt_state_singleton CHECK (id = 1)
       )
     `);
+
+    // --- 自动对局评估自迭代 run 记录 ---
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS iteration_runs (
+        id uuid PRIMARY KEY,
+        status text NOT NULL,
+        current_round integer NOT NULL DEFAULT 0,
+        total_rounds integer NOT NULL,
+        games_per_round integer NOT NULL,
+        discussion_minutes integer NOT NULL DEFAULT 1,
+        active_generation_id text,
+        rounds jsonb NOT NULL DEFAULT '[]',
+        created_at timestamptz NOT NULL DEFAULT NOW(),
+        updated_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      ALTER TABLE iteration_runs
+      ADD COLUMN IF NOT EXISTS discussion_seconds integer NOT NULL DEFAULT 60
+    `);
   }
 }

@@ -517,6 +517,41 @@ export default function Home() {
             </div>
           )}
 
+          {debug && (
+            <div className="debug-auto-ai-entry">
+              <div className="lobby-card-header">
+                <div className="lobby-icon debug-ai-icon" aria-hidden="true">
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    <path d="M21 3v6h-6" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="eyebrow">Auto Iteration</p>
+                  <h2>自动对局评估自迭代</h2>
+                </div>
+              </div>
+              <p className="muted-text">
+                批量跑无头对局、量化打分,配合版本库迭代 AI 提示词。
+              </p>
+              <button
+                className="secondary"
+                onClick={() => router.push("/iteration")}
+              >
+                进入自动迭代
+              </button>
+            </div>
+          )}
+
           <div className="lobby-divider" />
 
           <div className="lobby-card-header" style={{ marginTop: 2 }}>

@@ -99,6 +99,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
       showDebugAutoAi && room.debugAutoAiFastMode === true
         ? true
         : undefined,
+    promptGenerationId: room.promptGenerationId,
     createdAt: room.createdAt,
     updatedAt: room.updatedAt,
   };

@@ -10,5 +10,6 @@ import { ReplayService } from "./replay.service";
   imports: [AiModule, DataModule],
   controllers: [ReplayController, ReplayDebugController],
   providers: [ReplayService, DebugAiRecorder],
+  exports: [ReplayService],
 })
 export class ReplayModule {}

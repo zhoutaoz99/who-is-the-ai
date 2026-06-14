@@ -303,6 +303,11 @@ export function normalizeContent(content: string | undefined) {
 }
 
 export function normalizeDiscussionDuration(payload: CreateRoomPayload) {
+  const seconds = Number(payload.discussionDurationSeconds);
+  if (Number.isFinite(seconds)) {
+    // 秒级(主要用于 debug 自动迭代):最小 10s。
+    return Math.max(Math.floor(seconds), 10) * 1000;
+  }
   const minutes = Number(payload.discussionDurationMinutes);
   if (!Number.isFinite(minutes)) {
     return Math.max(DEFAULT_DISCUSSION_DURATION_MS, MIN_DISCUSSION_DURATION_MS);

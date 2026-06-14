@@ -128,3 +128,76 @@ export type SpeechDiscardedPayload = {
   reason: string;
   discardedAt?: string;
 };
+
+// ===== 自动对局评估自迭代 =====
+
+export type IterationStatus =
+  | "running"
+  | "awaiting_activation"
+  | "completed"
+  | "stopped"
+  | "failed";
+
+export type IterationGameResult = {
+  round: number;
+  roomId: string;
+  winner: string | null;
+  generationId: string | null;
+  humanLikeScore?: number;
+  aiWin?: boolean;
+  error?: string;
+  score?: Record<string, unknown> | null;
+};
+
+export type IterationRoundAggregate = {
+  n: number;
+  aiWinRate: number;
+  aiSurvivorsMean: number;
+  roundsPlayedMean: number;
+  humanLikeScore: { mean: number; se: number };
+  naturalnessAiVsHuman: { mean: number; se: number };
+  voteThreatTargeting: { mean: number; se: number };
+  tells: Record<string, number>;
+  tellGameRates: Record<string, number>;
+  topIssues: Array<{ issue: string; count: number }>;
+  generatedAt: string;
+};
+
+export type IterationRound = {
+  round: number;
+  generationId: string | null;
+  games: IterationGameResult[];
+  aggregate: IterationRoundAggregate | null;
+};
+
+export type IterationRunStatus = {
+  id: string;
+  status: IterationStatus;
+  currentRound: number;
+  totalRounds: number;
+  gamesPerRound: number;
+  discussionSeconds: number;
+  activeGenerationId: string | null;
+  currentRoundGames: IterationGameResult[];
+  rounds: IterationRound[];
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StartIterationPayload = {
+  rounds?: number;
+  gamesPerRound?: number;
+  discussionSeconds?: number;
+};
+
+export type GenerationSummary = {
+  id: string;
+  parentId: string | null;
+  status: string;
+  isBest: boolean;
+  score: unknown;
+  note: string | null;
+  manifest: Record<string, number>;
+  createdAt: string;
+};

@@ -159,6 +159,7 @@ export interface RoomSnapshot {
   debug?: boolean;
   debugAutoAi?: boolean;
   debugAutoAiFastMode?: boolean;
+  promptGenerationId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -167,6 +168,7 @@ export interface CreateRoomPayload {
   authToken?: string;
   playerName?: string;
   discussionDurationMinutes?: number;
+  discussionDurationSeconds?: number;
 }
 
 export interface JoinRoomPayload {
@@ -183,6 +185,12 @@ export interface GameAccount {
 export interface StartGamePayload {
   roomId?: string;
   playerId?: string;
+}
+
+export interface StartIterationPayload {
+  rounds?: number;
+  gamesPerRound?: number;
+  discussionSeconds?: number;
 }
 
 export interface SendChatPayload {
@@ -225,7 +233,7 @@ export interface DebugAddAiPayload {
 }
 
 export interface CreateDebugAutoAiRoomPayload {
-  discussionDurationMinutes?: number;
+  discussionDurationSeconds?: number;
   fastMode?: boolean;
 }
 
