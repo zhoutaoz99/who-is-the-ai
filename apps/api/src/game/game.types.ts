@@ -87,7 +87,7 @@ export interface Room {
   /** 本局开局时生效的 AI 提示词版本代号(用于版本感知复盘);旧局可能缺失。 */
   promptGenerationId?: string;
   debugAutoAi?: boolean;
-  debugAutoAiFastMode?: boolean;
+  debugAutoAiSequentialSpeech?: boolean;
   players: Player[];
   discussionDurationMs: number;
   currentRound: number;
@@ -158,7 +158,7 @@ export interface RoomSnapshot {
   canStart: boolean;
   debug?: boolean;
   debugAutoAi?: boolean;
-  debugAutoAiFastMode?: boolean;
+  debugAutoAiSequentialSpeech?: boolean;
   promptGenerationId?: string;
   createdAt: string;
   updatedAt: string;
@@ -191,7 +191,7 @@ export interface StartIterationPayload {
   rounds?: number;
   gamesPerRound?: number;
   discussionSeconds?: number;
-  fastMode?: boolean;
+  sequentialSpeech?: boolean;
   personaMode?: "random_each_game" | "fixed_per_run" | "fixed_schedule";
   personaIds?: string[];
   autoEdit?: boolean;
@@ -239,7 +239,7 @@ export interface DebugAddAiPayload {
 
 export interface CreateDebugAutoAiRoomPayload {
   discussionDurationSeconds?: number;
-  fastMode?: boolean;
+  sequentialSpeech?: boolean;
   personaIds?: string[];
 }
 
@@ -272,10 +272,10 @@ export interface UpdateDiscussionDurationPayload {
   discussionDurationMinutes?: number;
 }
 
-export interface UpdateDebugAutoAiFastModePayload {
+export interface UpdateDebugAutoAiSequentialSpeechPayload {
   roomId?: string;
   playerId?: string;
-  fastMode?: boolean;
+  sequentialSpeech?: boolean;
 }
 
 export interface ActionResult {

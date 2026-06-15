@@ -77,7 +77,7 @@ flowchart LR
 
 - 普通 AI 走 `startAiSpeech(room)`。
 - 模拟真人走 `startSimulatedHumanSpeech(room)`；普通对局通常没有候选玩家，调试自动对抗房会实际使用这一分支。
-- 调试自动对抗房的快速模式走另一套串行循环，本文不展开。
+- 调试自动对抗房的顺序发言走另一套串行循环，本文不展开。
 
 #### 6.1.1 调度流程
 

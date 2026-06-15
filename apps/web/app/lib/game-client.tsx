@@ -61,9 +61,9 @@ type GameClientContextValue = {
     roomId: string,
     discussionDurationMinutes: number,
   ) => Promise<ActionResult>;
-  updateDebugAutoAiFastMode: (
+  updateDebugAutoAiSequentialSpeech: (
     roomId: string,
-    fastMode: boolean,
+    sequentialSpeech: boolean,
   ) => Promise<ActionResult>;
   sendChat: (roomId: string, content: string) => Promise<ActionResult>;
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
@@ -704,11 +704,11 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           playerId: playerIds[roomId.toUpperCase()],
           discussionDurationMinutes,
         }),
-      updateDebugAutoAiFastMode: (roomId: string, fastMode: boolean) =>
-        emitAction("debug.ai-room.fastMode.update", {
+      updateDebugAutoAiSequentialSpeech: (roomId: string, sequentialSpeech: boolean) =>
+        emitAction("debug.ai-room.sequentialSpeech.update", {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
-          fastMode,
+          sequentialSpeech,
         }),
       sendChat: (roomId: string, content: string) =>
         emitAction("chat.send", {

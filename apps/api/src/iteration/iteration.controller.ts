@@ -23,7 +23,7 @@ export class IterationController {
     @Query("gamesPerRound") gamesPerRound?: string,
     @Query("discussionSeconds") discussionSeconds?: string,
     @Query("postRoundMode") postRoundMode?: string,
-    @Query("fastMode") fastMode?: string,
+    @Query("sequentialSpeech") sequentialSpeech?: string,
   ) {
     if (!DEBUG) return { ok: false, error: "调试模式未开启" };
     return this.iterationService.estimateIteration({
@@ -31,7 +31,7 @@ export class IterationController {
       gamesPerRound: Number(gamesPerRound),
       discussionSeconds: Number(discussionSeconds),
       postRoundMode,
-      fastMode: fastMode === "true",
+      sequentialSpeech: sequentialSpeech === "true",
     });
   }
 

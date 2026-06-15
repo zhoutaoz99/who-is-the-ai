@@ -58,7 +58,7 @@ export default function IterationPage() {
   const [gamesPerRound, setGamesPerRound] = useState(6);
   const [duration, setDuration] = useState(1);
   const [durationUnit, setDurationUnit] = useState<"min" | "sec">("min");
-  const [fastMode, setFastMode] = useState(true);
+  const [sequentialSpeech, setSequentialSpeech] = useState(true);
   const [personaMode, setPersonaMode] = useState<IterationPersonaMode>("fixed_schedule");
   const [postRoundMode, setPostRoundMode] = useState<IterationPostRoundMode>("auto_edit_wait_confirm");
   const [busy, setBusy] = useState(false);
@@ -97,7 +97,7 @@ export default function IterationPage() {
         `&gamesPerRound=${encodeURIComponent(gamesPerRound)}` +
         `&discussionSeconds=${encodeURIComponent(discussionSecondsValue)}` +
         `&postRoundMode=${encodeURIComponent(postRoundMode)}` +
-        `&fastMode=${encodeURIComponent(fastMode)}`;
+        `&sequentialSpeech=${encodeURIComponent(sequentialSpeech)}`;
       fetch(url, { signal: controller.signal })
         .then((r) => r.json())
         .then((json) => {
@@ -126,7 +126,7 @@ export default function IterationPage() {
     gamesPerRound,
     discussionSecondsValue,
     postRoundMode,
-    fastMode,
+    sequentialSpeech,
     iterationRun?.status,
   ]);
 
@@ -262,7 +262,7 @@ export default function IterationPage() {
       rounds,
       gamesPerRound,
       discussionSeconds: seconds,
-      fastMode,
+      sequentialSpeech,
       personaMode,
       autoEdit: postRoundMode !== "manual",
       postRoundMode,
@@ -465,7 +465,7 @@ export default function IterationPage() {
               </div>
               <div className="iter-param">
                 <span className="muted-text">顺序发言</span>
-                <strong>{run?.options?.fastMode === false ? "关闭" : "开启"}</strong>
+                <strong>{run?.options?.sequentialSpeech === false ? "关闭" : "开启"}</strong>
               </div>
               <div className="iter-param">
                 <span className="muted-text">人格策略</span>
@@ -524,8 +524,8 @@ export default function IterationPage() {
                 顺序发言
                 <input
                   type="checkbox"
-                  checked={fastMode}
-                  onChange={(e) => setFastMode(e.target.checked)}
+                  checked={sequentialSpeech}
+                  onChange={(e) => setSequentialSpeech(e.target.checked)}
                 />
               </label>
               <label>
@@ -560,7 +560,7 @@ export default function IterationPage() {
             <p className="muted-text iter-estimate">
               预计用时:<strong>{formatEstimate(estimate.seconds)}</strong>
               <span className="iter-estimate-note">
-                · 每名玩家约 <strong>{estimate.speechesPerPlayer}</strong> 次发言/轮({fastMode ? "顺序" : "随机"}模式)
+                · 每名玩家约 <strong>{estimate.speechesPerPlayer}</strong> 次发言/轮({sequentialSpeech ? "顺序" : "随机"}模式)
                 (含打分{postRoundMode !== "manual" ? "与自动优化" : ""};仅供参考,实际受模型速度与对局结束轮数影响)
               </span>
             </p>

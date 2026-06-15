@@ -84,7 +84,7 @@ import {
   StartGamePayload,
   StopGamePayload,
   UpdateDiscussionDurationPayload,
-  UpdateDebugAutoAiFastModePayload,
+  UpdateDebugAutoAiSequentialSpeechPayload,
   Winner,
 } from "./game.types";
 
@@ -199,7 +199,7 @@ export class GameService {
       status: "waiting",
       ownerPlayerId: aiPlayers[0].id,
       debugAutoAi: true,
-      debugAutoAiFastMode: payload.fastMode === true,
+      debugAutoAiSequentialSpeech: payload.sequentialSpeech === true,
       players: aiPlayers,
       discussionDurationMs: normalizeDiscussionDuration(payload),
       currentRound: 0,
@@ -987,8 +987,8 @@ export class GameService {
     };
   }
 
-  async updateDebugAutoAiFastMode(
-    payload: UpdateDebugAutoAiFastModePayload,
+  async updateDebugAutoAiSequentialSpeech(
+    payload: UpdateDebugAutoAiSequentialSpeechPayload,
   ): Promise<ActionResult> {
     const roomId = normalizeRoomId(payload.roomId);
     let failure = "房间不存在或操作冲突";
@@ -1009,7 +1009,7 @@ export class GameService {
         return false;
       }
 
-      latest.debugAutoAiFastMode = payload.fastMode === true;
+      latest.debugAutoAiSequentialSpeech = payload.sequentialSpeech === true;
       latest.debugAutoAiSpeech = undefined;
       touch(latest);
       return true;
@@ -1079,7 +1079,7 @@ export class GameService {
     this.broadcastRoom(room);
     this.server?.to(room.id).emit("round.started", this.snapshot(room));
     this.startTick(room);
-    if (room.debugAutoAi && room.debugAutoAiFastMode) {
+    if (room.debugAutoAi && room.debugAutoAiSequentialSpeech) {
       this.startDebugAutoAiSpeechLoop(room);
     } else {
       this.startAiSpeech(room);
@@ -1363,7 +1363,7 @@ export class GameService {
         latest.phase !== "discussion" ||
         latest.currentRound !== roundNo ||
         !latest.debugAutoAi ||
-        !latest.debugAutoAiFastMode
+        !latest.debugAutoAiSequentialSpeech
       ) {
         return false;
       }
@@ -1424,7 +1424,7 @@ export class GameService {
   }
 
   private prepareDebugAutoAiSpeechState(room: Room) {
-    if (!room.debugAutoAi || !room.debugAutoAiFastMode) {
+    if (!room.debugAutoAi || !room.debugAutoAiSequentialSpeech) {
       room.debugAutoAiSpeech = undefined;
       return;
     }

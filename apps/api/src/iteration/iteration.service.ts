@@ -371,7 +371,7 @@ export class IterationService implements OnModuleInit {
     gamesPerRound?: number;
     discussionSeconds?: number;
     postRoundMode?: string;
-    fastMode?: boolean;
+    sequentialSpeech?: boolean;
   }): { ok: boolean; seconds?: number; speechesPerPlayer?: number; error?: string } {
     const rounds = clampInt(params.rounds, DEFAULT_ROUNDS, 1, 20);
     const gamesPerRound = clampInt(
@@ -411,7 +411,7 @@ export class IterationService implements OnModuleInit {
     );
     const FAST_SPEECH_SEC = 8; // 快速模式串行单次发言(模型调用)耗时
     const NORMAL_SPEECH_CYCLE_SEC = 15; // 普通模式单玩家发言周期(含随机间隔)
-    const speechesPerPlayer = params.fastMode
+    const speechesPerPlayer = params.sequentialSpeech
       ? Math.max(1, Math.floor(discussionSeconds / (players * FAST_SPEECH_SEC)))
       : Math.max(1, Math.floor(discussionSeconds / NORMAL_SPEECH_CYCLE_SEC));
 
@@ -677,7 +677,7 @@ export class IterationService implements OnModuleInit {
     }
 
     const options: IterationRunOptions = {
-      fastMode: payload.fastMode !== false,
+      sequentialSpeech: payload.sequentialSpeech !== false,
       personaMode,
       personaIds: requestedPersonaIds.length > 0 ? requestedPersonaIds : undefined,
       autoEdit: postRoundMode !== "manual",
@@ -711,7 +711,7 @@ export class IterationService implements OnModuleInit {
   private rowOptions(row: IterationRunRow): IterationRunOptions {
     const raw = (row.iteration_options ?? {}) as Partial<IterationRunOptions>;
     return {
-      fastMode: raw.fastMode !== false,
+      sequentialSpeech: raw.sequentialSpeech !== false,
       personaMode: normalizePersonaMode(raw.personaMode) ?? DEFAULT_PERSONA_MODE,
       personaIds: Array.isArray(raw.personaIds) ? raw.personaIds.filter(Boolean) : undefined,
       personaSchedule: Array.isArray(raw.personaSchedule)
@@ -946,7 +946,7 @@ export class IterationService implements OnModuleInit {
     };
     try {
       const created = await this.gameService.createDebugAutoAiRoom({
-        fastMode: options.fastMode,
+        sequentialSpeech: options.sequentialSpeech,
         discussionDurationSeconds: discussionSeconds,
         personaIds: this.personaIdsForGame(options, gameIndex),
       });

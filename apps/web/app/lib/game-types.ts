@@ -84,7 +84,7 @@ export type RoomSnapshot = {
   canStart: boolean;
   debug?: boolean;
   debugAutoAi?: boolean;
-  debugAutoAiFastMode?: boolean;
+  debugAutoAiSequentialSpeech?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -151,7 +151,7 @@ export type IterationPostRoundMode =
   | "auto_edit_activate_continue";
 
 export type IterationRunOptions = {
-  fastMode: boolean;
+  sequentialSpeech: boolean;
   personaMode: IterationPersonaMode;
   personaIds?: string[];
   personaSchedule?: string[][];
@@ -230,7 +230,7 @@ export type StartIterationPayload = {
   rounds?: number;
   gamesPerRound?: number;
   discussionSeconds?: number;
-  fastMode?: boolean;
+  sequentialSpeech?: boolean;
   personaMode?: IterationPersonaMode;
   personaIds?: string[];
   autoEdit?: boolean;

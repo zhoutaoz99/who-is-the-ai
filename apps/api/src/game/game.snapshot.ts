@@ -95,8 +95,8 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
         : countHumans(room) >= 1),
     debug: DEBUG || undefined,
     debugAutoAi: showDebugAutoAi || undefined,
-    debugAutoAiFastMode:
-      showDebugAutoAi && room.debugAutoAiFastMode === true
+    debugAutoAiSequentialSpeech:
+      showDebugAutoAi && room.debugAutoAiSequentialSpeech === true
         ? true
         : undefined,
     promptGenerationId: room.promptGenerationId,

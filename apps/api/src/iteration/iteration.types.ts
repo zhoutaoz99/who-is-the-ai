@@ -20,7 +20,7 @@ export type IterationPostRoundMode =
   | "auto_edit_activate_continue";
 
 export interface IterationRunOptions {
-  fastMode: boolean;
+  sequentialSpeech: boolean;
   personaMode: IterationPersonaMode;
   personaIds?: string[];
   personaSchedule?: string[][];
@@ -32,7 +32,7 @@ export interface StartIterationPayload {
   rounds?: number;
   gamesPerRound?: number;
   discussionSeconds?: number;
-  fastMode?: boolean;
+  sequentialSpeech?: boolean;
   personaMode?: IterationPersonaMode;
   personaIds?: string[];
   autoEdit?: boolean;

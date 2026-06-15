@@ -320,7 +320,7 @@ export default function WaitingRoomPage() {
     updateDebugModel,
     deleteDebugAutoAiRoom,
     updateDiscussionDuration,
-    updateDebugAutoAiFastMode,
+    updateDebugAutoAiSequentialSpeech,
   } = useGameClient();
 
   const room = getRoom(roomId);
@@ -427,12 +427,12 @@ export default function WaitingRoomPage() {
     updateDiscussionDuration,
   ]);
 
-  function handleUpdateFastMode(nextFastMode: boolean) {
+  function handleUpdateSequentialSpeech(nextSequentialSpeech: boolean) {
     if (!room || !canEditDiscussionDuration || !isDebugAutoAiRoom) {
       return;
     }
 
-    void updateDebugAutoAiFastMode(room.id, nextFastMode);
+    void updateDebugAutoAiSequentialSpeech(room.id, nextSequentialSpeech);
   }
 
   useEffect(() => {
@@ -815,10 +815,10 @@ export default function WaitingRoomPage() {
                       <label className="debug-fast-mode-toggle">
                         <input
                           type="checkbox"
-                          checked={room.debugAutoAiFastMode === true}
+                          checked={room.debugAutoAiSequentialSpeech === true}
                           disabled={pending}
                           onChange={(event) =>
-                            handleUpdateFastMode(event.target.checked)
+                            handleUpdateSequentialSpeech(event.target.checked)
                           }
                         />
                         <span>顺序发言</span>

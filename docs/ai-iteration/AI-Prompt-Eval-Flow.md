@@ -151,7 +151,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  C["gameService.createDebugAutoAiRoom<br/>{fastMode, discussionMinutes}"] -->|room.id, playerId| S["gameService.startGame<br/>{roomId, playerId}"]
+  C["gameService.createDebugAutoAiRoom<br/>{sequentialSpeech, discussionMinutes}"] -->|room.id, playerId| S["gameService.startGame<br/>{roomId, playerId}"]
   S --> STAMP["room.promptGenerationId = active 代<br/>(开局盖戳,版本可追溯)"]
   STAMP --> RUN["游戏由服务端定时器自动推进<br/>讨论→投票→淘汰→下一轮→结束"]
   RUN --> POLL["轮询 observeRoom(roomId)<br/>每 2.5s,直到 status=finished"]

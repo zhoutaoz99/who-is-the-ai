@@ -308,12 +308,12 @@ AI 玩家的投票目标是保护自身阵营，优先投真人阵营玩家。
 
 ## 11. 发言调度
 
-工程层在讨论阶段开始后根据 `room.debugAutoAiFastMode` 选择两套调度策略：
+工程层在讨论阶段开始后根据 `room.debugAutoAiSequentialSpeech` 选择两套调度策略：
 
 - 普通模式：AI 玩家和模拟真人玩家走独立的普通发言调度器。
-- 快速模式：所有模型驱动玩家走自动对抗串行发言循环。
+- 顺序发言：所有模型驱动玩家走自动对抗串行发言循环。
 
-快速模式只影响 AI 自动对抗调试房。普通房不读取该开关，自动对抗房未打开快速模式时也保持普通发言策略。
+顺序发言只影响 AI 自动对抗调试房。普通房不读取该开关，自动对抗房未打开顺序发言时也保持普通发言策略。
 
 ### 11.1 普通模式
 
@@ -321,7 +321,7 @@ AI 玩家的投票目标是保护自身阵营，优先投真人阵营玩家。
 
 #### 11.1.1 启动入口和调度隔离
 
-普通模式由 `GameService.afterDiscussionStarted` 启动。当房间不是“自动对抗快速模式”时，会同时启动两个普通发言调度器：
+普通模式由 `GameService.afterDiscussionStarted` 启动。当房间不是“自动对抗顺序发言”时，会同时启动两个普通发言调度器：
 
 - `startAiSpeech(room)`：只调度 `type === "ai"` 的 AI 玩家。
 - `startSimulatedHumanSpeech(room)`：只调度 `type === "human" && simulated === true` 的模拟真人玩家。
@@ -484,9 +484,9 @@ Discarded model speech room=<roomId> round=<roundNo> scheduler=<ai|simulated-hum
 
 日志只记录被丢弃发言的短预览，方便定位模型调用耗时过长或保存时状态变化导致的发言丢弃。
 
-### 11.3 快速模式
+### 11.3 顺序发言
 
-快速模式由 `room.debugAutoAiFastMode` 控制。该字段只在 AI 自动对抗调试房中有效，等待房通过“快速模式”开关修改，服务端事件为 `debug.ai-room.fastMode.update`。
+顺序发言由 `room.debugAutoAiSequentialSpeech` 控制。该字段只在 AI 自动对抗调试房中有效，等待房通过“顺序发言”开关修改，服务端事件为 `debug.ai-room.sequentialSpeech.update`。
 
 服务端限制：
 
@@ -494,11 +494,11 @@ Discarded model speech room=<roomId> round=<roundNo> scheduler=<ai|simulated-hum
 - 只能修改 `room.debugAutoAi === true` 的自动对抗调试房。
 - 只能在 `room.status === "waiting"` 时修改。
 
-快速模式打开后，每轮讨论阶段开始时不启动普通调度器，而是启动 `startDebugAutoAiSpeechLoop(room)`。这个循环覆盖 AI 玩家和模拟真人玩家。
+顺序发言打开后，每轮讨论阶段开始时不启动普通调度器，而是启动 `startDebugAutoAiSpeechLoop(room)`。这个循环覆盖 AI 玩家和模拟真人玩家。
 
-#### 11.3.1 快速模式状态
+#### 11.3.1 顺序发言状态
 
-快速模式使用房间内的临时状态记录当前轮的 pass 进度：
+顺序发言使用房间内的临时状态记录当前轮的 pass 进度：
 
 ```ts
 room.debugAutoAiSpeech = {
@@ -514,7 +514,7 @@ room.debugAutoAiSpeech = {
 
 每轮进入讨论阶段时会重新初始化该状态。第一轮 pass 的 `startOffset` 随机生成；每完成一个 pass，`startOffset = (startOffset + 1) % aliveModelDrivenPlayers.length`，因此每个 pass 的起始玩家都会轮转。
 
-#### 11.3.2 快速模式 pass 顺序
+#### 11.3.2 顺序发言 pass 顺序
 
 每个 pass 会重新读取当前房间状态，并按以下规则生成发言顺序：
 
@@ -526,9 +526,9 @@ room.debugAutoAiSpeech = {
 
 例如当前存活玩家座位为 `[1, 2, 3, 4, 5]`，第一轮随机 `startOffset = 2`，则第一个 pass 的顺序是 `[3, 4, 5, 1, 2]`；下一个 pass 起点变为 3，顺序是 `[4, 5, 1, 2, 3]`。
 
-#### 11.3.3 快速模式模型调用
+#### 11.3.3 顺序发言模型调用
 
-快速模式中所有模型调用严格串行：
+顺序发言中所有模型调用严格串行：
 
 1. 取当前 pass 中的下一个玩家。
 2. 重新读取房间，确认仍处于当前轮发言阶段，且玩家仍存活。
@@ -538,7 +538,7 @@ room.debugAutoAiSpeech = {
 6. 如果返回 `skip`，标记该玩家本轮已考虑过，记录模型调用，继续下一个玩家。
 7. 如果返回 `speak`，立即保存发言、记录模型调用并广播房间快照。
 
-快速模式不使用普通调度中的等待和限制：
+顺序发言不使用普通调度中的等待和限制：
 
 - 不等待 `AI_SPEECH_INITIAL_CHECK_MS`。
 - 不检查发言冷却。
@@ -546,9 +546,9 @@ room.debugAutoAiSpeech = {
 - 不使用 `nextCheckAfterMs` 调度下一次观察。
 - 不等待 `targetResponseDelayMs` 模拟真实响应时间。
 
-快速模式仍然保留真实讨论阶段时间限制。讨论时间到后，房间会正常进入投票阶段；串行循环下一次检查房间状态时会退出。模型调用如果在阶段切换后才返回，发言不会保存，并会打印丢弃日志。
+顺序发言仍然保留真实讨论阶段时间限制。讨论时间到后，房间会正常进入投票阶段；串行循环下一次检查房间状态时会退出。模型调用如果在阶段切换后才返回，发言不会保存，并会打印丢弃日志。
 
-#### 11.3.4 快速模式退出条件
+#### 11.3.4 顺序发言退出条件
 
 串行循环在以下情况退出：
 
@@ -560,7 +560,7 @@ room.debugAutoAiSpeech = {
 - 当前没有存活的模型驱动玩家。
 - 保存发言失败。
 
-当前 UI 只允许开局前修改快速模式，所以运行中的快速模式不会被用户中途关闭。
+当前 UI 只允许开局前修改顺序发言，所以运行中的顺序发言不会被用户中途关闭。
 
 ## 12. 投票兜底
 
