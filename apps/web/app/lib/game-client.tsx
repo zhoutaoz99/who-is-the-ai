@@ -285,7 +285,9 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
 
     // 迭代 run 实时事件:status 全量快照;game 单局进度按 gameIndex/roomId 合并。
     socket.on("iteration.status", (payload: IterationRunStatus) =>
-      setIterationRun(payload),
+      // 合并而非替换:socket 状态快照不含 id/createdAt 等字段,
+      // 替换会丢失它们并使「自动优化已耗时」等依赖 updatedAt 的逻辑失效。
+      setIterationRun((current) => (current ? { ...current, ...payload } : payload)),
     );
     socket.on("iteration.game", (payload: IterationGameResult) =>
       setIterationRun((current) =>

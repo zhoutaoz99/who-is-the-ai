@@ -562,8 +562,8 @@ export class IterationService implements OnModuleInit {
     this.rounds.push(round);
 
     const isLast = roundNo >= totalRounds;
-    // 自动优化在每一轮(含最后一轮)后都跑:最后一轮没有下一轮可继续,故生成候选代后落在
-    // awaiting_activation,交由用户在版本谱系手动激活、再开新 run(见下方 status 计算)。
+    // 自动优化在每一轮(含最后一轮)后都跑;最后一轮生成的候选代照常落库,
+    // run 直接进入 completed(见下方 status 计算),候选代在版本谱系里供手动激活。
     if (generationId && this.shouldAutoEdit(options)) {
       // 进入自动优化前持久化并广播"自动优化中",让前端展示独立状态。
       await this.persist({
@@ -609,10 +609,10 @@ export class IterationService implements OnModuleInit {
       return;
     }
 
+    // 最后一轮跑完即 completed(候选代照常生成并留存于版本谱系,供手动激活);
+    // 不再停在 awaiting_activation,避免 run 非终态占用、阻断开新 run。
     const status: IterationStatus = isLast
-      ? autoEditGenerationId
-        ? "awaiting_activation"
-        : "completed"
+      ? "completed"
       : autoEditGenerationId && options.postRoundMode === "auto_edit_wait_confirm"
         ? "awaiting_confirmation"
         : "awaiting_activation";
@@ -1374,6 +1374,8 @@ export class IterationService implements OnModuleInit {
       activeGenerationId: this.prompts.getActiveGenerationId(),
       pendingGenerationId: pendingGenerationId ?? null,
       options: this.currentOptions ?? undefined,
+      // 本次状态切换的时间戳;前端「自动优化已耗时」计时器据此起算。
+      updatedAt: new Date().toISOString(),
       // 运行中流式给当前轮的局;否则回退到最近一轮(刚跑完)的局,避免轮间界面清空。
       currentRoundGames:
         status === "running"
