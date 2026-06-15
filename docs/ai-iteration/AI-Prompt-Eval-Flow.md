@@ -7,15 +7,15 @@
 | 适用范围 | 自动对局评估自迭代的整体流程、状态流转与数据模型 |
 | 目标读者 | 后端开发、评审者 |
 | 责任人 | AI / Evaluation 维护者 |
-| 最近核对日期 | 2026-06-15 |
+| 最近核对日期 | 2026-06-16 |
 | 关联代码 | `apps/api/src/ai/`、`apps/api/src/replay/`、`apps/web/app/iteration/` |
 | 关联文档 | [AI-Prompt-Eval-Details.md](./AI-Prompt-Eval-Details.md)、[AI-Human-Likeness.md](./AI-Human-Likeness.md)、[Replay-Analysis.md](./Replay-Analysis.md) |
 
-本文聚焦整体流程与运行逻辑，配合流程图说明「自动对局评估自迭代」如何运转。设计动机与取舍见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)，拟人化迭代记录见 [`AI-Human-Likeness.md`](AI-Human-Likeness.md)。与「复盘」([`Replay-Analysis.md`](./Replay-Analysis.md)) 的区别是：复盘是单局定性分析（开放文本、不改状态，给人读）；本文是批量定量评估（结构化 JSON 分数、聚合 scorecard、驱动版本激活/回滚）。两者共用复盘导出 JSON 与 `REPLAY_ANALYSIS_*` 模型，但尺子(`eval/prompts/system-replay-score.txt`)与输出不同。
+本文聚焦整体流程与运行逻辑，配合流程图说明「自动对局评估自迭代」如何运转。设计动机与取舍见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)，拟人化迭代记录见 [`AI-Human-Likeness.md`](AI-Human-Likeness.md)。与「复盘」([`Replay-Analysis.md`](./Replay-Analysis.md)) 的区别是：复盘是单局定性分析（开放文本、不改状态，给人读）；本文是批量定量评估（结构化 JSON 分数、聚合 scorecard、驱动版本激活/回滚）。两者共用复盘导出 JSON 与 `REPLAY_ANALYSIS_*` 模型，但**单局打分**与**自动优化器**的提示词现已走独立的**评估尺子版本库**；`ReplayService` 的单局复盘分析提示词仍保持文件来源。
 
 ## 1. 概览
 
-点击「开始迭代」→ 服务端**进程内**用当前提示词版本跑一批无头对局 → 用**冻结的打分尺子**逐局量化打分 → 聚合成 scorecard → 轮间由人工在页面上创建/激活新版本 → 继续下一轮,循环 K 轮。全程实时可见进度,版本可一键回滚。
+点击「开始迭代」→ 服务端**进程内**用当前激活的 **AI 提示词代** 跑一批无头对局 → 每局结束时再取当前激活的 **评估尺子代** 做量化打分 → 聚合成 scorecard → 轮间由人工在页面上编辑多个提示词并一次保存成新版本,或由自动优化器派生候选代 → 继续下一轮,循环 K 轮。两套版本库独立切换,全程实时可见进度,版本可一键回滚。
 
 ---
 
@@ -39,34 +39,40 @@ flowchart LR
 
   subgraph 引擎与数据["游戏引擎 / 版本库 / 模型"]
     GAME["GameService<br/>createDebugAutoAiRoom<br/>startGame / observeRoom"]
-    REG["PromptRegistry<br/>(版本库 + active 热切换)"]
+    REG["PromptRegistry<br/>(AI 提示词版本库 + active 热切换)"]
+    EREG["EvalPromptRegistry<br/>(评估尺子版本库 + active 热切换)"]
     REPLAY["ReplayService<br/>getAiCallLogs"]
     EXPORT["buildReplayExportData<br/>(纯函数)"]
-    AI["AiService.callModel<br/>(打分模型)"]
-    DB[("Postgres<br/>iteration_runs<br/>ai_prompt_*")]
+    AI["AiService.callModel<br/>(打分/自动优化)"]
+    DB[("Postgres<br/>iteration_runs<br/>ai_prompt_*<br/>eval_prompt_*")]
   end
 
-  SCORER[("eval/prompts/<br/>system-replay-score.txt<br/>冻结尺子")]
+  SEED[("eval/prompts/*<br/>seed / fallback")]
 
   PAGE <-->|socket iteration.*| PROVIDER
   PROVIDER -->|WS emit| GW
   GW --> ITER
   ITER -->|驱动对局| GAME
   ITER -->|读/写版本| REG
+  ITER -->|读评估尺子| EREG
   ITER -->|取调用日志| REPLAY
   ITER --> EXPORT
   ITER -->|打分| AI
-  AI -.使用.-> SCORER
   ITER --> SCORE
   ITER --> DB
   REG --> DB
+  EREG --> DB
   GAME --> DB
+  REG -.首启播种/回退.-> SEED
+  EREG -.首启播种/回退.-> SEED
 ```
 
 关键点:
 - **对局在进程内跑完**:`IterationService` 直接调 `GameService.createDebugAutoAiRoom + startGame`,纯服务端定时器推进(讨论→投票→淘汰→下一轮→结束),**不需要 socket 客户端**。
 - **IterationService 不碰 socket**:它用 `EventEmitter` 发本地事件,由 `GameGateway` 桥接成 `iteration.*` 广播,保持可测试、解耦。
-- **打分尺子冻结**:scorer 提示词按绝对路径加载,**不进版本库**,确保跨版本打分可比。
+- **两套版本库并行**:AI 行为提示词与评估尺子分库管理;切 AI 代不会顺带改打分口径,切评估尺子也不会改 AI 行为。
+- **评估尺子当前覆盖范围**:版本库只覆盖 `replay-score/*` 与 `auto-edit/*`;`system-replay-analysis.txt` / `user-replay-analysis-template.txt` 仍由 `ReplayService` 直接读文件。
+- **`eval/prompts/*` 现在是 seed / fallback**:首启播种 `eval-gen-0001`、DB 缺数据时回退读取文件;正常运行时打分和自动优化都优先读 `eval_prompt_*` 里的 active generation。
 
 ---
 
@@ -76,10 +82,12 @@ flowchart LR
 | --- | --- |
 | **代(generation)** | 一组提示词版本的快照(6 个文本模板 + 人格库 JSON 的各一个版本号)。`ai_prompt_generations` 一行。 |
 | **active 代** | 当前线上对局实际使用的代,由 `ai_prompt_state` 单例指针指定。**热切换**:改指针即生效,无需重启。 |
+| **评估尺子代(eval generation)** | 一组评估提示词版本的快照,当前只含 `replay-score/*` 与 `auto-edit/*` 四个 asset。由 `eval_prompt_state` 单例指针指定 active。 |
 | **run** | 一次「开始迭代」到「完成/停止」的过程,含 K 轮。`iteration_runs` 一行。 |
 | **轮(round)** | 用当前 active 代跑 B 局 → 打分 → 聚合。轮与轮之间可人工换版本,也可由「自动优化」基于本轮 scorecard 派生候选代后等待确认或自动继续(详细逻辑见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4)。 |
 | **自动优化(auto-edit)** | 轮聚合后调用编辑模型,基于 scorecard + 逐局摘要 + 当前代 assets 派生候选代。UI 称「自动优化」,代码标识符沿用历史名 `autoEdit` / `createAutoEditGeneration` / 状态 `auto_editing` / 轮后模式 `auto_edit_*`。 |
 | **scorecard** | 一轮 B 局分数的聚合(胜率、humanLikeScore 均值±标准误、各 tell 命中率、高频问题)。 |
+| **`scoreGenerationId` / `autoEdit.evalGenerationId`** | 运行时写入 `iteration_runs.rounds` 的历史指针,分别记录“某局打分时用的评估尺子代”和“某轮自动优化时用的评估尺子代”,用于事后如实重建请求。 |
 
 ---
 
@@ -93,7 +101,7 @@ flowchart TD
 
   subgraph ROUND["runRound(round R)"]
     direction TB
-    R1["读 active 代 id"] --> R2["并发跑 B 局(上限 3)<br/>逐局 emit iteration.game"]
+    R1["读 active AI 代 id"] --> R2["并发跑 B 局(上限 3)<br/>逐局 emit iteration.game"]
     R2 --> R3["聚合 scorecard"]
     R3 --> R4["writeScore(active代, scorecard)<br/>持久化该轮到 iteration_runs.rounds"]
     R4 --> AE{"开启自动优化?<br/>(postRoundMode ≠ manual)"}
@@ -105,9 +113,9 @@ flowchart TD
   end
 
   NOCAND --> NC{"末轮?"}
-  NC -- 否 --> WAIT["status = awaiting_activation<br/>人工:版本面板换版本"]
+  NC -- 否 --> WAIT["status = awaiting_activation<br/>人工:在 AI 提示词版本面板换版本"]
   NC -- 是 --> DONE["status = completed<br/>emit done"]
-  LAST -- 是 --> WAITLAST["status = awaiting_activation<br/>末轮:手动激活候选代后开新 run"]
+  LAST -- 是 --> DONELAST["status = completed<br/>候选代留在 AI 提示词版本库,供后续开新 run 前手动激活"]
   LAST -- 否且 wait_confirm --> CONFIRM["status = awaiting_confirmation<br/>等待人工确认候选代"]
   LAST -- 否且 activate_continue --> AUTO["自动 setActive(candidate)"]
 
@@ -116,15 +124,15 @@ flowchart TD
   AUTO --> NEXT["continueToNextRound()<br/>round++ → runRound"]
   CONTW --> NEXT
   CONTC --> NEXT
-  WAITLAST --> ENDLAST([run 停在 awaiting_activation(无下一轮)])
-  DONE --> END([结束,谱系留存])
+  DONELAST --> ENDLAST([run 已 completed;候选代仍可在新 run 前激活])
+  DONE --> END([结束,版本历史留存])
 
   STOP([用户点「停止」]) -.stopRequested.-> HALT["status = stopped<br/>中断未完成局"]
 ```
 
 要点:
 - 轮后模式有三种:`manual`(人工编辑/激活)、`auto_edit_wait_confirm`(自动优化生成候选代,人工确认后继续)、`auto_edit_activate_continue`(自动优化生成并激活,直接继续)。**默认 `auto_edit_wait_confirm`**。
-- **自动优化每轮都跑(含末轮)**:末轮若生成候选代 → 落在 `awaiting_activation`(由用户在版本谱系手动激活候选代后开新 run,因无第 K+1 轮可继续);末轮未生成候选代(manual 模式,或自动优化跳过/失败)→ `completed` 并 emit `done`。
+- **自动优化每轮都跑(含末轮)**:末轮若生成候选代,候选代照常落库,但 run 仍直接 `completed`;是否采纳该候选代,由用户在后续新 run 之前到「AI 提示词版本」面板手动激活。
 - **自动优化是阻塞式大模型调用**(数十秒):`runRound` 进入编辑调用前先持久化并广播 `status = auto_editing`,前端立即看到「自动优化中…」;`retryAutoEdit()`(自动优化失败后用户点「重试自动优化」)同样**先 ack 再异步执行**,结果通过 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时(详见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4.3)。
 - 不强制换版本:保持同一代继续跑,只是为该代累积更多样本、分数会更稳。
 - **单进程互斥**:同时只允许一个 run(active 代是进程级单例)。
@@ -147,10 +155,14 @@ flowchart TD
   ALLDONE -- 否 --> POOL
   ALLDONE -- 是 --> AGG["aggregateScores(有效分数)<br/>→ scorecard"]
   AGG --> WRITE["prompts.writeScore(generationId, scorecard)"]
-  WRITE --> PERSIST["rounds.push({round, generationId, games, aggregate})<br/>写 iteration_runs"]
-  PERSIST --> STATUS{"R >= K ?"}
-  STATUS -- 否 --> AW[status=awaiting_activation]
-  STATUS -- 是 --> CMP[status=completed, emit done]
+  WRITE --> AE{"开启自动优化?"}
+  AE -- 否 --> PERSIST["rounds.push({round, generationId, games, aggregate})<br/>写 iteration_runs"]
+  AE -- 是 --> EDIT["status=auto_editing<br/>createAutoEditGeneration"]
+  EDIT --> PERSIST
+  PERSIST --> STATUS{"本轮结束后状态?"}
+  STATUS -- 末轮 --> CMP[status=completed, emit done]
+  STATUS -- 非末轮 + wait_confirm 且有候选代 --> CONF[status=awaiting_confirmation]
+  STATUS -- 其余非末轮 --> AW[status=awaiting_activation]
 ```
 
 ---
@@ -165,19 +177,26 @@ flowchart TD
   RUN --> POLL["轮询 observeRoom(roomId)<br/>每 2.5s,直到 status=finished"]
   POLL -.卡死检测.-> STUCK["phase=playing 且<br/>phaseEndsAt 过期 >90s<br/>→ 判该局失败(不阻塞 run)"]
   POLL -->|finished| EXP["buildReplayExportData<br/>(snapshot + getAiCallLogs)<br/>→ replay JSON"]
-  EXP --> SC["aiService.callModel<br/>(scorerPrompt, replay)<br/>→ JSON 分数"]
-  SC --> RES["返回 {roomId, winner,<br/>generationId, humanLikeScore, aiWin}"]
+  EXP --> EVAL["读取当前 active 评估尺子代<br/>→ scoreGenerationId"]
+  EVAL --> SC["aiService.callModel<br/>(score system + user template, replay)<br/>→ JSON 分数"]
+  SC --> RES["返回 {roomId, winner,<br/>generationId, scoreGenerationId,<br/>humanLikeScore, aiWin}"]
 ```
 
 说明:
-- **版本感知**:每局开局盖戳 `promptGenerationId`(解析优先级与回退链见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §1.4)。
+- **双版本感知**:每局开局盖戳 `promptGenerationId`;进入打分前再记录 `scoreGenerationId`。前者回答“这局 AI 当时跑的是哪一代”,后者回答“这局后来是按哪套评估尺子打的分”。
 - **卡死兜底**:服务端进程若在对局中途重启(如 `nest --watch` 重编译),内存定时器丢失会致对局卡住;单局判失败并记 `error`,不影响整轮。
 
 ---
 
-## 7. 打分与聚合(冻结尺子)
+## 7. 打分与聚合(版本化评估尺子)
 
-每局 replay 由冻结尺子 `eval/prompts/system-replay-score.txt` 打分,输出严格 JSON(`aiWin` / `aiSurvivors` / `roundsPlayed` / `humanLikeScore` / `naturalnessAiVsHuman` / `voteThreatTargeting` / `tells`(8 项)/ `topIssues`);一轮 B 局的分数由 `aggregateScores` 聚合成 scorecard,回写该代的 `ai_prompt_generations.score`,谱系面板即可看到每代分数。
+每局 replay 都会先锁定一个 `scoreGenerationId`,再从该评估尺子代读取 `replay-score/system-replay-score.txt` 与 `replay-score/user-replay-score-template.txt` 打分,输出严格 JSON(`aiWin` / `aiSurvivors` / `roundsPlayed` / `humanLikeScore` / `naturalnessAiVsHuman` / `voteThreatTargeting` / `tells`(8 项)/ `topIssues`)；一轮 B 局的分数由 `aggregateScores` 聚合成 scorecard,回写该 AI 代的 `ai_prompt_generations.score`,「AI 提示词版本」面板即可看到每代分数。
+
+这意味着:
+
+- **运行时默认口径**取决于当前 active 评估尺子代。
+- **历史详情回放**优先取 `scoreGenerationId`,因此切换评估尺子后不会污染旧局的 score-request。
+- `eval/prompts/system-replay-score.txt` 只是 seed / fallback,不是唯一运行时来源。
 
 > 字段定义、判定要点、scorecard 计算公式属于**详细逻辑**,见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §2.3(尺子 JSON 与判定要点)与 §3(聚合公式)。
 
@@ -194,7 +213,7 @@ flowchart TD
   CALL --> GOT{"生成候选代?"}
   GOT -- "否(skipped/failed)" --> NOCAND{"末轮?"}
   GOT -- 是 --> LAST{"末轮?"}
-  LAST -- 是 --> WAITLAST["awaiting_activation<br/>手动激活候选代 → 开新 run"]
+  LAST -- 是 --> DONECAND["completed<br/>候选代留在 AI 提示词版本库"]
   LAST -- 否 --> MODE{"postRoundMode?"}
   MODE -- wait_confirm --> CONFIRM["awaiting_confirmation<br/>「确认并继续」→ setActive → 下一轮"]
   MODE -- activate_continue --> AUTO["setActive(候选代)<br/>→ running 下一轮"]
@@ -203,8 +222,8 @@ flowchart TD
 ```
 
 要点:
-- **每轮都触发(含末轮)**:不再受「是否末轮」限制。末轮无第 K+1 轮可继续,故候选代只能由用户在版本谱系手动激活后开新 run;`auto_edit_activate_continue` 在末轮也只落到 `awaiting_activation`,不会自动继续。
-- **末轮落地判定**:有候选代 → `awaiting_activation`;无候选代(`manual` 模式,或自动优化 `skipped`/`failed`)→ `completed` 并 emit `done`。
+- **每轮都触发(含末轮)**:不再受「是否末轮」限制。自动优化器 system / user 提示词来自当前 active 的评估尺子代,并把代号写入 `autoEdit.evalGenerationId`。
+- **末轮落地判定**:无论有没有候选代,run 都会 `completed` 并 emit `done`;差别只在于“是否额外留下一个可供后续手动激活的 candidate generation”。
 - **阻塞调用异步化**:编辑模型调用是阻塞式(数十秒),故进入前先广播 `auto_editing`;`retryAutoEdit()`(自动优化失败后点「重试自动优化」)同样**先 ack 再异步执行**,结果经 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时。
 - **重启恢复**:进程重启丢失内存 `activeRunId` 后,`continueToNextRound` / `retryAutoEdit` 经 `recoverActiveRun()` 从最近一条非终态 run 恢复,「确认并继续 / 重试自动优化」仍可用。
 
@@ -230,7 +249,7 @@ sequenceDiagram
   IT-->>GW: event "round"(轮聚合)
   GW-->>U: broadcast iteration.round
   alt 还有下一轮
-    IT-->>GW: event "status"(awaiting_activation)
+    IT-->>GW: event "status"(awaiting_activation / awaiting_confirmation)
     GW-->>U: broadcast iteration.status
     U->>GW: emit iteration.continue
     GW->>IT: continueToNextRound()
@@ -252,7 +271,10 @@ sequenceDiagram
 erDiagram
   ai_prompt_assets ||--o{ ai_prompt_generations : "manifest 引用版本"
   ai_prompt_state ||--|| ai_prompt_generations : "active 指针"
-  iteration_runs ||--|| ai_prompt_generations : "每轮评估某一代"
+  eval_prompt_assets ||--o{ eval_prompt_generations : "manifest 引用版本"
+  eval_prompt_state ||--|| eval_prompt_generations : "active 指针"
+  iteration_runs ||--|| ai_prompt_generations : "每轮评估某一 AI 代"
+  iteration_runs ||--|| eval_prompt_generations : "rounds[].games[].scoreGenerationId / rounds[].autoEdit.evalGenerationId"
 
   ai_prompt_assets {
     text asset_key
@@ -269,6 +291,22 @@ erDiagram
     jsonb score "聚合 scorecard"
   }
   ai_prompt_state {
+    int id PK "单例=1"
+    text active_generation_id
+  }
+  eval_prompt_assets {
+    text asset_key
+    int version
+    text content
+    int parent_version
+  }
+  eval_prompt_generations {
+    text id PK
+    jsonb manifest "asset_key → version"
+    text parent_id
+    text status "candidate/active/archived"
+  }
+  eval_prompt_state {
     int id PK "单例=1"
     text active_generation_id
   }
@@ -301,19 +339,28 @@ erDiagram
 环境变量:
 - `DEBUG=true`:开启 debug 自动对局与迭代入口。
 - `REPLAY_ANALYSIS_BASE_URL/API_KEY/MODEL`:打分模型(OpenAI 兼容)。
-- `EVAL_SCORE_PROMPT_PATH`:冻结尺子路径(默认依次尝试 `cwd/eval/prompts/...` 与 `__dirname` 回退)。
+- `EVAL_PROMPTS_DIR`:评估尺子 seed 文件目录;首启播种 `eval-gen-0001` 与 DB 缺数据回退时使用。
+- `EVAL_SCORE_PROMPT_PATH`:仅覆盖 seed / fallback 中的 `system-replay-score.txt`;不会绕过 `eval_prompt_*` 版本库直接接管运行时 active generation。
 
 ---
 
 ## 12. 使用方式
 
 **前端 `/iteration` 页面(唯一入口)**
-设置 B/K/时长 → 开始迭代 → 实时看进度 → 轮间在「版本谱系与激活」面板:左侧选版本、右侧查看/编辑提示词、「与父代对比」看差异(高亮增删行,**仅列出与父代有差异的 asset**)→ 创建新代 → 激活 → 继续下一轮;版本行支持「删除」(**存在子版本时不允许**;删除激活代会自动回退到其父代)。
+设置 B/K/时长 → 开始迭代 → 实时看进度 → 轮间在两个版本面板里操作:
+
+- **「AI 提示词版本」**:左侧选 AI generation,右侧可在 7 个 asset 间切换编辑。允许**同时修改多个提示词/人格正文**,下拉里对已改 asset 标 `*`,状态栏显示“已修改 N 项”;点击保存时会把所有脏修改一次性提交给 `POST /debug/prompts/generation`,派生一个新的 AI 子代。切换 asset 不丢草稿,切换 generation 会在有未保存修改时确认。
+- **「评估尺子版本」**:交互与上面一致,但编辑对象是 `replay-score/*` 与 `auto-edit/*` 四个 asset。保存时调用 `POST /debug/eval-prompts/generation`,派生一个新的 `eval-gen-*`。切 active 后,后续新局打分与后续自动优化立即改用新的评估尺子。
+
+两块面板都支持「与父代对比」查看差异(高亮增删行,**仅列出与父代有差异的 asset**)；版本行支持「删除」(**存在子版本时不允许**;删除激活代会自动回退到其父代)。
 
 **轮次选择驱动详情视图**:顶部轮次 stepper 可点击切换关注的轮次(尚未开始的轮次不可点),下方的「逐局 / scorecard / 自动优化记录」三处随之显示该轮数据。其中「自动优化记录」是独立区块(与 scorecard 分开),每条记录可点「生成详情」打开弹窗,按 **生成结果 → 本轮聚合 scorecard → 用户提示词 → 系统提示词 → 完整请求 JSON** 的顺序查看该轮自动优化发往大模型的完整输入与模型返回。
 
-版本管理动作背后调用的是 DEBUG 网关的 HTTP 接口(均在 `apps/api/src/ai/prompt-version.controller.ts`):`GET /debug/prompts/generations`、`GET /debug/prompts/generations/:id`、`POST /debug/prompts/generation`、`POST /debug/prompts/active`、`POST /debug/prompts/best`、`POST /debug/prompts/score`、`DELETE /debug/prompts/generation/:id`(删除代,存在子代或为无父代的激活代时拒绝)。
+版本管理动作背后调用的是 DEBUG 网关 HTTP 接口:
 
-迭代 run 的 HTTP 兜底/详情接口(在 `apps/api/src/iteration/iteration.controller.ts`):`GET /debug/iterations`(当前/最近 run 快照)、`GET /debug/iterations/estimate`(按 `rounds/gamesPerRound/discussionSeconds/postRoundMode/sequentialSpeech` 估算预计用时与「每名玩家发言次数」,供参数面板动态提示)、`GET /debug/iterations/scorer-prompt`(冻结尺子)、`GET /debug/iterations/score-request/:roomId`(重建某局打分请求)、`GET /debug/iterations/auto-edit-request/:runId/:roundNo`(重建某轮自动优化请求,供详情弹窗)。
+- AI 提示词版本库(`apps/api/src/ai/prompt-version.controller.ts`):`GET /debug/prompts/generations`、`GET /debug/prompts/generations/:id`、`POST /debug/prompts/generation`、`POST /debug/prompts/active`、`POST /debug/prompts/best`、`POST /debug/prompts/score`、`DELETE /debug/prompts/generation/:id`。
+- 评估尺子版本库(`apps/api/src/ai/eval-prompt-version.controller.ts`):`GET /debug/eval-prompts/generations`、`GET /debug/eval-prompts/generations/:id`、`POST /debug/eval-prompts/generation`、`POST /debug/eval-prompts/active`、`DELETE /debug/eval-prompts/generation/:id`。
+
+迭代 run 的 HTTP 兜底/详情接口(在 `apps/api/src/iteration/iteration.controller.ts`):`GET /debug/iterations`(当前/最近 run 快照)、`GET /debug/iterations/estimate`(按 `rounds/gamesPerRound/discussionSeconds/postRoundMode/sequentialSpeech` 估算预计用时与「每名玩家发言次数」,供参数面板动态提示)、`GET /debug/iterations/scorer-prompt`(当前 active 评估尺子代的打分 system prompt)、`GET /debug/iterations/score-request/:roomId`(按该局记录的 `scoreGenerationId` 重建打分请求)、`GET /debug/iterations/auto-edit-request/:runId/:roundNo`(按该轮记录的 `autoEdit.evalGenerationId` 重建自动优化请求,供详情弹窗)。
 
 > 入口在首页 `{debug && ...}` 门控,需 `DEBUG=true` 且 API 在运行。

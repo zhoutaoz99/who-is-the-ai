@@ -35,7 +35,7 @@ export class IterationController {
     });
   }
 
-  /** 返回冻结打分尺子(打分的 system prompt),供前端展示打分输入。 */
+  /** 返回当前激活的打分尺子(system prompt),供前端展示打分输入。 */
   @Get("scorer-prompt")
   async getScorerPrompt() {
     if (!DEBUG) return { ok: false, error: "调试模式未开启" };

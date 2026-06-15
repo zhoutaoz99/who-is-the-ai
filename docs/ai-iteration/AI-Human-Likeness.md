@@ -7,11 +7,11 @@
 | 适用范围 | AI 拟人化优化的迭代记录、实验结论与后续演进 |
 | 目标读者 | 后端开发、评审者 |
 | 责任人 | AI / Gameplay 维护者 |
-| 最近核对日期 | 2026-06-15 |
+| 最近核对日期 | 2026-06-16 |
 | 关联代码 | `apps/api/src/ai/`、`apps/api/src/game/`、`apps/web/app/replay/` |
 | 关联文档 | [AI-Prompt-Eval-Details.md](AI-Prompt-Eval-Details.md)、[AI-Interaction-Flow.md](../gameplay/AI-Interaction-Flow.md) |
 
-相关:提示词的 DB 版本管理与批量自动对局评估闭环见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)。本文是迭代记录，那篇是可持续迭代的工程化方案。
+相关:AI 提示词版本库、评估尺子版本库与批量自动对局评估闭环见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)。本文是迭代记录，那篇是可持续迭代的工程化方案。
 
 ## 1. 背景
 
@@ -242,7 +242,7 @@ Prompt 使用方式：
 
 创建 AI 玩家时随机分配一个 `aiPersonaId`，构建 `GameContext` 时解析成完整 persona，并注入发言策略、表达转换和投票 prompt。游戏结束后的 replay 快照会揭示 AI 的人格名称，方便复盘。
 
-> 人格库已在「迭代 1」重写为 8 个多元生活化人格（见下文「迭代记录」），并随 AI 提示词 DB 版本库一起迭代（可变 active 集，见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)）。当前 8 个人格见 [`AI-Interaction-Flow.md`](../gameplay/AI-Interaction-Flow.md) 的「AI 人格」一节。
+> 人格库已在「迭代 1」重写为 8 个多元生活化人格（见下文「迭代记录」），并随 AI 提示词版本库一起迭代（可变 active 集，见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)）；评估尺子另有独立版本库。当前 8 个人格见 [`AI-Interaction-Flow.md`](../gameplay/AI-Interaction-Flow.md) 的「AI 人格」一节。
 
 当前 persona 结构（迭代 1 后新增可选 `typingHabit`、`sampleLines`）：
 

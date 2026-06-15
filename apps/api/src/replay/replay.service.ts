@@ -129,7 +129,7 @@ export class ReplayService {
     const generationId = await this.resolvePromptGenerationId(replay);
     const assets = await this.prompts.getGenerationAssets(generationId);
 
-    // 复盘分析尺子(system + user 模板)冻结,保持文件来源。
+    // 复盘分析提示词保持文件来源,不纳入评估尺子版本库。
     const systemPrompt = loadPrompt("system-replay-analysis.txt");
     const userPrompt = renderTemplate("user-replay-analysis-template.txt", {
       replayJson,

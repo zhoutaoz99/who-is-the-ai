@@ -1,6 +1,6 @@
 /**
  * 评估打分聚合工具(纯函数)。
- * 给定一批单局打分(由冻结尺子 system-replay-score.txt 产出),聚合成 scorecard。
+ * 给定一批单局结构化打分,聚合成 scorecard。
  */
 
 export const TELL_KEYS = [
@@ -16,7 +16,7 @@ export const TELL_KEYS = [
 
 export type TellKey = (typeof TELL_KEYS)[number];
 
-/** 单局打分(对齐冻结尺子输出的 JSON 结构)。 */
+/** 单局打分(对齐打分尺子输出的 JSON 结构)。 */
 export interface GameScore {
   aiWin?: boolean;
   aiSurvivors?: number;

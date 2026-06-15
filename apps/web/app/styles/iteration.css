@@ -220,7 +220,7 @@
   font-size: 13px;
 }
 
-/* 版本谱系:左列表 / 右查看 两栏布局 */
+/* 版本面板:左列表 / 右查看 两栏布局 */
 .iteration-version-layout {
   display: grid;
   grid-template-columns: 280px 1fr;
@@ -301,6 +301,39 @@
 }
 .iteration-version-detail .iteration-editor-textarea {
   min-height: 360px;
+}
+
+.iteration-editor-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.iteration-editor-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.iteration-editor-badge.clean {
+  background: rgba(100, 116, 139, 0.12);
+  color: #475569;
+}
+
+.iteration-editor-badge.dirty {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b45309;
+}
+
+.iteration-editor-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .iteration-version-section {

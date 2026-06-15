@@ -166,6 +166,7 @@ export type IterationGameResult = {
   roomId: string;
   winner: string | null;
   generationId: string | null;
+  scoreGenerationId?: string | null;
   currentGameRound?: number;
   phase?: string;
   aiAlive?: number;
@@ -200,6 +201,7 @@ export type IterationRound = {
   autoEdit?: {
     status: "created" | "skipped" | "failed";
     generationId?: string;
+    evalGenerationId?: string;
     changedAssetKeys?: string[];
     note?: string;
     error?: string;

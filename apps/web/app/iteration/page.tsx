@@ -29,6 +29,13 @@ const ASSET_KEYS = [
   "ai-player/personas",
 ];
 
+const EVAL_ASSET_KEYS = [
+  "replay-score/system-replay-score.txt",
+  "replay-score/user-replay-score-template.txt",
+  "auto-edit/system-prompt-editor.txt",
+  "auto-edit/user-prompt-editor-template.txt",
+];
+
 const TELL_LABELS: Record<string, string> = {
   round1PushVote: "首轮带节奏",
   singleCharWhenNamed: "被点名单字",
@@ -150,9 +157,20 @@ export default function IterationPage() {
   const [activeGenId, setActiveGenId] = useState<string | null>(null);
   const [selectedGenId, setSelectedGenId] = useState<string | null>(null);
   const [editorAsset, setEditorAsset] = useState(ASSET_KEYS[0]);
-  const [editorContent, setEditorContent] = useState("");
+  const [loadedAssets, setLoadedAssets] = useState<Record<string, string>>({});
+  const [draftAssets, setDraftAssets] = useState<Record<string, string>>({});
   const [editorNote, setEditorNote] = useState("");
   const [editorBusy, setEditorBusy] = useState(false);
+
+  // 评估尺子版本管理
+  const [evalGenerations, setEvalGenerations] = useState<GenerationSummary[]>([]);
+  const [activeEvalGenId, setActiveEvalGenId] = useState<string | null>(null);
+  const [selectedEvalGenId, setSelectedEvalGenId] = useState<string | null>(null);
+  const [evalEditorAsset, setEvalEditorAsset] = useState(EVAL_ASSET_KEYS[0]);
+  const [evalLoadedAssets, setEvalLoadedAssets] = useState<Record<string, string>>({});
+  const [evalDraftAssets, setEvalDraftAssets] = useState<Record<string, string>>({});
+  const [evalEditorNote, setEvalEditorNote] = useState("");
+  const [evalEditorBusy, setEvalEditorBusy] = useState(false);
 
   const fetchGenerations = useCallback(async () => {
     try {
@@ -168,9 +186,24 @@ export default function IterationPage() {
     }
   }, []);
 
-  const loadAsset = useCallback(async (genId: string | null, key: string) => {
+  const fetchEvalGenerations = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/debug/eval-prompts/generations`);
+      const json = await res.json();
+      if (json?.ok) {
+        setEvalGenerations(json.generations ?? []);
+        setActiveEvalGenId(json.active ?? null);
+        setSelectedEvalGenId((cur) => cur ?? (json.active ?? null));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const loadAsset = useCallback(async (genId: string | null) => {
     if (!genId) {
-      setEditorContent("");
+      setLoadedAssets({});
+      setDraftAssets({});
       return;
     }
     setEditorBusy(true);
@@ -179,11 +212,16 @@ export default function IterationPage() {
       const json = await res.json();
       const gen = json?.generation;
       if (gen) {
-        setEditorContent(
-          key === "ai-player/personas"
-            ? JSON.stringify(gen.personas, null, 2)
-            : (gen.prompts[key] ?? ""),
+        const assets = Object.fromEntries(
+          ASSET_KEYS.map((assetKey) => [
+            assetKey,
+            assetKey === "ai-player/personas"
+              ? JSON.stringify(gen.personas ?? [], null, 2)
+              : (gen.prompts?.[assetKey] ?? ""),
+          ]),
         );
+        setLoadedAssets(assets);
+        setDraftAssets(assets);
       }
     } catch {
       /* ignore */
@@ -192,24 +230,74 @@ export default function IterationPage() {
     }
   }, []);
 
+  const loadEvalAsset = useCallback(async (genId: string | null) => {
+    if (!genId) {
+      setEvalLoadedAssets({});
+      setEvalDraftAssets({});
+      return;
+    }
+    setEvalEditorBusy(true);
+    try {
+      const res = await fetch(`${API_URL}/debug/eval-prompts/generations/${genId}`);
+      const json = await res.json();
+      const gen = json?.generation;
+      if (gen) {
+        const assets = Object.fromEntries(
+          EVAL_ASSET_KEYS.map((assetKey) => [assetKey, gen.assets?.[assetKey] ?? ""]),
+        );
+        setEvalLoadedAssets(assets);
+        setEvalDraftAssets(assets);
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setEvalEditorBusy(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchGenerations();
-  }, [fetchGenerations]);
+    fetchEvalGenerations();
+  }, [fetchGenerations, fetchEvalGenerations]);
 
   // 选中版本或切换 asset 时,加载该版本的对应提示词到右侧查看/编辑。
   useEffect(() => {
-    loadAsset(selectedGenId, editorAsset);
-  }, [selectedGenId, editorAsset, loadAsset]);
+    loadAsset(selectedGenId);
+  }, [selectedGenId, loadAsset]);
+
+  useEffect(() => {
+    loadEvalAsset(selectedEvalGenId);
+  }, [selectedEvalGenId, loadEvalAsset]);
 
   const handleSelectGen = (genId: string) => {
+    if (
+      genId !== selectedGenId &&
+      editorDirty &&
+      !window.confirm("当前提示词版本有未保存修改，切换版本将丢失这些修改。继续吗？")
+    ) {
+      return;
+    }
     setSelectedGenId(genId);
     setEditorNote("");
+  };
+
+  const handleSelectEvalGen = (genId: string) => {
+    if (
+      genId !== selectedEvalGenId &&
+      evalEditorDirty &&
+      !window.confirm("当前评估尺子有未保存修改，切换版本将丢失这些修改。继续吗？")
+    ) {
+      return;
+    }
+    setSelectedEvalGenId(genId);
+    setEvalEditorNote("");
   };
 
   // 版本差异弹窗(父代 vs 选中代)
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffAsset, setDiffAsset] = useState(ASSET_KEYS[0]);
   const [diffChangedKeys, setDiffChangedKeys] = useState<string[]>([]);
+  const [diffKind, setDiffKind] = useState<"prompts" | "eval-prompts">("prompts");
 
   // 弹窗打开时锁定底层页面滚动
   useEffect(() => {
@@ -225,23 +313,40 @@ export default function IterationPage() {
   const [diffSelected, setDiffSelected] = useState<GenDetail | null>(null);
 
   const selectedGen = generations.find((g) => g.id === selectedGenId) ?? null;
+  const selectedEvalGen = evalGenerations.find((g) => g.id === selectedEvalGenId) ?? null;
   const hasParent = Boolean(selectedGen?.parentId);
+  const evalHasParent = Boolean(selectedEvalGen?.parentId);
+  const editorDirtyKeys = ASSET_KEYS.filter(
+    (key) => (draftAssets[key] ?? "") !== (loadedAssets[key] ?? ""),
+  );
+  const evalEditorDirtyKeys = EVAL_ASSET_KEYS.filter(
+    (key) => (evalDraftAssets[key] ?? "") !== (evalLoadedAssets[key] ?? ""),
+  );
+  const editorDirty = Boolean(selectedGenId) && editorDirtyKeys.length > 0;
+  const evalEditorDirty = Boolean(selectedEvalGenId) && evalEditorDirtyKeys.length > 0;
+  const editorContent = draftAssets[editorAsset] ?? "";
+  const evalEditorContent = evalDraftAssets[evalEditorAsset] ?? "";
 
-  const openDiff = async () => {
-    if (!selectedGenId || !selectedGen?.parentId) return;
+  const openDiff = async (
+    kind: "prompts" | "eval-prompts",
+    selectedId: string,
+    parentId: string,
+    assetKeys: string[],
+  ) => {
+    setDiffKind(kind);
     setDiffOpen(true);
     setDiffLoading(true);
     try {
       const [pRes, sRes] = await Promise.all([
-        fetch(`${API_URL}/debug/prompts/generations/${selectedGen.parentId}`).then((r) => r.json()),
-        fetch(`${API_URL}/debug/prompts/generations/${selectedGenId}`).then((r) => r.json()),
+        fetch(`${API_URL}/debug/${kind}/generations/${parentId}`).then((r) => r.json()),
+        fetch(`${API_URL}/debug/${kind}/generations/${selectedId}`).then((r) => r.json()),
       ]);
       const parent = pRes?.generation ?? null;
       const selected = sRes?.generation ?? null;
       setDiffParent(parent);
       setDiffSelected(selected);
       // 只保留父代与当前版本内容确实不同的 asset,差异下拉里隐藏无变化的 asset。
-      const changed = ASSET_KEYS.filter(
+      const changed = assetKeys.filter(
         (k) => assetContent(parent, k) !== assetContent(selected, k),
       );
       setDiffChangedKeys(changed);
@@ -350,15 +455,22 @@ export default function IterationPage() {
 
   const handleCreateGeneration = async () => {
     if (!selectedGenId) return;
+    if (!editorDirtyKeys.length) {
+      setPageError("当前提示词未修改,无需保存");
+      return;
+    }
     setEditorBusy(true);
     setPageError("");
     try {
+      const changedAssets = Object.fromEntries(
+        editorDirtyKeys.map((key) => [key, draftAssets[key] ?? ""]),
+      );
       const res = await fetch(`${API_URL}/debug/prompts/generation`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fromGenId: selectedGenId,
-          changedAssets: { [editorAsset]: editorContent },
+          changedAssets,
           note: editorNote || undefined,
         }),
       });
@@ -373,6 +485,81 @@ export default function IterationPage() {
     } finally {
       setEditorBusy(false);
     }
+  };
+
+  const handleResetEditor = () => {
+    setDraftAssets(loadedAssets);
+    setEditorNote("");
+  };
+
+  const handleActivateEvalGen = async (genId: string) => {
+    await fetch(`${API_URL}/debug/eval-prompts/active`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ generationId: genId }),
+    });
+    await fetchEvalGenerations();
+  };
+
+  const handleDeleteEvalGen = async (genId: string, isActive: boolean) => {
+    const hint = isActive
+      ? "\n该版本为当前激活版本,删除后将回退激活到其父代。"
+      : "";
+    if (!window.confirm(`确认删除评估尺子版本 ${genId}?${hint}`)) return;
+    setPageError("");
+    try {
+      const res = await fetch(`${API_URL}/debug/eval-prompts/generation/${genId}`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (!json?.ok) {
+        setPageError(json?.error ?? "删除失败");
+        return;
+      }
+      if (selectedEvalGenId === genId) setSelectedEvalGenId(null);
+      await fetchEvalGenerations();
+    } catch {
+      setPageError("删除失败");
+    }
+  };
+
+  const handleCreateEvalGeneration = async () => {
+    if (!selectedEvalGenId) return;
+    if (!evalEditorDirtyKeys.length) {
+      setPageError("当前提示词未修改,无需保存");
+      return;
+    }
+    setEvalEditorBusy(true);
+    setPageError("");
+    try {
+      const changedAssets = Object.fromEntries(
+        evalEditorDirtyKeys.map((key) => [key, evalDraftAssets[key] ?? ""]),
+      );
+      const res = await fetch(`${API_URL}/debug/eval-prompts/generation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromGenId: selectedEvalGenId,
+          changedAssets,
+          note: evalEditorNote || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!json?.ok) {
+        setPageError(json?.error ?? "创建失败");
+        return;
+      }
+      await fetchEvalGenerations();
+      if (json.generation?.id) setSelectedEvalGenId(json.generation.id);
+      setEvalEditorNote("");
+    } finally {
+      setEvalEditorBusy(false);
+    }
+  };
+
+  const handleResetEvalEditor = () => {
+    setEvalDraftAssets(evalLoadedAssets);
+    setEvalEditorNote("");
   };
 
   if (!debug) {
@@ -446,7 +633,7 @@ export default function IterationPage() {
             </div>
           </div>
           <p className="muted-text">
-            点击「开始迭代」用当前 active 代跑一批无头对局并打分;轮间在右侧版本面板创建/激活新代后点「继续下一轮」。
+            点击「开始迭代」用当前 active 代跑一批无头对局并打分;轮间在「AI 提示词版本」面板创建/激活新代后点「继续下一轮」。
           </p>
 
           {isActive ? (
@@ -776,13 +963,16 @@ export default function IterationPage() {
       <section className="panel lobby-card iteration-version-section">
           <div className="lobby-card-header">
             <div>
-              <p className="eyebrow">Prompt Versions</p>
-              <h2>版本谱系与激活</h2>
+              <p className="eyebrow">AI Prompt Versions</p>
+              <h2>AI 提示词版本</h2>
             </div>
             <button className="compact-button" onClick={fetchGenerations}>
               刷新
             </button>
           </div>
+          <p className="muted-text">
+            这里管理 AI 玩家实际运行的 7 个提示词 asset 与人格库。可在多个 asset 间分别修改,最后一次性保存成一个新版本;激活后只影响后续新开的对局。
+          </p>
 
           <div className="iteration-version-layout">
             {/* 左:版本列表 */}
@@ -857,12 +1047,15 @@ export default function IterationPage() {
                 <div className="iteration-version-detail-tools">
                   <select
                     value={editorAsset}
-                    onChange={(e) => setEditorAsset(e.target.value)}
+                    onChange={(e) => {
+                      setEditorAsset(e.target.value);
+                      setEditorNote("");
+                    }}
                     disabled={!selectedGenId}
                   >
                     {ASSET_KEYS.map((k) => (
                       <option key={k} value={k}>
-                        {k}
+                        {editorDirtyKeys.includes(k) ? `* ${k}` : k}
                       </option>
                     ))}
                   </select>
@@ -870,38 +1063,214 @@ export default function IterationPage() {
                     className="compact-button"
                     disabled={!hasParent}
                     title={hasParent ? "对比父代与当前版本" : "该版本无父代"}
-                    onClick={openDiff}
+                    onClick={() => {
+                      if (!selectedGenId || !selectedGen?.parentId) return;
+                      void openDiff("prompts", selectedGenId, selectedGen.parentId, ASSET_KEYS);
+                    }}
                   >
                     与父代对比
                   </button>
                 </div>
               </div>
+              <div className="iteration-editor-status">
+                <span className={`iteration-editor-badge ${editorDirty ? "dirty" : "clean"}`}>
+                  {editorDirty ? `已修改 ${editorDirtyKeys.length} 项` : "未修改"}
+                </span>
+                <span className="muted-text">
+                  {selectedGenId ? `当前提示词: ${editorAsset}` : "请先在左侧选择一个版本"}
+                </span>
+              </div>
               <textarea
                 className="iteration-editor-textarea"
                 value={editorContent}
                 rows={20}
-                onChange={(e) => setEditorContent(e.target.value)}
+                onChange={(e) =>
+                  setDraftAssets((cur) => ({ ...cur, [editorAsset]: e.target.value }))
+                }
                 placeholder={selectedGenId ? "查看或编辑该 asset;编辑后可创建新版本" : "—"}
               />
               <input
                 type="text"
                 value={editorNote}
                 onChange={(e) => setEditorNote(e.target.value)}
-                placeholder="改动说明(可选)"
+                placeholder="保存说明(可选)"
               />
-              <button
-                className="primary-action"
-                disabled={editorBusy || !selectedGenId}
-                onClick={handleCreateGeneration}
-              >
-                {editorBusy ? "创建中…" : `从 ${selectedGenId ?? ""} 创建新代`}
-              </button>
+              <div className="iteration-editor-actions">
+                <button
+                  className="secondary"
+                  disabled={editorBusy || !selectedGenId || !editorDirty}
+                  onClick={handleResetEditor}
+                >
+                  还原全部修改
+                </button>
+                <button
+                  className="primary-action"
+                  disabled={editorBusy || !selectedGenId || !editorDirty}
+                  onClick={handleCreateGeneration}
+                >
+                  {editorBusy ? "保存中…" : `保存 ${editorDirtyKeys.length} 项修改为新版本`}
+                </button>
+              </div>
               <p className="muted-text">
-                编辑上方内容后创建新代(继承此版本,仅改动当前 asset);创建后需在左侧对应行点「激活」生效。
+                可以切换多个提示词分别修改,最后一次性保存为一个新版本。保存不会覆盖原版本,而是基于当前版本派生一个新版本。
               </p>
             </div>
           </div>
         </section>
+
+      <section className="panel lobby-card iteration-version-section">
+        <div className="lobby-card-header">
+          <div>
+            <p className="eyebrow">Eval Rulers</p>
+            <h2>评估尺子版本</h2>
+          </div>
+          <button className="compact-button" onClick={fetchEvalGenerations}>
+            刷新
+          </button>
+        </div>
+        <p className="muted-text">
+          这里管理单局打分与自动优化器使用的评估提示词。可在多个评估 asset 间分别修改,最后一次性保存成一个新版本;激活后只影响后续新打分的对局和后续自动优化。
+        </p>
+
+        <div className="iteration-version-layout">
+          <div className="iteration-version-list">
+            {evalGenerations.length === 0 && (
+              <p className="muted-text">暂无评估尺子版本。</p>
+            )}
+            {evalGenerations.map((g) => {
+              const childCount = evalGenerations.filter((x) => x.parentId === g.id).length;
+              const isActiveGen = g.id === activeEvalGenId;
+              const deleteBlocked = childCount > 0 || (isActiveGen && !g.parentId);
+              const deleteTitle = childCount > 0
+                ? "存在子版本,不允许删除"
+                : isActiveGen && !g.parentId
+                  ? "激活版本无父代可回退,不允许删除"
+                  : isActiveGen
+                    ? "删除此激活版本(将回退到父代)"
+                    : "删除此版本";
+              return (
+                <div
+                  key={g.id}
+                  className={`iteration-version-item ${g.id === selectedEvalGenId ? "selected" : ""} ${g.id === activeEvalGenId ? "active" : ""}`}
+                  onClick={() => handleSelectEvalGen(g.id)}
+                >
+                  <div className="iteration-gen-head">
+                    <strong>{g.id}</strong>
+                    {isActiveGen && <span className="room-tag">ACTIVE</span>}
+                  </div>
+                  <div className="muted-text">← {g.parentId ?? "种子"}</div>
+                  <div className="muted-text">手动版本 · 不参与自动优化</div>
+                  {g.note && <div className="muted-text iteration-version-note">{g.note}</div>}
+                  <div
+                    className="iteration-gen-actions"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {!isActiveGen && (
+                      <button
+                        className="compact-button"
+                        onClick={() => handleActivateEvalGen(g.id)}
+                      >
+                        激活
+                      </button>
+                    )}
+                    <button
+                      className="compact-button"
+                      disabled={deleteBlocked}
+                      title={deleteTitle}
+                      onClick={() => handleDeleteEvalGen(g.id, isActiveGen)}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="iteration-version-detail">
+            <div className="iteration-version-detail-head">
+              <div>
+                <p className="eyebrow">选中版本</p>
+                <h3>{selectedEvalGenId ?? "请在左侧选择一个版本"}</h3>
+              </div>
+              <div className="iteration-version-detail-tools">
+                <select
+                  value={evalEditorAsset}
+                  onChange={(e) => {
+                    setEvalEditorAsset(e.target.value);
+                    setEvalEditorNote("");
+                  }}
+                  disabled={!selectedEvalGenId}
+                >
+                  {EVAL_ASSET_KEYS.map((k) => (
+                    <option key={k} value={k}>
+                      {evalEditorDirtyKeys.includes(k) ? `* ${k}` : k}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="compact-button"
+                  disabled={!evalHasParent}
+                  title={evalHasParent ? "对比父代与当前版本" : "该版本无父代"}
+                  onClick={() => {
+                    if (!selectedEvalGenId || !selectedEvalGen?.parentId) return;
+                    void openDiff(
+                      "eval-prompts",
+                      selectedEvalGenId,
+                      selectedEvalGen.parentId,
+                      EVAL_ASSET_KEYS,
+                    );
+                  }}
+                >
+                  与父代对比
+                </button>
+              </div>
+            </div>
+            <div className="iteration-editor-status">
+              <span className={`iteration-editor-badge ${evalEditorDirty ? "dirty" : "clean"}`}>
+                {evalEditorDirty ? `已修改 ${evalEditorDirtyKeys.length} 项` : "未修改"}
+              </span>
+              <span className="muted-text">
+                {selectedEvalGenId ? `当前提示词: ${evalEditorAsset}` : "请先在左侧选择一个版本"}
+              </span>
+            </div>
+            <textarea
+              className="iteration-editor-textarea"
+              value={evalEditorContent}
+              rows={20}
+              onChange={(e) =>
+                setEvalDraftAssets((cur) => ({ ...cur, [evalEditorAsset]: e.target.value }))
+              }
+              placeholder={selectedEvalGenId ? "查看或编辑该评估尺子;编辑后可创建新版本" : "—"}
+            />
+            <input
+              type="text"
+              value={evalEditorNote}
+              onChange={(e) => setEvalEditorNote(e.target.value)}
+              placeholder="保存说明(可选)"
+            />
+            <div className="iteration-editor-actions">
+              <button
+                className="secondary"
+                disabled={evalEditorBusy || !selectedEvalGenId || !evalEditorDirty}
+                onClick={handleResetEvalEditor}
+              >
+                还原全部修改
+              </button>
+              <button
+                className="primary-action"
+                disabled={evalEditorBusy || !selectedEvalGenId || !evalEditorDirty}
+                onClick={handleCreateEvalGeneration}
+              >
+                {evalEditorBusy ? "保存中…" : `保存 ${evalEditorDirtyKeys.length} 项修改为新版本`}
+              </button>
+            </div>
+            <p className="muted-text">
+              先在左侧选中版本,再切换多个提示词分别修改,最后一次性保存为一个新版本。
+            </p>
+          </div>
+        </div>
+      </section>
       </main>
 
       {diffOpen && (
@@ -909,11 +1278,16 @@ export default function IterationPage() {
           <div className="iteration-modal" onClick={(e) => e.stopPropagation()}>
             <div className="iteration-modal-head">
               <div>
-                <p className="eyebrow">版本差异(父代 → 当前)</p>
+                <p className="eyebrow">
+                  {diffKind === "eval-prompts" ? "评估尺子差异(父代 → 当前)" : "版本差异(父代 → 当前)"}
+                </p>
                 <h3>
-                  {diffParent?.generationId ?? selectedGen?.parentId ?? "?"}
+                  {diffParent?.generationId ??
+                    (diffKind === "eval-prompts" ? selectedEvalGen?.parentId : selectedGen?.parentId) ??
+                    "?"}
                   {" → "}
-                  {diffSelected?.generationId ?? selectedGenId}
+                  {diffSelected?.generationId ??
+                    (diffKind === "eval-prompts" ? selectedEvalGenId : selectedGenId)}
                 </h3>
               </div>
               <div className="iteration-modal-tools">
@@ -1079,7 +1453,7 @@ function AutoEditCard({
             <button
               className="compact-button"
               onClick={() => onSelectGen(edit.generationId!)}
-              title="在版本谱系中选中该代"
+              title="在 AI 提示词版本面板中选中该代"
             >
               {edit.generationId}
             </button>
@@ -1129,7 +1503,7 @@ function currentStepText(
     case "auto_editing":
       return `第 ${run.currentRound} 轮已完成,正在执行自动优化,生成候选代,请稍候…`;
     case "awaiting_activation":
-      return `第 ${run.currentRound} 轮已完成。请在「版本谱系」创建/激活下一代,再点「继续下一轮」`;
+      return `第 ${run.currentRound} 轮已完成。请在「AI 提示词版本」面板创建/激活下一代,再点「继续下一轮」`;
     case "awaiting_confirmation":
       return `第 ${run.currentRound} 轮已完成。自动优化已生成 ${run.pendingGenerationId ?? "候选代"},确认后进入下一轮`;
     case "completed":
@@ -1253,9 +1627,6 @@ function autoEditText(edit: NonNullable<IterationRunStatus["rounds"][number]["au
   return `跳过:${edit.error ?? "无变更"}`;
 }
 
-// 冻结打分尺子(system prompt)全局缓存,首次打开详情弹窗时拉取一次。
-let scorerPromptCache: string | null = null;
-
 const TELL_DESCRIPTIONS: Record<string, string> = {
   round1PushVote: "第一轮怂恿投票/带节奏(投就完了/直接投/催投票)",
   singleCharWhenNamed: "被点名只回单字(在/额/嗯)",
@@ -1345,8 +1716,7 @@ function ScoreDetailModal({
   const [tab, setTab] = useState<"score" | "replay" | "prompt" | "request">("score");
   const [replay, setReplay] = useState<Record<string, any> | null>(null);
   const [replayLoading, setReplayLoading] = useState(false);
-  const [scorer, setScorer] = useState<string | null>(scorerPromptCache);
-  const [scorerLoading, setScorerLoading] = useState(false);
+  const [scorer, setScorer] = useState<string | null>(null);
   const [personas, setPersonas] = useState<Array<Record<string, any>> | null>(null);
   const [personasOpen, setPersonasOpen] = useState(false);
   const [scoreRequest, setScoreRequest] = useState<{
@@ -1366,19 +1736,6 @@ function ScoreDetailModal({
   }, []);
 
   useEffect(() => {
-    if (!scorerPromptCache) {
-      setScorerLoading(true);
-      fetch(`${API_URL}/debug/iterations/scorer-prompt`)
-        .then((r) => r.json())
-        .then((json) => {
-          if (json?.ok) {
-            scorerPromptCache = json.prompt;
-            setScorer(json.prompt);
-          }
-        })
-        .catch(() => {})
-        .finally(() => setScorerLoading(false));
-    }
     setReplayLoading(true);
     fetch(`${API_URL}/replay/${g.roomId}/export?includeUserPrompt=false`)
       .then((r) => r.json())
@@ -1426,7 +1783,10 @@ function ScoreDetailModal({
     try {
       const res = await fetch(`${API_URL}/debug/iterations/score-request/${g.roomId}`);
       const json = await res.json();
-      if (json?.ok) setScoreRequest(json.request);
+      if (json?.ok) {
+        setScoreRequest(json.request);
+        setScorer(json.request?.system ?? null);
+      }
     } catch {
       /* ignore */
     } finally {
@@ -1604,7 +1964,10 @@ function ScoreDetailModal({
               </button>
               <button
                 className={`iter-tab ${tab === "prompt" ? "active" : ""}`}
-                onClick={() => setTab("prompt")}
+                onClick={() => {
+                  setTab("prompt");
+                  void loadScoreRequest();
+                }}
               >
                 打分提示词(系统)
               </button>
@@ -1630,7 +1993,7 @@ function ScoreDetailModal({
                       ? JSON.stringify(replay, null, 2)
                       : "(空)"
                   : tab === "prompt"
-                    ? scorerLoading
+                    ? requestLoading
                       ? "加载中…"
                       : scorer ?? "(空)"
                     : requestLoading
@@ -1905,6 +2268,7 @@ type GenDetail = {
   generationId?: string;
   prompts?: Record<string, string>;
   personas?: unknown[];
+  assets?: Record<string, string>;
 };
 
 type DiffLine = { type: "eq" | "add" | "del"; text: string };
@@ -1913,7 +2277,7 @@ function assetContent(gen: GenDetail | null, key: string): string {
   if (!gen) return "";
   return key === "ai-player/personas"
     ? JSON.stringify(gen.personas ?? [], null, 2)
-    : (gen.prompts?.[key] ?? "");
+    : (gen.prompts?.[key] ?? gen.assets?.[key] ?? "");
 }
 
 /** 基于行的 LCS diff,返回 eq/add/del 行序列。 */

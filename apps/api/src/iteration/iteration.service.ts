@@ -1,9 +1,14 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { AiService } from "../ai/ai.service";
+import {
+  AUTO_EDIT_SYSTEM_ASSET_KEY,
+  AUTO_EDIT_USER_ASSET_KEY,
+  EvalPromptRegistry,
+  REPLAY_SCORE_SYSTEM_ASSET_KEY,
+  REPLAY_SCORE_USER_ASSET_KEY,
+} from "../ai/eval-prompt-registry";
 import {
   ALL_ASSET_KEYS,
   PERSONAS_ASSET_KEY,
@@ -25,7 +30,6 @@ import type { RoomSnapshot } from "../game/game.types";
 import { PostgresService } from "../data/postgres.service";
 import { buildReplayExportData } from "../replay/replay-export.builder";
 import { ReplayService } from "../replay/replay.service";
-import { renderTemplateString } from "../ai/prompt-loader";
 import { aggregateScores, type GameScore, type Scorecard } from "./iteration-score";
 import type {
   IterationGameResult,
@@ -76,6 +80,7 @@ export class IterationService implements OnModuleInit {
     private readonly replayService: ReplayService,
     private readonly aiService: AiService,
     private readonly prompts: PromptRegistry,
+    private readonly evalPrompts: EvalPromptRegistry,
     private readonly postgres: PostgresService,
   ) {}
 
@@ -264,7 +269,13 @@ export class IterationService implements OnModuleInit {
   ): Promise<void> {
     if (this.stopRequested) return;
 
-    const retryResult = await this.createAutoEditGeneration(lastGenerationId, last);
+    const evalGenerationId =
+      last.autoEdit?.evalGenerationId ?? this.evalPrompts.getActiveGenerationId();
+    const retryResult = await this.createAutoEditGeneration(
+      lastGenerationId,
+      last,
+      evalGenerationId,
+    );
     const updatedRound: IterationRound = { ...last, autoEdit: retryResult };
     rounds[rounds.length - 1] = updatedRound;
     this.rounds = rounds;
@@ -418,7 +429,7 @@ export class IterationService implements OnModuleInit {
     return { ok: true, seconds, speechesPerPlayer };
   }
 
-  /** 冻结打分尺子(打分的 system prompt),供前端展示。 */
+  /** 当前激活的打分尺子(打分的 system prompt),供前端展示。 */
   getScorerPrompt(): string {
     return this.loadScorerPrompt();
   }
@@ -459,11 +470,17 @@ export class IterationService implements OnModuleInit {
       includeUserPrompt: false,
       promptGenerationId: room.promptGenerationId,
     });
-    const user = await this.buildScoreUserPrompt(replay);
+    const scoreGenerationId =
+      (await this.findScoreGenerationId(roomId)) ?? this.evalPrompts.getActiveGenerationId();
+    const system = await this.evalPrompts.getPromptForGeneration(
+      scoreGenerationId,
+      REPLAY_SCORE_SYSTEM_ASSET_KEY,
+    );
+    const user = await this.buildScoreUserPrompt(replay, scoreGenerationId);
     return {
       ok: true,
       request: {
-        system: this.loadScorerPrompt(),
+        system,
         user,
         config: this.getScoreModelConfig(),
       },
@@ -491,8 +508,18 @@ export class IterationService implements OnModuleInit {
     }
     try {
       const assets = await this.prompts.getGenerationAssets(round.generationId);
-      const system = this.loadEditorSystemPrompt();
-      const user = this.buildEditorUserPrompt(round.generationId, round, assets);
+      const evalGenerationId =
+        round.autoEdit?.evalGenerationId ?? this.evalPrompts.getActiveGenerationId();
+      const system = await this.evalPrompts.getPromptForGeneration(
+        evalGenerationId,
+        AUTO_EDIT_SYSTEM_ASSET_KEY,
+      );
+      const user = await this.buildEditorUserPrompt(
+        round.generationId,
+        round,
+        assets,
+        evalGenerationId,
+      );
       return {
         ok: true,
         request: { system, user, config: this.getScoreModelConfig() },
@@ -500,6 +527,22 @@ export class IterationService implements OnModuleInit {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  private async findScoreGenerationId(roomId: string): Promise<string | null> {
+    const rows = await this.postgres.query<{ rounds: IterationRound[] }>(
+      `SELECT rounds FROM iteration_runs
+       WHERE rounds::text LIKE $1
+       ORDER BY updated_at DESC`,
+      [`%${roomId}%`],
+    );
+    for (const row of rows.rows) {
+      for (const round of row.rounds ?? []) {
+        const game = round.games?.find((candidate) => candidate.roomId === roomId);
+        if (game?.scoreGenerationId) return game.scoreGenerationId;
+      }
+    }
+    return null;
   }
 
   // ---------- 单轮编排 ----------
@@ -549,7 +592,7 @@ export class IterationService implements OnModuleInit {
 
     const round: IterationRound = { round: roundNo, generationId, games, aggregate };
 
-    // 把本轮聚合分写回该代(让谱系带分数)。
+    // 把本轮聚合分写回该代(让 AI 提示词版本列表能直接显示分数)。
     if (generationId && aggregate) {
       await this.prompts.writeScore(generationId, aggregate).catch((err) => {
         this.logger.warn(`writeScore ${generationId} 失败: ${errMsg(err)}`);
@@ -563,8 +606,9 @@ export class IterationService implements OnModuleInit {
 
     const isLast = roundNo >= totalRounds;
     // 自动优化在每一轮(含最后一轮)后都跑;最后一轮生成的候选代照常落库,
-    // run 直接进入 completed(见下方 status 计算),候选代在版本谱系里供手动激活。
+    // run 直接进入 completed(见下方 status 计算),候选代会保留在 AI 提示词版本列表里供手动激活。
     if (generationId && this.shouldAutoEdit(options)) {
+      const evalGenerationId = this.evalPrompts.getActiveGenerationId();
       // 进入自动优化前持久化并广播"自动优化中",让前端展示独立状态。
       await this.persist({
         ...row,
@@ -580,7 +624,11 @@ export class IterationService implements OnModuleInit {
         discussionSeconds,
       );
 
-      round.autoEdit = await this.createAutoEditGeneration(generationId, round);
+      round.autoEdit = await this.createAutoEditGeneration(
+        generationId,
+        round,
+        evalGenerationId,
+      );
       if (this.stopRequested) return;
     }
 
@@ -609,7 +657,7 @@ export class IterationService implements OnModuleInit {
       return;
     }
 
-    // 最后一轮跑完即 completed(候选代照常生成并留存于版本谱系,供手动激活);
+    // 最后一轮跑完即 completed(候选代照常生成并保留在 AI 提示词版本列表里,供手动激活);
     // 不再停在 awaiting_activation,避免 run 非终态占用、阻断开新 run。
     const status: IterationStatus = isLast
       ? "completed"
@@ -734,6 +782,7 @@ export class IterationService implements OnModuleInit {
   private async createAutoEditGeneration(
     generationId: string,
     round: IterationRound,
+    evalGenerationId: string,
   ): Promise<NonNullable<IterationRound["autoEdit"]>> {
     if (!round.aggregate) {
       return { status: "skipped", error: "本轮没有有效 scorecard,跳过自动优化" };
@@ -746,8 +795,16 @@ export class IterationService implements OnModuleInit {
       );
       const assets = await this.prompts.getGenerationAssets(generationId);
       const { modelConfig, options } = this.resolveEditorModel();
-      const systemPrompt = this.loadEditorSystemPrompt();
-      const userPrompt = this.buildEditorUserPrompt(generationId, round, assets);
+      const systemPrompt = await this.evalPrompts.getPromptForGeneration(
+        evalGenerationId,
+        AUTO_EDIT_SYSTEM_ASSET_KEY,
+      );
+      const userPrompt = await this.buildEditorUserPrompt(
+        generationId,
+        round,
+        assets,
+        evalGenerationId,
+      );
 
       this.logger.debug(
         this.formatEditorRequestLog(
@@ -778,6 +835,7 @@ export class IterationService implements OnModuleInit {
         return {
           status: "skipped",
           error: "自动优化未产生有效变更",
+          evalGenerationId,
           response: content,
           durationMs: Date.now() - startedAt,
         };
@@ -798,6 +856,7 @@ export class IterationService implements OnModuleInit {
       return {
         status: "created",
         generationId: generation.id,
+        evalGenerationId,
         changedAssetKeys,
         note,
         response: content,
@@ -806,15 +865,21 @@ export class IterationService implements OnModuleInit {
     } catch (err) {
       const error = errMsg(err);
       this.logger.warn(`自动优化 ${generationId} 失败: ${error}`);
-      return { status: "failed", error, durationMs: Date.now() - startedAt };
+      return {
+        status: "failed",
+        error,
+        evalGenerationId,
+        durationMs: Date.now() - startedAt,
+      };
     }
   }
 
-  private buildEditorUserPrompt(
+  private async buildEditorUserPrompt(
     generationId: string,
     round: IterationRound,
     assets: Awaited<ReturnType<PromptRegistry["getGenerationAssets"]>>,
-  ): string {
+    evalGenerationId: string,
+  ): Promise<string> {
     const games = round.games.map((game) => ({
       roomId: game.roomId,
       winner: game.winner,
@@ -823,14 +888,18 @@ export class IterationService implements OnModuleInit {
       error: game.error,
       score: game.score ?? null,
     }));
-    return renderTemplateString(this.loadEditorUserTemplate(), {
+    return this.evalPrompts.renderForGeneration(
+      evalGenerationId,
+      AUTO_EDIT_USER_ASSET_KEY,
+      {
       generationId,
       assetKeysJson: JSON.stringify(ALL_ASSET_KEYS, null, 2),
       currentPromptsJson: JSON.stringify(assets.prompts, null, 2),
       currentPersonasJson: JSON.stringify(assets.personas, null, 2),
       scorecardJson: JSON.stringify(round.aggregate, null, 2),
       gamesJson: JSON.stringify(games, null, 2),
-    });
+      },
+    );
   }
 
   private formatEditorRequestLog(
@@ -982,7 +1051,9 @@ export class IterationService implements OnModuleInit {
       });
 
       // scoreReplay 内部用 buildScoreUserPrompt 注入 user 模板 + 该局 AI 人格定义。
-      const score = await this.scoreReplay(replay);
+      const scoreGenerationId = this.evalPrompts.getActiveGenerationId();
+      const score = await this.scoreReplay(replay, scoreGenerationId);
+      base.scoreGenerationId = scoreGenerationId;
       base.humanLikeScore = score.humanLikeScore;
       base.aiWin = score.aiWin;
       base.score = score;
@@ -1056,10 +1127,16 @@ export class IterationService implements OnModuleInit {
     this.currentRoundGames.sort((a, b) => (a.gameIndex ?? 0) - (b.gameIndex ?? 0));
   }
 
-  private async scoreReplay(replay: Record<string, unknown>): Promise<GameScore & Record<string, unknown>> {
-    const systemPrompt = this.loadScorerPrompt();
+  private async scoreReplay(
+    replay: Record<string, unknown>,
+    evalGenerationId: string,
+  ): Promise<GameScore & Record<string, unknown>> {
+    const systemPrompt = await this.evalPrompts.getPromptForGeneration(
+      evalGenerationId,
+      REPLAY_SCORE_SYSTEM_ASSET_KEY,
+    );
     const { modelConfig, options } = this.resolveScoreModel();
-    const userPrompt = await this.buildScoreUserPrompt(replay);
+    const userPrompt = await this.buildScoreUserPrompt(replay, evalGenerationId);
     const { content } = await this.aiService.callModel(
       systemPrompt,
       userPrompt,
@@ -1072,7 +1149,10 @@ export class IterationService implements OnModuleInit {
   }
 
   /** 打分 user 消息:复盘 JSON + 本局 AI 人格定义(让模型能判 sampleLineCopy/templatePhrase 等 tell)。 */
-  private async buildScoreUserPrompt(replay: Record<string, unknown>): Promise<string> {
+  private async buildScoreUserPrompt(
+    replay: Record<string, unknown>,
+    evalGenerationId = this.evalPrompts.getActiveGenerationId(),
+  ): Promise<string> {
     const genId =
       (replay.promptGenerationId as string | undefined) || this.prompts.getActiveGenerationId();
     const personas = await this.getPersonasForGeneration(genId);
@@ -1082,10 +1162,14 @@ export class IterationService implements OnModuleInit {
       sampleLines: p.sampleLines ?? [],
       avoidPhrases: p.avoidPhrases ?? [],
     }));
-    return renderTemplateString(this.loadScorerUserTemplate(), {
+    return this.evalPrompts.renderForGeneration(
+      evalGenerationId,
+      REPLAY_SCORE_USER_ASSET_KEY,
+      {
       replayJson: JSON.stringify(replay),
       personasJson: JSON.stringify(personaDigest, null, 2),
-    });
+      },
+    );
   }
 
   private readonly personaCache = new Map<string, AiPersonaContext[]>();
@@ -1132,62 +1216,8 @@ export class IterationService implements OnModuleInit {
     return this.resolveScoreModel();
   }
 
-  private scorerPromptCache: string | null = null;
-  private userPromptTemplateCache: string | null = null;
-  private editorSystemPromptCache: string | null = null;
-  private editorUserTemplateCache: string | null = null;
-  private evalPromptsDirCache: string | null = null;
-  private evalPromptsDirResolved = false;
-
-  /** 解析 eval/prompts 目录(探测若干候选),解析后缓存。 */
-  private resolveEvalPromptsDir(): string {
-    if (this.evalPromptsDirResolved) return this.evalPromptsDirCache!;
-    this.evalPromptsDirResolved = true;
-    const dirs = [
-      process.env.EVAL_PROMPTS_DIR?.trim(),
-      join(process.cwd(), "eval", "prompts"),
-      join(process.cwd(), "..", "eval", "prompts"),
-      join(__dirname, "..", "..", "..", "..", "eval", "prompts"),
-    ].filter(Boolean) as string[];
-    this.evalPromptsDirCache =
-      dirs.find((d) => existsSync(join(d, "system-replay-score.txt"))) ?? null;
-    if (!this.evalPromptsDirCache) {
-      throw new Error(`找不到 eval/prompts 目录(含冻结尺子),已尝试: ${dirs.join(", ")}`);
-    }
-    return this.evalPromptsDirCache;
-  }
-
-  private loadEvalPrompt(filename: string): string {
-    return readFileSync(join(this.resolveEvalPromptsDir(), filename), "utf-8");
-  }
-
   private loadScorerPrompt(): string {
-    if (this.scorerPromptCache) return this.scorerPromptCache;
-    // 允许用 EVAL_SCORE_PROMPT_PATH 单独覆盖系统尺子路径;否则从 eval/prompts 目录读。
-    const override = process.env.EVAL_SCORE_PROMPT_PATH?.trim();
-    const path = override && existsSync(override) ? override : null;
-    this.scorerPromptCache = path
-      ? readFileSync(path, "utf-8")
-      : this.loadEvalPrompt("system-replay-score.txt");
-    return this.scorerPromptCache;
-  }
-
-  private loadScorerUserTemplate(): string {
-    if (this.userPromptTemplateCache) return this.userPromptTemplateCache;
-    this.userPromptTemplateCache = this.loadEvalPrompt("user-replay-score-template.txt");
-    return this.userPromptTemplateCache;
-  }
-
-  private loadEditorSystemPrompt(): string {
-    if (this.editorSystemPromptCache) return this.editorSystemPromptCache;
-    this.editorSystemPromptCache = this.loadEvalPrompt("system-prompt-editor.txt");
-    return this.editorSystemPromptCache;
-  }
-
-  private loadEditorUserTemplate(): string {
-    if (this.editorUserTemplateCache) return this.editorUserTemplateCache;
-    this.editorUserTemplateCache = this.loadEvalPrompt("user-prompt-editor-template.txt");
-    return this.editorUserTemplateCache;
+    return this.evalPrompts.getPrompt(REPLAY_SCORE_SYSTEM_ASSET_KEY);
   }
 
   // ---------- 持久化与状态 ----------

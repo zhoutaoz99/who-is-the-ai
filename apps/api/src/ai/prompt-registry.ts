@@ -297,7 +297,7 @@ export class PromptRegistry implements OnModuleInit {
 
   /**
    * 删除某一代。
-   * - 存在子代时不允许删除(谱系完整性)。
+   * - 存在子代时不允许删除(父子代关系完整性)。
    * - 删除的若是 active 代,先回退到其父代(若无父代则拒绝,避免系统无 active)。
    * - 仅删除代记录本身;asset 版本可能被其他代共享,故不连带删除。
    */

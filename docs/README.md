@@ -7,7 +7,7 @@
 | 适用范围 | `docs/` 下的正式文档，不包括 `docs/ImplementationPlan/` |
 | 目标读者 | 项目维护者、开发、测试、评审者 |
 | 责任人 | 项目维护者 |
-| 最近核对日期 | 2026-06-15 |
+| 最近核对日期 | 2026-06-16 |
 | 关联代码 | `docs/`、`apps/api`、`apps/web` |
 | 关联文档 | [Doc-Style-Guide.md](./Doc-Style-Guide.md)、[Roadmap.md](./Roadmap.md) |
 
@@ -20,7 +20,7 @@
 ```text
 docs/
   gameplay/        真实对局相关:运行的对局本体与其中 AI 的行为
-  ai-iteration/    用于迭代 AI 玩家:离线评估/版本管理工具与迭代记录
+  ai-iteration/    用于迭代 AI 玩家:离线评估/双版本库工具与迭代记录
   README.md        本索引
   Roadmap.md       项目路线图(前瞻规划)
   ImplementationPlan/  早期分阶段实现计划归档(历史参考)
@@ -55,13 +55,13 @@ docs/
 
 ### ai-iteration/ — 用于迭代 AI 玩家
 
-离线工具与迭代记录:批量跑无头对局、冻结尺子量化打分、提示词版本管理、自动对抗调试房,以及复盘分析(既是玩家功能、也是评估闭环的数据源)。
+离线工具与迭代记录:批量跑无头对局、按评估尺子代量化打分、AI 提示词版本库 / 评估尺子版本库、自动对抗调试房,以及复盘分析(既是玩家功能、也是评估闭环的数据源)。
 
 | 文档 | 内容 |
 | --- | --- |
 | [AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) | AI 拟人化优化的根因分析、已落地项、可实施方案与 4 轮迭代记录。 |
 | [AI-Auto-Adversarial-Match.md](./ai-iteration/AI-Auto-Adversarial-Match.md) | 调试用的「AI 自动对抗」调试房:玩家建模、模拟真人强度(normal/high)、快速/普通两套发言调度、投票兜底、前端展示。 |
-| [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) | 提示词 DB 版本管理 + 单局打分 + 轮聚合 scorecard 的**内部详细逻辑**(「某一步内部怎么算」)。 |
+| [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) | AI 提示词版本库 + 评估尺子版本库 + 单局打分 + 轮聚合 scorecard 的**内部详细逻辑**(「某一步内部怎么算」)。 |
 | [AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) | 自动对局评估自迭代的**整体流程**(「步骤之间怎么连」),含组件图、主循环、实时事件、数据模型。 |
 | [Replay-Analysis.md](./ai-iteration/Replay-Analysis.md) | 一键复盘的前后端实现、流式输出、版本感知复盘、Prompt 文件与前端展示。 |
 
