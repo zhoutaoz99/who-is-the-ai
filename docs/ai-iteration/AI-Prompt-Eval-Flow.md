@@ -96,28 +96,36 @@ flowchart TD
     R1["读 active 代 id"] --> R2["并发跑 B 局(上限 3)<br/>逐局 emit iteration.game"]
     R2 --> R3["聚合 scorecard"]
     R3 --> R4["writeScore(active代, scorecard)<br/>持久化该轮到 iteration_runs.rounds"]
-    R4 --> R5{"R >= K ?"}
+    R4 --> AE{"开启自动优化?<br/>(postRoundMode ≠ manual)"}
+    AE -- 是 --> EDIT["广播 status=auto_editing<br/>自动优化器 createGeneration(candidate)<br/>(每轮含末轮)"]
+    EDIT --> CAND{"生成候选代?"}
+    AE -- 否(manual) --> NOCAND["无候选代"]
+    CAND -- 否(跳过/失败) --> NOCAND
+    CAND -- 是 --> LAST{"R >= K(末轮)?"}
   end
 
-  R5 -- 否且 manual --> WAIT["status = awaiting_activation<br/>emit round / status"]
-  WAIT --> MANUAL[/"人工:版本面板<br/>编辑 asset → 创建新代 → 激活<br/>(PromptRegistry 热切换 active)"/]
-  R5 -- 否且 auto_edit_wait_confirm --> EDIT["自动优化器<br/>createGeneration(candidate)"]
-  EDIT --> CONFIRM["status = awaiting_confirmation<br/>等待人工确认候选代"]
-  CONFIRM --> CONT["用户点「确认并继续」<br/>setActive(candidate)"]
-  MANUAL --> CONT["用户点「继续下一轮」<br/>iteration.continue"]
-  R5 -- 否且 auto_edit_activate_continue --> AUTO["自动优化器<br/>createGeneration + setActive"]
-  AUTO --> NEXT
-  CONT --> NEXT["continueToNextRound()<br/>round++ → runRound"]
+  NOCAND --> NC{"末轮?"}
+  NC -- 否 --> WAIT["status = awaiting_activation<br/>人工:版本面板换版本"]
+  NC -- 是 --> DONE["status = completed<br/>emit done"]
+  LAST -- 是 --> WAITLAST["status = awaiting_activation<br/>末轮:手动激活候选代后开新 run"]
+  LAST -- 否且 wait_confirm --> CONFIRM["status = awaiting_confirmation<br/>等待人工确认候选代"]
+  LAST -- 否且 activate_continue --> AUTO["自动 setActive(candidate)"]
 
-  R5 -- 是 --> DONE["status = completed<br/>emit done"]
+  WAIT --> CONTW["「继续下一轮」<br/>iteration.continue"]
+  CONFIRM --> CONTC["「确认并继续」<br/>setActive → continue"]
+  AUTO --> NEXT["continueToNextRound()<br/>round++ → runRound"]
+  CONTW --> NEXT
+  CONTC --> NEXT
+  WAITLAST --> ENDLAST([run 停在 awaiting_activation(无下一轮)])
   DONE --> END([结束,谱系留存])
 
   STOP([用户点「停止」]) -.stopRequested.-> HALT["status = stopped<br/>中断未完成局"]
 ```
 
 要点:
-- 轮后模式有三种:`manual`(人工编辑/激活)、`auto_edit_wait_confirm`(自动优化生成候选代,人工确认后继续)、`auto_edit_activate_continue`(自动优化生成并激活,直接继续)。
-- **自动优化是阻塞式大模型调用**(数十秒):`runRound` 进入编辑调用前先持久化并广播 `status = auto_editing`,让前端及时显示「自动优化中…」;`retryAutoEdit()`(自动优化失败后用户点「重试自动优化」)同样**先 ack 再异步执行**,结果通过 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时(详见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4.3)。
+- 轮后模式有三种:`manual`(人工编辑/激活)、`auto_edit_wait_confirm`(自动优化生成候选代,人工确认后继续)、`auto_edit_activate_continue`(自动优化生成并激活,直接继续)。**默认 `auto_edit_wait_confirm`**。
+- **自动优化每轮都跑(含末轮)**:末轮若生成候选代 → 落在 `awaiting_activation`(由用户在版本谱系手动激活候选代后开新 run,因无第 K+1 轮可继续);末轮未生成候选代(manual 模式,或自动优化跳过/失败)→ `completed` 并 emit `done`。
+- **自动优化是阻塞式大模型调用**(数十秒):`runRound` 进入编辑调用前先持久化并广播 `status = auto_editing`,前端立即看到「自动优化中…」;`retryAutoEdit()`(自动优化失败后用户点「重试自动优化」)同样**先 ack 再异步执行**,结果通过 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时(详见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4.3)。
 - 不强制换版本:保持同一代继续跑,只是为该代累积更多样本、分数会更稳。
 - **单进程互斥**:同时只允许一个 run(active 代是进程级单例)。
 
@@ -175,7 +183,34 @@ flowchart TD
 
 ---
 
-## 8. 实时事件流
+## 8. 自动优化器(轮后状态流转)
+
+轮 scorecard 产出后,若开启自动优化(`postRoundMode ≠ manual`,**默认 `auto_edit_wait_confirm`**),`IterationService.createAutoEditGeneration` 调编辑模型派生候选代。本节讲**状态流转与时机**;编辑器提示词、占位符、`changedAssets` 校验等内部逻辑见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4。
+
+```mermaid
+flowchart TD
+  RUN[/"running:本轮 B 局打分聚合完成"/] --> AE["广播 status=auto_editing<br/>(前端显示「自动优化中…」)"]
+  AE --> CALL["createAutoEditGeneration<br/>调编辑模型(阻塞,数十秒)"]
+  CALL --> GOT{"生成候选代?"}
+  GOT -- "否(skipped/failed)" --> NOCAND{"末轮?"}
+  GOT -- 是 --> LAST{"末轮?"}
+  LAST -- 是 --> WAITLAST["awaiting_activation<br/>手动激活候选代 → 开新 run"]
+  LAST -- 否 --> MODE{"postRoundMode?"}
+  MODE -- wait_confirm --> CONFIRM["awaiting_confirmation<br/>「确认并继续」→ setActive → 下一轮"]
+  MODE -- activate_continue --> AUTO["setActive(候选代)<br/>→ running 下一轮"]
+  NOCAND -- 否 --> WAIT["awaiting_activation<br/>人工换版本 → 继续下一轮"]
+  NOCAND -- 是 --> DONE["completed, emit done"]
+```
+
+要点:
+- **每轮都触发(含末轮)**:不再受「是否末轮」限制。末轮无第 K+1 轮可继续,故候选代只能由用户在版本谱系手动激活后开新 run;`auto_edit_activate_continue` 在末轮也只落到 `awaiting_activation`,不会自动继续。
+- **末轮落地判定**:有候选代 → `awaiting_activation`;无候选代(`manual` 模式,或自动优化 `skipped`/`failed`)→ `completed` 并 emit `done`。
+- **阻塞调用异步化**:编辑模型调用是阻塞式(数十秒),故进入前先广播 `auto_editing`;`retryAutoEdit()`(自动优化失败后点「重试自动优化」)同样**先 ack 再异步执行**,结果经 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时。
+- **重启恢复**:进程重启丢失内存 `activeRunId` 后,`continueToNextRound` / `retryAutoEdit` 经 `recoverActiveRun()` 从最近一条非终态 run 恢复,「确认并继续 / 重试自动优化」仍可用。
+
+---
+
+## 9. 实时事件流
 
 ```mermaid
 sequenceDiagram
@@ -211,7 +246,7 @@ sequenceDiagram
 
 ---
 
-## 9. 数据模型
+## 10. 数据模型
 
 ```mermaid
 erDiagram
@@ -249,7 +284,7 @@ erDiagram
 
 ---
 
-## 10. 关键配置与常量
+## 11. 关键配置与常量
 
 | 常量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -270,7 +305,7 @@ erDiagram
 
 ---
 
-## 11. 使用方式
+## 12. 使用方式
 
 **前端 `/iteration` 页面(唯一入口)**
 设置 B/K/时长 → 开始迭代 → 实时看进度 → 轮间在「版本谱系与激活」面板:左侧选版本、右侧查看/编辑提示词、「与父代对比」看差异(高亮增删行,**仅列出与父代有差异的 asset**)→ 创建新代 → 激活 → 继续下一轮;版本行支持「删除」(**存在子版本时不允许**;删除激活代会自动回退到其父代)。
@@ -279,6 +314,6 @@ erDiagram
 
 版本管理动作背后调用的是 DEBUG 网关的 HTTP 接口(均在 `apps/api/src/ai/prompt-version.controller.ts`):`GET /debug/prompts/generations`、`GET /debug/prompts/generations/:id`、`POST /debug/prompts/generation`、`POST /debug/prompts/active`、`POST /debug/prompts/best`、`POST /debug/prompts/score`、`DELETE /debug/prompts/generation/:id`(删除代,存在子代或为无父代的激活代时拒绝)。
 
-迭代 run 的 HTTP 兜底/详情接口(在 `apps/api/src/iteration/iteration.controller.ts`):`GET /debug/iterations`(当前/最近 run 快照)、`GET /debug/iterations/estimate`(按 `rounds/gamesPerRound/discussionSeconds/postRoundMode` 估算预计用时,供参数面板动态提示)、`GET /debug/iterations/scorer-prompt`(冻结尺子)、`GET /debug/iterations/score-request/:roomId`(重建某局打分请求)、`GET /debug/iterations/auto-edit-request/:runId/:roundNo`(重建某轮自动优化请求,供详情弹窗)。
+迭代 run 的 HTTP 兜底/详情接口(在 `apps/api/src/iteration/iteration.controller.ts`):`GET /debug/iterations`(当前/最近 run 快照)、`GET /debug/iterations/estimate`(按 `rounds/gamesPerRound/discussionSeconds/postRoundMode/sequentialSpeech` 估算预计用时与「每名玩家发言次数」,供参数面板动态提示)、`GET /debug/iterations/scorer-prompt`(冻结尺子)、`GET /debug/iterations/score-request/:roomId`(重建某局打分请求)、`GET /debug/iterations/auto-edit-request/:runId/:roundNo`(重建某轮自动优化请求,供详情弹窗)。
 
 > 入口在首页 `{debug && ...}` 门控,需 `DEBUG=true` 且 API 在运行。

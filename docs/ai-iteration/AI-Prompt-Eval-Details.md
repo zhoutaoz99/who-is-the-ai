@@ -27,7 +27,7 @@
 - **批量平均,不逐局改**:每轮跑 B 局聚合成 scorecard,只做一处有针对性的改动。
 - **版本谱系可回滚**:每次改动 = 一个新"代(generation)",回滚 = 改 active 指针,不动 git、不重启。
 
-> 范围:版本库 + 评估闭环已落地(进程内 `IterationService` + `/iteration` 页面);新版本可由人工按 scorecard 手动创建,也可由「自动优化」(代码 `autoEdit`)生成候选代后等待确认或自动激活;对手保持 normal 难度;默认 B/K 等常量见 [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md) §10。
+> 范围:版本库 + 评估闭环已落地(进程内 `IterationService` + `/iteration` 页面);新版本可由人工按 scorecard 手动创建,也可由「自动优化」(代码 `autoEdit`)生成候选代后等待确认或自动激活;对手保持 normal 难度;默认 B/K 等常量见 [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md) §11。
 > 另:AI 近期连胜、纯胜率区分度低,故主要靠 tell 命中率 / 自然度等先行指标区分版本好坏。
 
 ## 1. DB 版本管理(详细逻辑)
@@ -198,7 +198,9 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 ## 4. 自动优化器(详细逻辑)
 
-轮聚合 scorecard 产出后,若该 run 开启自动优化(`auto_edit_wait_confirm` / `auto_edit_activate_continue`),`IterationService.createAutoEditGeneration` 调用编辑模型,基于本轮 scorecard + 逐局摘要 + 当前代 assets 派生一个候选代。
+轮聚合 scorecard 产出后,若该 run 开启自动优化(`auto_edit_wait_confirm` / `auto_edit_activate_continue`,**默认即此模式**),`IterationService.createAutoEditGeneration` 调用编辑模型,基于本轮 scorecard + 逐局摘要 + 当前代 assets 派生一个候选代。
+
+> **每轮都跑(含末轮)**:自动优化不再受「是否最后一轮」限制。末轮若成功生成候选代,run 落在 `awaiting_activation`(无第 K+1 轮可继续,由用户在版本谱系手动激活候选代后开新 run);末轮若未生成候选代(`manual` 模式,或自动优化 `skipped`/`failed`)才进 `completed` 并 emit `done`。详见 [`AI-Prompt-Eval-Flow.md`](./AI-Prompt-Eval-Flow.md) §4。
 
 > 命名:前端 UI 与本文称「自动优化」;代码标识符沿用历史名 `autoEdit` / `createAutoEditGeneration` / 状态 `auto_editing` / 轮后模式 `auto_edit_*`,二者指同一件事。
 
@@ -213,8 +215,11 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 ### 4.2 结果留存与详情重建
 
-- 编辑模型的**原始返回正文**存入 `IterationRound.autoEdit.response`,供前端「自动优化记录」详情弹窗的「生成结果」tab 展示(失败/无 scorecard 跳过的情况无 response)。
-- `GET /debug/iterations/auto-edit-request/:runId/:roundNo` 重建该轮发往模型的**完整输入**(编辑器 system + user + 模型 config),供详情弹窗如实展示「用户提示词 / 系统提示词 / 本轮聚合 scorecard / 完整请求 JSON」各 tab —— 与打分详情的 `GET /debug/iterations/score-request/:roomId`(`buildScoreUserPrompt`)同构,只是 user 换成 `buildEditorUserPrompt`。
+「自动优化记录」每条可点「生成详情」打开弹窗,按 **生成结果 → 本轮聚合 scorecard → 用户提示词 → 系统提示词 → 完整请求 JSON** 的顺序查看。各 tab 数据来源:
+
+- **生成结果**:编辑模型的**原始返回正文**,存于 `IterationRound.autoEdit.response`(失败 / 无 scorecard 跳过的情况无 response)。
+- **本轮聚合 scorecard**:直接取自该轮 `aggregate`(页面已有,无需请求)。
+- **用户提示词 / 系统提示词 / 完整请求 JSON**:由 `GET /debug/iterations/auto-edit-request/:runId/:roundNo` 重建该轮发往模型的**完整输入**(编辑器 system + user + 模型 config)—— 与打分详情的 `GET /debug/iterations/score-request/:roomId`(`buildScoreUserPrompt`)同构,只是 user 换成 `buildEditorUserPrompt`。
 
 ### 4.3 异步执行与重试
 
@@ -223,6 +228,14 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
   - `retryAutoEdit()`(自动优化失败后用户点「重试自动优化」)**先持久化 + 广播 `auto_editing` 并立即返回 ack**,编辑调用交由 `executeRetryAutoEdit` 异步执行,完成后再通过 `iteration.status` 事件推送结果(`awaiting_confirmation` / `awaiting_activation` / 进入下一轮 / 失败回退)——避免客户端 WebSocket 5s 超时。
 - `auto_editing` 是 `iteration_runs.status` 的合法取值之一;进程重启后,处于 `auto_editing` 的 run 因内存驱动丢失会被 `reconcileStaleRuns` 标记为 `stopped`(但「自动优化失败」即 `awaiting_activation + 末轮 autoEdit.status=failed` 的 run 会被保留以便重试)。
 - **重启后继续/确认/重试可用**:进程重启会丢失内存 `activeRunId`,但 DB 里 `awaiting_confirmation` / `awaiting_activation` 的 run 仍在。`continueToNextRound` 与 `retryAutoEdit` 在 `activeRunId` 为空时会调用 `recoverActiveRun()` 从最近一条非终态 run 恢复 `activeRunId` 与 `this.rounds`(与 `stop()` 的回退一致),再做状态校验 —— 因此「确认并继续」不会因重启误报「没有进行中的迭代」。
+
+### 4.4 日志级别
+
+`createAutoEditGeneration` 的日志按级别分层,默认日志只保留关键节点,完整 I/O 需开 debug 才打印:
+
+- `logger.log`(info):`自动优化开始 generationId=… round=…`、`自动优化成功 generationId=… → 新代 …(改动: …)`;失败分支用 `logger.warn` 记原因。
+- `logger.debug`:完整请求(`formatEditorRequestLog`,含编辑器 system + user + 模型 config)与完整返回(`formatEditorResponseLog`,模型原始正文)——体量大,仅排查时开 debug 级查看。
+- 详情弹窗的「生成结果 / 用户提示词 / 系统提示词 / 完整请求 JSON」直接来自 `autoEdit.response` 与 `getAutoEditRequest` 重建结果,与日志级别无关。
 
 ---
 
