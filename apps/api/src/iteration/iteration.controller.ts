@@ -1,4 +1,4 @@
-import { Controller, Get, Param } from "@nestjs/common";
+import { Controller, Get, Param, Query } from "@nestjs/common";
 import { DEBUG } from "../game/game.config";
 import { IterationService } from "./iteration.service";
 
@@ -14,6 +14,25 @@ export class IterationController {
   async getStatus() {
     if (!DEBUG) return { ok: false, error: "调试模式未开启" };
     return this.iterationService.getStatus();
+  }
+
+  /** 估算一次迭代的预计用时(秒),供前端参数面板随参数变化动态提示。 */
+  @Get("estimate")
+  async estimate(
+    @Query("rounds") rounds?: string,
+    @Query("gamesPerRound") gamesPerRound?: string,
+    @Query("discussionSeconds") discussionSeconds?: string,
+    @Query("postRoundMode") postRoundMode?: string,
+    @Query("fastMode") fastMode?: string,
+  ) {
+    if (!DEBUG) return { ok: false, error: "调试模式未开启" };
+    return this.iterationService.estimateIteration({
+      rounds: Number(rounds),
+      gamesPerRound: Number(gamesPerRound),
+      discussionSeconds: Number(discussionSeconds),
+      postRoundMode,
+      fastMode: fastMode === "true",
+    });
   }
 
   /** 返回冻结打分尺子(打分的 system prompt),供前端展示打分输入。 */
@@ -50,6 +69,25 @@ export class IterationController {
     if (!DEBUG) return { ok: false, error: "调试模式未开启" };
     try {
       return await this.iterationService.getScoreRequest(roomId);
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** 重建某轮自动优化的完整请求(编辑器 system + user + config),如实展示生成过程输入。 */
+  @Get("auto-edit-request/:runId/:roundNo")
+  async getAutoEditRequest(
+    @Param("runId") runId: string,
+    @Param("roundNo") roundNo: string,
+  ) {
+    if (!DEBUG) return { ok: false, error: "调试模式未开启" };
+    const round = Number(roundNo);
+    if (!Number.isFinite(round)) return { ok: false, error: "无效的轮次" };
+    try {
+      return await this.iterationService.getAutoEditRequest(runId, round);
     } catch (error) {
       return {
         ok: false,

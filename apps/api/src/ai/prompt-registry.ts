@@ -295,6 +295,69 @@ export class PromptRegistry implements OnModuleInit {
     );
   }
 
+  /**
+   * 删除某一代。
+   * - 存在子代时不允许删除(谱系完整性)。
+   * - 删除的若是 active 代,先回退到其父代(若无父代则拒绝,避免系统无 active)。
+   * - 仅删除代记录本身;asset 版本可能被其他代共享,故不连带删除。
+   */
+  async deleteGeneration(generationId: string): Promise<void> {
+    const becameActive = await this.postgres.transaction(async (client) => {
+      const genRes = await client.query<{
+        parent_id: string | null;
+        status: string;
+      }>(
+        "SELECT parent_id, status FROM ai_prompt_generations WHERE id = $1",
+        [generationId],
+      );
+      const gen = genRes.rows[0];
+      if (!gen) throw new Error(`未知的代: ${generationId}`);
+
+      const childRes = await client.query(
+        "SELECT 1 FROM ai_prompt_generations WHERE parent_id = $1 LIMIT 1",
+        [generationId],
+      );
+      if ((childRes.rowCount ?? 0) > 0) {
+        throw new Error("该版本存在子版本,不允许删除");
+      }
+
+      let rolledBackTo: string | null = null;
+      if (gen.status === "active") {
+        if (!gen.parent_id) {
+          throw new Error("无法删除:该激活版本无父代可回退,请先激活其他版本");
+        }
+        rolledBackTo = gen.parent_id;
+        await client.query(
+          "UPDATE ai_prompt_generations SET status='archived' WHERE status='active'",
+        );
+        await client.query(
+          "UPDATE ai_prompt_generations SET status='active' WHERE id=$1",
+          [gen.parent_id],
+        );
+        await client.query(
+          `INSERT INTO ai_prompt_state (id, active_generation_id) VALUES (1,$1)
+           ON CONFLICT (id) DO UPDATE SET active_generation_id = EXCLUDED.active_generation_id`,
+          [gen.parent_id],
+        );
+      }
+
+      await client.query("DELETE FROM ai_prompt_generations WHERE id=$1", [
+        generationId,
+      ]);
+      return rolledBackTo;
+    });
+
+    // 若删除的是 active 代,重载内存缓存到回退后的父代。
+    if (becameActive) {
+      await this.loadActive();
+      this.logger.log(
+        `已删除 active 代 ${generationId},回退激活到父代 ${becameActive}`,
+      );
+    } else {
+      this.logger.log(`已删除代 ${generationId}`);
+    }
+  }
+
   // ---------- 播种 ----------
 
   private async seedIfEmpty(): Promise<void> {

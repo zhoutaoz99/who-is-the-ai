@@ -203,5 +203,15 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
       ALTER TABLE iteration_runs
       ADD COLUMN IF NOT EXISTS discussion_seconds integer NOT NULL DEFAULT 60
     `);
+
+    await this.query(`
+      ALTER TABLE iteration_runs
+      ADD COLUMN IF NOT EXISTS iteration_options jsonb NOT NULL DEFAULT '{}'
+    `);
+
+    await this.query(`
+      ALTER TABLE iteration_runs
+      ADD COLUMN IF NOT EXISTS pending_generation_id text
+    `);
   }
 }

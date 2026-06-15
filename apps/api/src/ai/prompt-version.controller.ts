@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
 import { DEBUG } from "../game/game.config";
 import {
   ALL_ASSET_KEYS,
@@ -106,6 +106,23 @@ export class PromptVersionController {
     try {
       await this.registry.markBest(body.generationId);
       return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * 删除某代:存在子代则拒绝;若删除的是 active 代,先回退到其父代。
+   */
+  @Delete("generation/:id")
+  async deleteGeneration(@Param("id") id: string) {
+    if (this.gate()) return this.gate();
+    try {
+      await this.registry.deleteGeneration(id);
+      return { ok: true, active: this.registry.getActiveGenerationId() };
     } catch (error) {
       return {
         ok: false,

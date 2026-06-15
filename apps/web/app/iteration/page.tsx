@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../lib/auth-client";
@@ -8,6 +8,8 @@ import { useGameClient } from "../lib/game-client";
 import type {
   GenerationSummary,
   IterationGameResult,
+  IterationPersonaMode,
+  IterationPostRoundMode,
   IterationRunStatus,
 } from "../lib/game-types";
 
@@ -47,6 +49,7 @@ export default function IterationPage() {
     iterationRun,
     startIteration,
     continueIteration,
+    retryAutoEdit,
     stopIteration,
     refreshIteration,
   } = useGameClient();
@@ -55,8 +58,92 @@ export default function IterationPage() {
   const [gamesPerRound, setGamesPerRound] = useState(6);
   const [duration, setDuration] = useState(1);
   const [durationUnit, setDurationUnit] = useState<"min" | "sec">("min");
+  const [fastMode, setFastMode] = useState(true);
+  const [personaMode, setPersonaMode] = useState<IterationPersonaMode>("fixed_schedule");
+  const [postRoundMode, setPostRoundMode] = useState<IterationPostRoundMode>("auto_edit_wait_confirm");
   const [busy, setBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
   const [pageError, setPageError] = useState("");
+
+  // 选中的轮次:默认跟随 currentRound;点击 stepper 可锁定查看历史轮。
+  const [selectedRound, setSelectedRound] = useState<number | null>(null);
+  useEffect(() => {
+    if (iterationRun?.currentRound) setSelectedRound(iterationRun.currentRound);
+  }, [iterationRun?.currentRound]);
+
+  // 自动优化生成详情弹窗:记录要查看的轮次号。
+  const [autoEditDetailRound, setAutoEditDetailRound] = useState<number | null>(null);
+
+  // 预计用时 + 每名玩家发言次数:由后端按真实计时常量估算,参数变化时防抖拉取(保留上一次结果避免闪烁)。
+  // 必须放在所有 early return 之前(遵守 Hooks 规则)。
+  const [estimate, setEstimate] = useState<{
+    seconds: number;
+    speechesPerPlayer: number;
+  } | null>(null);
+  const discussionSecondsValue = durationUnit === "min" ? duration * 60 : duration;
+  useEffect(() => {
+    const status = iterationRun?.status;
+    const isActiveRun =
+      status === "running" ||
+      status === "auto_editing" ||
+      status === "awaiting_activation" ||
+      status === "awaiting_confirmation";
+    if (isActiveRun) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const url =
+        `${API_URL}/debug/iterations/estimate` +
+        `?rounds=${encodeURIComponent(rounds)}` +
+        `&gamesPerRound=${encodeURIComponent(gamesPerRound)}` +
+        `&discussionSeconds=${encodeURIComponent(discussionSecondsValue)}` +
+        `&postRoundMode=${encodeURIComponent(postRoundMode)}` +
+        `&fastMode=${encodeURIComponent(fastMode)}`;
+      fetch(url, { signal: controller.signal })
+        .then((r) => r.json())
+        .then((json) => {
+          if (
+            json?.ok &&
+            typeof json.seconds === "number" &&
+            typeof json.speechesPerPlayer === "number"
+          ) {
+            setEstimate({
+              seconds: json.seconds,
+              speechesPerPlayer: json.speechesPerPlayer,
+            });
+          }
+        })
+        .catch(() => {
+          /* abort 或网络错误:保留上一次结果 */
+        });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    rounds,
+    gamesPerRound,
+    discussionSecondsValue,
+    postRoundMode,
+    fastMode,
+    iterationRun?.status,
+  ]);
+
+  // 自动优化进行中时的实时「已耗时」计时器(基于 run.updatedAt,即进入 auto_editing 的时刻)。
+  const [autoEditElapsedMs, setAutoEditElapsedMs] = useState(0);
+  useEffect(() => {
+    const autoEditing = iterationRun?.status === "auto_editing";
+    if (!autoEditing || !iterationRun?.updatedAt) {
+      setAutoEditElapsedMs(0);
+      return;
+    }
+    const startMs = new Date(iterationRun.updatedAt).getTime();
+    const tick = () => setAutoEditElapsedMs(Math.max(0, Date.now() - startMs));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [iterationRun?.status, iterationRun?.updatedAt]);
 
   // 版本管理
   const [generations, setGenerations] = useState<GenerationSummary[]>([]);
@@ -122,6 +209,7 @@ export default function IterationPage() {
   // 版本差异弹窗(父代 vs 选中代)
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffAsset, setDiffAsset] = useState(ASSET_KEYS[0]);
+  const [diffChangedKeys, setDiffChangedKeys] = useState<string[]>([]);
 
   // 弹窗打开时锁定底层页面滚动
   useEffect(() => {
@@ -141,7 +229,6 @@ export default function IterationPage() {
 
   const openDiff = async () => {
     if (!selectedGenId || !selectedGen?.parentId) return;
-    setDiffAsset(editorAsset);
     setDiffOpen(true);
     setDiffLoading(true);
     try {
@@ -149,8 +236,19 @@ export default function IterationPage() {
         fetch(`${API_URL}/debug/prompts/generations/${selectedGen.parentId}`).then((r) => r.json()),
         fetch(`${API_URL}/debug/prompts/generations/${selectedGenId}`).then((r) => r.json()),
       ]);
-      setDiffParent(pRes?.generation ?? null);
-      setDiffSelected(sRes?.generation ?? null);
+      const parent = pRes?.generation ?? null;
+      const selected = sRes?.generation ?? null;
+      setDiffParent(parent);
+      setDiffSelected(selected);
+      // 只保留父代与当前版本内容确实不同的 asset,差异下拉里隐藏无变化的 asset。
+      const changed = ASSET_KEYS.filter(
+        (k) => assetContent(parent, k) !== assetContent(selected, k),
+      );
+      setDiffChangedKeys(changed);
+      setDiffAsset((cur) => {
+        if (changed.length === 0) return cur;
+        return changed.includes(cur) ? cur : changed[0];
+      });
     } finally {
       setDiffLoading(false);
     }
@@ -160,7 +258,15 @@ export default function IterationPage() {
     setBusy(true);
     setPageError("");
     const seconds = durationUnit === "min" ? duration * 60 : duration;
-    const res = await startIteration({ rounds, gamesPerRound, discussionSeconds: seconds });
+    const res = await startIteration({
+      rounds,
+      gamesPerRound,
+      discussionSeconds: seconds,
+      fastMode,
+      personaMode,
+      autoEdit: postRoundMode !== "manual",
+      postRoundMode,
+    });
     setBusy(false);
     if (!res.ok) setPageError(res.error ?? "启动失败");
   };
@@ -171,6 +277,30 @@ export default function IterationPage() {
     setBusy(false);
     if (!res.ok) setPageError(res.error ?? "继续失败");
   };
+
+  const handleRetryAutoEdit = async () => {
+    setRetryBusy(true);
+    setPageError("");
+    const res = await retryAutoEdit();
+    setRetryBusy(false);
+    if (!res.ok) {
+      setPageError(res.error ?? "自动优化重试失败");
+    }
+    // 不立即 fetchGenerations:自动优化已改为异步执行,
+    // 完成后通过 socket iteration.status 事件推送结果;
+    // 下方 useEffect 监听状态变化自动刷新版本列表。
+  };
+
+  // 自动优化完成后刷新版本列表(异步 auto-edit 通过 socket 推送结果)。
+  const prevStatusRef = useRef(iterationRun?.status);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const cur = iterationRun?.status;
+    prevStatusRef.current = cur;
+    if (prev === "auto_editing" && cur && cur !== "auto_editing") {
+      fetchGenerations();
+    }
+  }, [iterationRun?.status, fetchGenerations]);
 
   const handleStop = async () => {
     await stopIteration();
@@ -194,6 +324,28 @@ export default function IterationPage() {
       body: JSON.stringify({ generationId: genId }),
     });
     await fetchGenerations();
+  };
+
+  const handleDelete = async (genId: string, isActive: boolean) => {
+    const hint = isActive
+      ? "\n该版本为当前激活版本,删除后将回退激活到其父代。"
+      : "";
+    if (!window.confirm(`确认删除版本 ${genId}?${hint}`)) return;
+    setPageError("");
+    try {
+      const res = await fetch(`${API_URL}/debug/prompts/generation/${genId}`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (!json?.ok) {
+        setPageError(json?.error ?? "删除失败");
+        return;
+      }
+      if (selectedGenId === genId) setSelectedGenId(null);
+      await fetchGenerations();
+    } catch {
+      setPageError("删除失败");
+    }
   };
 
   const handleCreateGeneration = async () => {
@@ -239,11 +391,27 @@ export default function IterationPage() {
 
   const run = iterationRun;
   const isRunning = run?.status === "running";
-  const isAwaiting = run?.status === "awaiting_activation";
-  const doneInRound = run?.currentRoundGames?.length ?? 0;
+  const isAutoEditing = run?.status === "auto_editing";
+  const isAwaitingConfirmation = run?.status === "awaiting_confirmation";
+  const isAwaiting = run?.status === "awaiting_activation" || isAwaitingConfirmation;
+  const isActive = isRunning || isAutoEditing || isAwaiting;
+  const doneInRound = (run?.currentRoundGames ?? []).filter((g) =>
+    g.status === "finished" || g.status === "failed" || Boolean(g.score) || Boolean(g.error),
+  ).length;
   const totalInRound = run?.gamesPerRound ?? gamesPerRound;
   const progressPct = totalInRound > 0 ? Math.min(100, (doneInRound / totalInRound) * 100) : 0;
-
+  const canRetryAutoEdit =
+    run?.status === "awaiting_activation" &&
+    run.options?.autoEdit === true &&
+    run.lastAutoEdit?.status === "failed";
+  // 选中轮次的完整数据(已完成的轮);未完成则为 null。
+  const selectedRoundData =
+    run?.rounds.find((r) => r.round === selectedRound) ?? null;
+  const isSelectedRoundCurrent = selectedRound === run?.currentRound;
+  // 逐局列表跟随选中轮次:当前轮用实时流;历史轮用该轮已记录的局。
+  const displayedRoundGames = isSelectedRoundCurrent
+    ? (run?.currentRoundGames ?? [])
+    : (selectedRoundData?.games ?? []);
   return (
     <>
     <main className="shell lobby-shell">
@@ -281,7 +449,7 @@ export default function IterationPage() {
             点击「开始迭代」用当前 active 代跑一批无头对局并打分;轮间在右侧版本面板创建/激活新代后点「继续下一轮」。
           </p>
 
-          {isRunning || isAwaiting ? (
+          {isActive ? (
             <div className="iteration-controls iteration-controls-readonly">
               <div className="iter-param">
                 <span className="muted-text">每轮局数 B</span>
@@ -294,6 +462,18 @@ export default function IterationPage() {
               <div className="iter-param">
                 <span className="muted-text">讨论时长</span>
                 <strong>{fmtDuration(run?.discussionSeconds ?? duration * (durationUnit === "min" ? 60 : 1))}</strong>
+              </div>
+              <div className="iter-param">
+                <span className="muted-text">顺序发言</span>
+                <strong>{run?.options?.fastMode === false ? "关闭" : "开启"}</strong>
+              </div>
+              <div className="iter-param">
+                <span className="muted-text">人格策略</span>
+                <strong>{personaModeLabel(run?.options?.personaMode ?? personaMode)}</strong>
+              </div>
+              <div className="iter-param">
+                <span className="muted-text">轮后模式</span>
+                <strong>{postRoundModeLabel(run?.options?.postRoundMode ?? postRoundMode)}</strong>
               </div>
             </div>
           ) : (
@@ -337,11 +517,57 @@ export default function IterationPage() {
                   </select>
                 </div>
               </label>
+              <label
+                className="iter-checkbox-label"
+                title="勾选:玩家按固定顺序一个接一个发言(串行、无随机间隔,结果可复现);不勾选:各玩家独立随机发言"
+              >
+                顺序发言
+                <input
+                  type="checkbox"
+                  checked={fastMode}
+                  onChange={(e) => setFastMode(e.target.checked)}
+                />
+              </label>
+              <label>
+                人格策略
+                <select
+                  value={personaMode}
+                  onChange={(e) => setPersonaMode(e.target.value as IterationPersonaMode)}
+                >
+                  <option value="fixed_schedule">固定赛程</option>
+                  <option value="fixed_per_run">整次固定</option>
+                  <option value="random_each_game">逐局随机</option>
+                </select>
+                <span className="iter-option-help">
+                  {personaModeDescription(personaMode)}
+                </span>
+              </label>
+              <label>
+                轮后模式
+                <select
+                  value={postRoundMode}
+                  onChange={(e) => setPostRoundMode(e.target.value as IterationPostRoundMode)}
+                >
+                  <option value="manual">人工编辑</option>
+                  <option value="auto_edit_wait_confirm">自动优化后确认</option>
+                  <option value="auto_edit_activate_continue">自动优化并继续</option>
+                </select>
+              </label>
             </div>
           )}
 
+          {!isActive && estimate != null && (
+            <p className="muted-text iter-estimate">
+              预计用时:<strong>{formatEstimate(estimate.seconds)}</strong>
+              <span className="iter-estimate-note">
+                · 每名玩家约 <strong>{estimate.speechesPerPlayer}</strong> 次发言/轮({fastMode ? "顺序" : "随机"}模式)
+                (含打分{postRoundMode !== "manual" ? "与自动优化" : ""};仅供参考,实际受模型速度与对局结束轮数影响)
+              </span>
+            </p>
+          )}
+
           <div className="iteration-actions">
-            {!isRunning && !isAwaiting && (
+            {!isActive && (
               <button
                 className="primary-action"
                 disabled={busy}
@@ -350,7 +576,7 @@ export default function IterationPage() {
                 {busy ? "启动中…" : "开始迭代"}
               </button>
             )}
-            {isRunning && (
+            {(isRunning || isAutoEditing) && (
               <button className="secondary" onClick={handleStop}>
                 停止
               </button>
@@ -362,12 +588,22 @@ export default function IterationPage() {
                   disabled={busy}
                   onClick={handleContinue}
                 >
-                  {busy ? "继续中…" : "继续下一轮"}
+                  {busy ? "继续中…" : isAwaitingConfirmation ? "确认并继续" : "继续下一轮"}
                 </button>
                 <button className="secondary" onClick={handleStop} title="放弃本次迭代,释放占用以便重新开始">
                   停止本次
                 </button>
               </>
+            )}
+            {canRetryAutoEdit && (
+              <button
+                className="secondary"
+                disabled={retryBusy}
+                onClick={handleRetryAutoEdit}
+                title="重新执行自动优化,生成候选代"
+              >
+                {retryBusy ? "重试中…" : "重试自动优化"}
+              </button>
             )}
           </div>
 
@@ -384,6 +620,11 @@ export default function IterationPage() {
               <span>
                 active 代:<strong>{run.activeGenerationId ?? "-"}</strong>
               </span>
+              {run.pendingGenerationId && (
+                <span>
+                  待确认:<strong>{run.pendingGenerationId}</strong>
+                </span>
+              )}
             </div>
           )}
         </section>
@@ -409,12 +650,13 @@ export default function IterationPage() {
             </div>
           )}
 
-          {/* 轮次 stepper */}
+          {/* 轮次 stepper(点击切换下方 scorecard / 自动优化记录关注的轮次) */}
           {run && (
             <div className="iter-stepper">
               {Array.from({ length: run.totalRounds }, (_, i) => i + 1).map((r) => {
                 const completed = run.rounds.find((rr) => rr.round === r);
                 const isCur = r === run.currentRound;
+                const isSel = r === selectedRound;
                 const state = completed
                   ? "done"
                   : isCur && isRunning
@@ -422,8 +664,16 @@ export default function IterationPage() {
                     : isCur
                       ? "now"
                       : "pending";
+                const notStarted = state === "pending";
                 return (
-                  <div key={r} className={`iter-step ${state}`}>
+                  <button
+                    type="button"
+                    key={r}
+                    className={`iter-step ${state} ${isSel ? "selected" : ""}`}
+                    disabled={notStarted}
+                    onClick={() => setSelectedRound(r)}
+                    title={notStarted ? `第 ${r} 轮(尚未开始)` : `查看第 ${r} 轮`}
+                  >
                     <div className="iter-step-num">{completed ? "✓" : r}</div>
                     <div className="iter-step-meta">
                       {completed?.aggregate
@@ -432,7 +682,7 @@ export default function IterationPage() {
                           ? `${doneInRound}/${totalInRound}局`
                           : ""}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -456,28 +706,67 @@ export default function IterationPage() {
             </div>
           )}
 
-          {/* 本轮逐局结果 */}
+          {/* 选中轮次的逐局结果 */}
           <div className="iteration-game-list">
-            <p className="eyebrow">本轮逐局</p>
-            {(run?.currentRoundGames ?? []).slice().reverse().map((g, i) => (
+            <p className="eyebrow">第 {selectedRound ?? "?"} 轮逐局</p>
+            {displayedRoundGames.slice().reverse().map((g, i) => (
               <GameCard
-                key={`${g.roomId}-${i}`}
+                key={`${g.roomId || "pending"}-${g.gameIndex ?? i}`}
                 g={g}
                 onViewReplay={(id) => router.push(`/replay/${id}`)}
               />
             ))}
-            {!run?.currentRoundGames?.length && (
-              <p className="muted-text">尚未开始或本轮无数据。</p>
+            {!displayedRoundGames.length && (
+              <p className="muted-text">
+                {isSelectedRoundCurrent ? "尚未开始或本轮无数据。" : "该轮暂无对局数据。"}
+              </p>
             )}
           </div>
 
-          {/* 各轮分数趋势 */}
-          {(run?.rounds ?? []).length > 0 && (
+          {/* 选中轮次的 scorecard */}
+          {run && selectedRound != null && (
             <div className="iteration-round-trend">
-              <p className="eyebrow">各轮 scorecard</p>
-              {run!.rounds.map((r) => (
-                <RoundCard key={r.round} round={r} />
-              ))}
+              <p className="eyebrow">第 {selectedRound} 轮 scorecard</p>
+              {selectedRoundData ? (
+                <RoundCard key={selectedRoundData.round} round={selectedRoundData} />
+              ) : (
+                <p className="muted-text">
+                  {isSelectedRoundCurrent
+                    ? "本轮尚未完成,暂无 scorecard。"
+                    : "该轮尚未完成,暂无 scorecard。"}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* 选中轮次的自动优化记录(独立区块,与 scorecard 分开) */}
+          {run && selectedRound != null &&
+            (run.options?.autoEdit ||
+              Boolean(selectedRoundData?.autoEdit) ||
+              (isSelectedRoundCurrent && isAutoEditing)) && (
+            <div className="iteration-autoedit-list">
+              <p className="eyebrow">第 {selectedRound} 轮 自动优化记录</p>
+              {selectedRoundData?.autoEdit ? (
+                <AutoEditCard
+                  round={selectedRoundData}
+                  runId={run.id}
+                  onSelectGen={(id) => setSelectedGenId(id)}
+                  onViewDetail={(roundNo) => setAutoEditDetailRound(roundNo)}
+                />
+              ) : isSelectedRoundCurrent && isAutoEditing ? (
+                <div className="stat-card iter-autoedit-card status-running">
+                  <div className="iter-round-head">
+                    <strong>第 {run.currentRound} 轮</strong>
+                    <span className="room-tag">自动优化中…</span>
+                    <span className="muted-text iter-autoedit-duration">
+                      已耗时 {formatElapsed(autoEditElapsedMs)}
+                    </span>
+                  </div>
+                  <div className="muted-text">正在执行自动优化,生成候选代,请稍候。</div>
+                </div>
+              ) : (
+                <p className="muted-text">该轮暂无自动优化记录。</p>
+              )}
             </div>
           )}
         </section>
@@ -501,7 +790,18 @@ export default function IterationPage() {
               {generations.length === 0 && (
                 <p className="muted-text">暂无版本。</p>
               )}
-              {generations.map((g) => (
+              {generations.map((g) => {
+                const childCount = generations.filter((x) => x.parentId === g.id).length;
+                const isActiveGen = g.id === activeGenId;
+                const deleteBlocked = childCount > 0 || (isActiveGen && !g.parentId);
+                const deleteTitle = childCount > 0
+                  ? "存在子版本,不允许删除"
+                  : isActiveGen && !g.parentId
+                    ? "激活版本无父代可回退,不允许删除"
+                    : isActiveGen
+                      ? "删除此激活版本(将回退到父代)"
+                      : "删除此版本";
+                return (
                 <div
                   key={g.id}
                   className={`iteration-version-item ${g.id === selectedGenId ? "selected" : ""} ${g.id === activeGenId ? "active" : ""}`}
@@ -533,9 +833,18 @@ export default function IterationPage() {
                     >
                       标记最佳
                     </button>
+                    <button
+                      className="compact-button"
+                      disabled={deleteBlocked}
+                      title={deleteTitle}
+                      onClick={() => handleDelete(g.id, isActiveGen)}
+                    >
+                      删除
+                    </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* 右:选中版本的提示词查看/编辑 */}
@@ -608,12 +917,20 @@ export default function IterationPage() {
                 </h3>
               </div>
               <div className="iteration-modal-tools">
-                <select value={diffAsset} onChange={(e) => setDiffAsset(e.target.value)}>
-                  {ASSET_KEYS.map((k) => (
-                    <option key={k} value={k}>
-                      {k}
-                    </option>
-                  ))}
+                <select
+                  value={diffAsset}
+                  onChange={(e) => setDiffAsset(e.target.value)}
+                  disabled={diffChangedKeys.length === 0}
+                >
+                  {diffChangedKeys.length === 0 ? (
+                    <option value="">无变化的 asset</option>
+                  ) : (
+                    diffChangedKeys.map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))
+                  )}
                 </select>
                 <button className="compact-button" onClick={() => setDiffOpen(false)}>
                   关闭
@@ -626,9 +943,11 @@ export default function IterationPage() {
               <span className="muted-text">
                 {diffLoading
                   ? "加载中…"
-                  : diffParent && diffSelected
-                    ? `${diffAsset}: ${diffStats(assetContent(diffParent, diffAsset), assetContent(diffSelected, diffAsset))}`
-                    : "无法加载版本"}
+                  : !diffParent || !diffSelected
+                    ? "无法加载版本"
+                    : diffChangedKeys.length === 0
+                      ? "该版本与父代无差异"
+                      : `${diffAsset}: ${diffStats(assetContent(diffParent, diffAsset), assetContent(diffSelected, diffAsset))}`}
               </span>
             </div>
             <div className="iteration-modal-diff">
@@ -636,6 +955,8 @@ export default function IterationPage() {
                 <p className="muted-text">加载中…</p>
               ) : !diffParent || !diffSelected ? (
                 <p className="muted-text">无法加载版本详情。</p>
+              ) : diffChangedKeys.length === 0 ? (
+                <p className="muted-text">该版本与父代完全一致,无差异。</p>
               ) : (
                 renderDiff(
                   lineDiff(
@@ -648,6 +969,19 @@ export default function IterationPage() {
           </div>
         </div>
       )}
+
+      {autoEditDetailRound != null && run && (() => {
+        const detailRound = run.rounds.find((r) => r.round === autoEditDetailRound);
+        return (
+          <AutoEditDetailModal
+            runId={run.id}
+            roundNo={autoEditDetailRound}
+            response={detailRound?.autoEdit?.response}
+            aggregate={detailRound?.aggregate ?? null}
+            onClose={() => setAutoEditDetailRound(null)}
+          />
+        );
+      })()}
     </>
   );
 }
@@ -710,6 +1044,68 @@ function RoundCard({ round }: { round: IterationRunStatus["rounds"][number] }) {
   );
 }
 
+function AutoEditCard({
+  round,
+  runId,
+  onSelectGen,
+  onViewDetail,
+}: {
+  round: IterationRunStatus["rounds"][number];
+  runId?: string;
+  onSelectGen?: (genId: string) => void;
+  onViewDetail?: (roundNo: number) => void;
+}) {
+  const edit = round.autoEdit;
+  if (!edit) return null;
+  const statusText =
+    edit.status === "created" ? "已生成" : edit.status === "failed" ? "失败" : "跳过";
+  const statusClass = edit.status;
+  return (
+    <div className={`stat-card iter-autoedit-card status-${statusClass}`}>
+      <div className="iter-round-head">
+        <strong>第 {round.round} 轮</strong>
+        <span className="room-tag">{statusText}</span>
+        {typeof edit.durationMs === "number" && (
+          <span className="muted-text iter-autoedit-duration">
+            耗时 {formatElapsed(edit.durationMs)}
+          </span>
+        )}
+      </div>
+      <div className="muted-text">{autoEditText(edit)}</div>
+      {edit.status === "created" && edit.generationId && (
+        <div className="iter-autoedit-gen">
+          <span className="muted-text">生成代</span>
+          {onSelectGen ? (
+            <button
+              className="compact-button"
+              onClick={() => onSelectGen(edit.generationId!)}
+              title="在版本谱系中选中该代"
+            >
+              {edit.generationId}
+            </button>
+          ) : (
+            <strong>{edit.generationId}</strong>
+          )}
+          {edit.changedAssetKeys && edit.changedAssetKeys.length > 0 && (
+            <span className="muted-text">改动:{edit.changedAssetKeys.join(", ")}</span>
+          )}
+        </div>
+      )}
+      {onViewDetail && runId && (
+        <div className="iter-autoedit-actions">
+          <button
+            className="compact-button"
+            onClick={() => onViewDetail(round.round)}
+            title="查看发往大模型的完整生成输入"
+          >
+            生成详情
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProgressBar({ label, value, max }: { label: string; value: number; max: number }) {
   const pctv = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
@@ -730,8 +1126,12 @@ function currentStepText(
   switch (run.status) {
     case "running":
       return `第 ${run.currentRound}/${run.totalRounds} 轮进行中:已跑 ${doneInRound}/${totalInRound} 局,跑完自动逐局打分并聚合成 scorecard`;
+    case "auto_editing":
+      return `第 ${run.currentRound} 轮已完成,正在执行自动优化,生成候选代,请稍候…`;
     case "awaiting_activation":
       return `第 ${run.currentRound} 轮已完成。请在「版本谱系」创建/激活下一代,再点「继续下一轮」`;
+    case "awaiting_confirmation":
+      return `第 ${run.currentRound} 轮已完成。自动优化已生成 ${run.pendingGenerationId ?? "候选代"},确认后进入下一轮`;
     case "completed":
       return `全部 ${run.totalRounds} 轮已完成`;
     case "stopped":
@@ -751,6 +1151,106 @@ function fmtDuration(sec: number): string {
   const s = Math.max(0, Math.round(sec));
   if (s > 0 && s % 60 === 0) return `${s / 60} 分钟`;
   return `${s} 秒`;
+}
+
+function formatEstimate(totalSec: number): string {
+  const s = Math.max(0, Math.round(totalSec));
+  if (s < 60) return `约 ${s} 秒`;
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  if (h > 0) return m > 0 ? `约 ${h} 小时 ${m} 分` : `约 ${h} 小时`;
+  return `约 ${m} 分钟`;
+}
+
+/** 毫秒 → 「N 秒」/「N 分 M 秒」/「N 分」,用于自动优化耗时展示。 */
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s} 秒`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem > 0 ? `${m} 分 ${rem} 秒` : `${m} 分`;
+}
+
+function personaModeLabel(mode: string): string {
+  switch (mode) {
+    case "random_each_game":
+      return "逐局随机";
+    case "fixed_per_run":
+      return "整次固定";
+    case "fixed_schedule":
+      return "固定赛程";
+    default:
+      return mode;
+  }
+}
+
+function personaModeDescription(mode: string): string {
+  switch (mode) {
+    case "fixed_schedule":
+      return "开始本次 run 时生成一张 B 局人格组合表,后续每一轮复用同一张表;最适合比较不同 prompt generation,因为每代面对的人格分布一致。";
+    case "fixed_per_run":
+      return "整次 run 的所有对局都使用同一组 AI 人格;适合针对某一组稳定人格做小样本压测,但覆盖面比固定赛程低。";
+    case "random_each_game":
+      return "每局建房时重新随机 AI 人格;适合做泛化/烟测,但轮间随机性更大,不适合作为精确版本对比的默认策略。";
+    default:
+      return mode;
+  }
+}
+
+function postRoundModeLabel(mode: string): string {
+  switch (mode) {
+    case "manual":
+      return "人工编辑";
+    case "auto_edit_wait_confirm":
+      return "自动优化后确认";
+    case "auto_edit_activate_continue":
+      return "自动优化并继续";
+    default:
+      return mode;
+  }
+}
+
+function gameStatusLabel(status: IterationGameResult["status"]): string {
+  switch (status) {
+    case "pending":
+      return "待开始";
+    case "running":
+      return "进行中";
+    case "scoring":
+      return "打分中";
+    case "finished":
+      return "已完成";
+    case "failed":
+      return "失败";
+    default:
+      return "已完成";
+  }
+}
+
+function phaseLabel(phase: string | undefined): string {
+  switch (phase) {
+    case "waiting":
+      return "等待开局";
+    case "discussion":
+      return "讨论中";
+    case "voting":
+      return "投票中";
+    case "resolving":
+      return "结算中";
+    case "game_over":
+      return "已结束";
+    default:
+      return "待开始";
+  }
+}
+
+function autoEditText(edit: NonNullable<IterationRunStatus["rounds"][number]["autoEdit"]>): string {
+  if (edit.status === "created") {
+    const keys = edit.changedAssetKeys?.length ? `(${edit.changedAssetKeys.join(", ")})` : "";
+    return `已生成 ${edit.generationId ?? "-"} ${keys}${edit.note ? ` · ${edit.note}` : ""}`;
+  }
+  if (edit.status === "failed") return `失败:${edit.error ?? "未知错误"}`;
+  return `跳过:${edit.error ?? "无变更"}`;
 }
 
 // 冻结打分尺子(system prompt)全局缓存,首次打开详情弹窗时拉取一次。
@@ -775,11 +1275,17 @@ function GameCard({
   onViewReplay: (roomId: string) => void;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
+  const isDone = g.status === "finished" || Boolean(g.score);
+  const canOpenReplay = Boolean(g.roomId) && (isDone || g.status === "failed");
+  const canOpenScore = Boolean(g.score) && !g.error;
 
   return (
-    <div className={`iter-game-card ${g.winner ?? ""}`}>
+    <div className={`iter-game-card ${g.winner ?? ""} status-${g.status ?? "finished"}`}>
       <div className="iter-game-head">
-        <span className="room-tag">{g.roomId}</span>
+        <span className="room-tag">
+          {g.roomId || `第 ${(g.gameIndex ?? 0) + 1} 局`}
+        </span>
+        <span className="room-tag muted-tag">{gameStatusLabel(g.status)}</span>
         <span className={`iter-winner ${g.winner ?? ""}`}>
           {winnerLabel(g.winner)}
         </span>
@@ -788,6 +1294,12 @@ function GameCard({
         <span className="error-text">失败:{g.error}</span>
       ) : (
         <div className="iter-game-body">
+          <div className="iter-game-meta">
+            <span>{phaseLabel(g.phase)}</span>
+            <span>游戏第 {g.currentGameRound ?? "-"} 轮</span>
+            <span>AI {g.aiAlive ?? "-"}/{g.aiTotal ?? "-"}</span>
+            <span>模拟真人 {g.simulatedHumanAlive ?? "-"}/{g.simulatedHumanTotal ?? "-"}</span>
+          </div>
           <div className="iter-game-score">
             <span className="muted-text">拟人度</span>
             <strong>{g.humanLikeScore ?? "-"}</strong>
@@ -798,15 +1310,23 @@ function GameCard({
               style={{ width: `${g.humanLikeScore ?? 0}%` }}
             />
           </div>
-          <button className="compact-button" onClick={() => onViewReplay(g.roomId)}>
+          <button
+            className="compact-button"
+            disabled={!canOpenReplay}
+            onClick={() => canOpenReplay && onViewReplay(g.roomId)}
+          >
             复盘 →
           </button>
-          <button className="compact-button" onClick={() => setModalOpen(true)}>
+          <button
+            className="compact-button"
+            disabled={!canOpenScore}
+            onClick={() => canOpenScore && setModalOpen(true)}
+          >
             打分详情
           </button>
         </div>
       )}
-      {modalOpen && !g.error && (
+      {modalOpen && canOpenScore && (
         <ScoreDetailModal g={g} onClose={() => setModalOpen(false)} />
       )}
     </div>
@@ -1143,6 +1663,171 @@ function ScoreDetailModal({
   );
 }
 
+type AutoEditRequestData = {
+  system: string;
+  user: string;
+  config: {
+    url: string;
+    model: string;
+    temperature: number;
+    reasoningEffort: string;
+    thinking: boolean;
+  };
+};
+
+function AutoEditDetailModal({
+  runId,
+  roundNo,
+  response,
+  aggregate,
+  onClose,
+}: {
+  runId: string;
+  roundNo: number;
+  response?: string;
+  aggregate: IterationRunStatus["rounds"][number]["aggregate"];
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"result" | "scorecard" | "user" | "system" | "request">("result");
+  const [data, setData] = useState<AutoEditRequestData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  // 弹窗打开时锁定底层页面滚动,关闭时恢复。
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    fetch(`${API_URL}/debug/iterations/auto-edit-request/${runId}/${roundNo}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled) return;
+        if (json?.ok) setData(json.request);
+        else setError(json?.error ?? "加载失败");
+      })
+      .catch(() => {
+        if (!cancelled) setError("加载失败");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, roundNo]);
+
+  return createPortal(
+    <div className="iteration-modal-overlay" onClick={onClose}>
+      <div
+        className="iteration-modal iter-score-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="iteration-modal-head">
+          <div>
+            <p className="eyebrow">自动优化生成详情 · 第 {roundNo} 轮</p>
+            <h3>发往大模型的完整输入</h3>
+          </div>
+          <button className="compact-button" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+
+        <div className="iter-score-modal-body">
+          {loading ? (
+            <p className="muted-text">加载中…</p>
+          ) : error ? (
+            <p className="error-text">{error}</p>
+          ) : data ? (
+            <>
+              <div className="iter-metric-grid">
+                <Metric label="模型" value={data.config.model} />
+                <Metric label="Temperature" value={num(data.config.temperature)} />
+                <Metric label="Reasoning Effort" value={data.config.reasoningEffort} />
+                <Metric label="Thinking" value={data.config.thinking ? "开启" : "关闭"} />
+              </div>
+
+              <div className="iter-section">
+                <div className="iter-tabs">
+                  <button
+                    className={`iter-tab ${tab === "result" ? "active" : ""}`}
+                    onClick={() => setTab("result")}
+                  >
+                    生成结果
+                  </button>
+                  <button
+                    className={`iter-tab ${tab === "scorecard" ? "active" : ""}`}
+                    onClick={() => setTab("scorecard")}
+                  >
+                    本轮聚合 scorecard
+                  </button>
+                  <button
+                    className={`iter-tab ${tab === "user" ? "active" : ""}`}
+                    onClick={() => setTab("user")}
+                  >
+                    用户提示词
+                  </button>
+                  <button
+                    className={`iter-tab ${tab === "system" ? "active" : ""}`}
+                    onClick={() => setTab("system")}
+                  >
+                    系统提示词
+                  </button>
+                  <button
+                    className={`iter-tab ${tab === "request" ? "active" : ""}`}
+                    onClick={() => setTab("request")}
+                  >
+                    完整请求 JSON(发往大模型)
+                  </button>
+                </div>
+                <pre className="iter-detail-pre">
+                  {tab === "request"
+                    ? JSON.stringify(
+                        {
+                          url: data.config.url,
+                          model: data.config.model,
+                          temperature: data.config.temperature,
+                          messages: [
+                            { role: "system", content: data.system },
+                            { role: "user", content: data.user },
+                          ],
+                          reasoning_effort: data.config.reasoningEffort,
+                          ...(data.config.thinking
+                            ? { thinking: { type: "enabled" } }
+                            : {}),
+                        },
+                        null,
+                        2,
+                      )
+                    : tab === "system"
+                      ? data.system
+                      : tab === "user"
+                        ? data.user
+                        : tab === "scorecard"
+                          ? aggregate
+                            ? JSON.stringify(aggregate, null, 2)
+                            : "(本轮无有效聚合 scorecard)"
+                          : response?.trim()
+                            ? response
+                            : "(无生成结果:本轮自动优化未调用大模型或调用失败)"}
+                </pre>
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="iter-metric-card">
@@ -1186,8 +1871,12 @@ function statusLabel(s: string): string {
   switch (s) {
     case "running":
       return "进行中";
+    case "auto_editing":
+      return "自动优化中";
     case "awaiting_activation":
       return "等待激活下一代";
+    case "awaiting_confirmation":
+      return "等待确认候选代";
     case "completed":
       return "已完成";
     case "stopped":

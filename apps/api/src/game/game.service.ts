@@ -179,7 +179,21 @@ export class GameService {
 
     const now = new Date().toISOString();
     const defaultModelId = this.aiService.getDefaultModelId();
-    const aiPlayers = createDebugAutoAiPlayers(1, undefined, undefined, defaultModelId);
+    const personaIds = (payload.personaIds ?? []).filter(Boolean);
+    if (personaIds.length > 0) {
+      const activePersonaIds = new Set(getActivePersonas().map((persona) => persona.id));
+      const missing = personaIds.filter((id) => !activePersonaIds.has(id));
+      if (missing.length > 0) {
+        return this.fail(`AI 人格不存在: ${missing.join(", ")}`);
+      }
+    }
+    const aiPlayers = createDebugAutoAiPlayers(
+      1,
+      personaIds.length > 0 ? personaIds.length : undefined,
+      undefined,
+      defaultModelId,
+      personaIds.length > 0 ? personaIds : undefined,
+    );
     const room: Room = {
       id: createRoomId(),
       status: "waiting",

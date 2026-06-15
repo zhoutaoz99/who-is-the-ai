@@ -821,7 +821,7 @@ export default function WaitingRoomPage() {
                             handleUpdateFastMode(event.target.checked)
                           }
                         />
-                        <span>快速模式</span>
+                        <span>顺序发言</span>
                       </label>
                     )}
                   </div>

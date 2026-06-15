@@ -12,7 +12,8 @@
   font-size: 13px;
   color: var(--muted);
 }
-.iteration-controls input {
+.iteration-controls input,
+.iteration-controls select {
   width: 96px;
   padding: 8px 10px;
   border: 1px solid var(--line);
@@ -21,11 +22,41 @@
   color: var(--text);
   font-size: 15px;
 }
+.iteration-controls select {
+  width: 160px;
+}
+.iteration-controls .iter-checkbox-label {
+  min-width: 96px;
+}
+.iteration-controls input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.iter-option-help {
+  max-width: 280px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .iteration-actions {
   display: flex;
   gap: 12px;
   align-items: center;
   margin-bottom: 12px;
+}
+.iter-estimate {
+  margin: 4px 0 12px;
+  font-size: 13px;
+}
+.iter-estimate strong {
+  color: var(--text);
+  margin-right: 6px;
+}
+.iter-estimate-note {
+  font-size: 12px;
+  color: var(--muted);
 }
 .iteration-status-row {
   display: flex;
@@ -69,6 +100,50 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+/* 自动优化记录(独立于各轮 scorecard) */
+.iteration-autoedit-list {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.iter-autoedit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.iter-autoedit-card .room-tag {
+  background: var(--muted);
+  color: #fff;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.iter-autoedit-card.status-created .room-tag {
+  background: var(--accent, #0f7670);
+}
+.iter-autoedit-card.status-failed .room-tag {
+  background: #dc2626;
+}
+.iter-autoedit-card.status-running .room-tag {
+  background: #2563eb;
+}
+.iter-autoedit-gen {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.iter-autoedit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+.iter-autoedit-duration {
+  font-size: 12px;
+  margin-left: auto;
 }
 .stat-card-row {
   display: flex;
@@ -348,7 +423,9 @@
   white-space: nowrap;
 }
 .iter-step-badge.step-running { background: var(--accent); }
+.iter-step-badge.step-auto_editing { background: #7c3aed; }
 .iter-step-badge.step-awaiting_activation { background: var(--warning); }
+.iter-step-badge.step-awaiting_confirmation { background: var(--warning); }
 .iter-step-badge.step-completed { background: #2e7d32; }
 .iter-step-badge.step-stopped { background: var(--muted); }
 .iter-step-badge.step-failed { background: var(--danger); }
@@ -370,6 +447,25 @@
   text-align: center;
   background: var(--surface);
   opacity: 0.6;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+.iter-step:hover {
+  opacity: 0.9;
+}
+.iter-step:disabled,
+.iter-step.pending {
+  cursor: not-allowed;
+}
+.iter-step:disabled:hover {
+  opacity: 0.6;
+}
+.iter-step.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.35);
+  opacity: 1;
 }
 .iter-step.done {
   border-color: #2e7d32;
@@ -424,12 +520,27 @@
   gap: 6px;
   background: var(--surface);
 }
+.iter-game-card.status-pending {
+  opacity: 0.72;
+}
+.iter-game-card.status-running,
+.iter-game-card.status-scoring {
+  border-left-color: var(--warning);
+}
+.iter-game-card.status-failed {
+  border-left-color: var(--danger);
+}
 .iter-game-card.ai { border-left-color: var(--accent); }
 .iter-game-card.human { border-left-color: var(--danger); }
 .iter-game-head {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+.iter-game-head .muted-tag {
+  background: var(--line);
+  color: var(--muted);
 }
 .iter-winner {
   font-size: 13px;
@@ -441,6 +552,21 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+}
+.iter-game-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: min(100%, 260px);
+  color: var(--muted);
+  font-size: 12px;
+}
+.iter-game-meta span {
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.02);
 }
 .iter-game-score {
   display: flex;

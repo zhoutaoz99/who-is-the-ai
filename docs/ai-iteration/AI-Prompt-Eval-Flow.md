@@ -77,7 +77,8 @@ flowchart LR
 | **代(generation)** | 一组提示词版本的快照(6 个文本模板 + 人格库 JSON 的各一个版本号)。`ai_prompt_generations` 一行。 |
 | **active 代** | 当前线上对局实际使用的代,由 `ai_prompt_state` 单例指针指定。**热切换**:改指针即生效,无需重启。 |
 | **run** | 一次「开始迭代」到「完成/停止」的过程,含 K 轮。`iteration_runs` 一行。 |
-| **轮(round)** | 用当前 active 代跑 B 局 → 打分 → 聚合。轮与轮之间进入 `awaiting_activation` 等待人工换版本。 |
+| **轮(round)** | 用当前 active 代跑 B 局 → 打分 → 聚合。轮与轮之间可人工换版本,也可由「自动优化」基于本轮 scorecard 派生候选代后等待确认或自动继续(详细逻辑见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4)。 |
+| **自动优化(auto-edit)** | 轮聚合后调用编辑模型,基于 scorecard + 逐局摘要 + 当前代 assets 派生候选代。UI 称「自动优化」,代码标识符沿用历史名 `autoEdit` / `createAutoEditGeneration` / 状态 `auto_editing` / 轮后模式 `auto_edit_*`。 |
 | **scorecard** | 一轮 B 局分数的聚合(胜率、humanLikeScore 均值±标准误、各 tell 命中率、高频问题)。 |
 
 ---
@@ -98,9 +99,14 @@ flowchart TD
     R4 --> R5{"R >= K ?"}
   end
 
-  R5 -- 否 --> WAIT["status = awaiting_activation<br/>emit round / status"]
+  R5 -- 否且 manual --> WAIT["status = awaiting_activation<br/>emit round / status"]
   WAIT --> MANUAL[/"人工:版本面板<br/>编辑 asset → 创建新代 → 激活<br/>(PromptRegistry 热切换 active)"/]
+  R5 -- 否且 auto_edit_wait_confirm --> EDIT["自动优化器<br/>createGeneration(candidate)"]
+  EDIT --> CONFIRM["status = awaiting_confirmation<br/>等待人工确认候选代"]
+  CONFIRM --> CONT["用户点「确认并继续」<br/>setActive(candidate)"]
   MANUAL --> CONT["用户点「继续下一轮」<br/>iteration.continue"]
+  R5 -- 否且 auto_edit_activate_continue --> AUTO["自动优化器<br/>createGeneration + setActive"]
+  AUTO --> NEXT
   CONT --> NEXT["continueToNextRound()<br/>round++ → runRound"]
 
   R5 -- 是 --> DONE["status = completed<br/>emit done"]
@@ -110,7 +116,8 @@ flowchart TD
 ```
 
 要点:
-- **评估循环自动跑,版本激活人工操作**(本期不做自动编辑器,`IterationService` 预留 `editor` 钩子)。
+- 轮后模式有三种:`manual`(人工编辑/激活)、`auto_edit_wait_confirm`(自动优化生成候选代,人工确认后继续)、`auto_edit_activate_continue`(自动优化生成并激活,直接继续)。
+- **自动优化是阻塞式大模型调用**(数十秒):`runRound` 进入编辑调用前先持久化并广播 `status = auto_editing`,让前端及时显示「自动优化中…」;`retryAutoEdit()`(自动优化失败后用户点「重试自动优化」)同样**先 ack 再异步执行**,结果通过 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时(详见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4.3)。
 - 不强制换版本:保持同一代继续跑,只是为该代累积更多样本、分数会更稳。
 - **单进程互斥**:同时只允许一个 run(active 代是进程级单例)。
 
@@ -199,7 +206,8 @@ sequenceDiagram
 ```
 
 - 前端首屏与断线重连走 `GET /debug/iterations`(返回当前/最近 run 快照)兜底。
-- 事件:`iteration.status`(全量快照)、`iteration.game`(单局)、`iteration.round`(轮聚合)、`iteration.done`。
+- 事件:`iteration.status`(全量快照,含 `running / auto_editing / awaiting_activation / awaiting_confirmation / completed / stopped / failed` 等状态)、`iteration.game`(单局)、`iteration.round`(轮聚合)、`iteration.done`。
+- 自动优化结果(候选代 id / 失败原因 / 模型原始返回)随 `iteration.status` 全量快照下发,前端无需单独轮询;`retryAutoEdit` 的异步结果亦通过同一事件推送。
 
 ---
 
@@ -248,6 +256,7 @@ erDiagram
 | `DEFAULT_ROUNDS` (K) | 4 | 一个 run 的轮数 |
 | `DEFAULT_GAMES_PER_ROUND` (B) | 6 | 每轮局数 |
 | `DEFAULT_DISCUSSION_SECONDS` | 60 | 每轮讨论时长(秒,默认 60s) |
+| `DEFAULT_PERSONA_MODE` | `fixed_schedule` | 开始 run 时生成 B 局人格组合表,每轮复用同一赛程 |
 | `GAME_CONCURRENCY` | 3 | 单轮内并发对局上限 |
 | `POLL_INTERVAL_MS` | 2500 | 轮询对局完成间隔 |
 | `STUCK_AFTER_MS` | 90000 | 卡死判定阈值 |
@@ -264,8 +273,12 @@ erDiagram
 ## 11. 使用方式
 
 **前端 `/iteration` 页面(唯一入口)**
-设置 B/K/时长 → 开始迭代 → 实时看进度 → 轮间在「版本谱系与激活」面板:左侧选版本、右侧查看/编辑提示词、「与父代对比」看差异(高亮增删行)→ 创建新代 → 激活 → 继续下一轮。
+设置 B/K/时长 → 开始迭代 → 实时看进度 → 轮间在「版本谱系与激活」面板:左侧选版本、右侧查看/编辑提示词、「与父代对比」看差异(高亮增删行,**仅列出与父代有差异的 asset**)→ 创建新代 → 激活 → 继续下一轮;版本行支持「删除」(**存在子版本时不允许**;删除激活代会自动回退到其父代)。
 
-版本管理动作背后调用的是 DEBUG 网关的 HTTP 接口:`GET /debug/prompts/generations`、`GET /debug/prompts/generations/:id`、`POST /debug/prompts/generation`、`POST /debug/prompts/active`、`POST /debug/prompts/best`、`POST /debug/prompts/score`(均在 `apps/api/src/ai/prompt-version.controller.ts`)。
+**轮次选择驱动详情视图**:顶部轮次 stepper 可点击切换关注的轮次(尚未开始的轮次不可点),下方的「逐局 / scorecard / 自动优化记录」三处随之显示该轮数据。其中「自动优化记录」是独立区块(与 scorecard 分开),每条记录可点「生成详情」打开弹窗,按 **生成结果 → 本轮聚合 scorecard → 用户提示词 → 系统提示词 → 完整请求 JSON** 的顺序查看该轮自动优化发往大模型的完整输入与模型返回。
+
+版本管理动作背后调用的是 DEBUG 网关的 HTTP 接口(均在 `apps/api/src/ai/prompt-version.controller.ts`):`GET /debug/prompts/generations`、`GET /debug/prompts/generations/:id`、`POST /debug/prompts/generation`、`POST /debug/prompts/active`、`POST /debug/prompts/best`、`POST /debug/prompts/score`、`DELETE /debug/prompts/generation/:id`(删除代,存在子代或为无父代的激活代时拒绝)。
+
+迭代 run 的 HTTP 兜底/详情接口(在 `apps/api/src/iteration/iteration.controller.ts`):`GET /debug/iterations`(当前/最近 run 快照)、`GET /debug/iterations/estimate`(按 `rounds/gamesPerRound/discussionSeconds/postRoundMode` 估算预计用时,供参数面板动态提示)、`GET /debug/iterations/scorer-prompt`(冻结尺子)、`GET /debug/iterations/score-request/:roomId`(重建某局打分请求)、`GET /debug/iterations/auto-edit-request/:runId/:roundNo`(重建某轮自动优化请求,供详情弹窗)。
 
 > 入口在首页 `{debug && ...}` 门控,需 `DEBUG=true` 且 API 在运行。

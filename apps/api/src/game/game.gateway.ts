@@ -234,6 +234,11 @@ export class GameGateway
     return this.iterationService.continueToNextRound();
   }
 
+  @SubscribeMessage("iteration.retryAutoEdit")
+  async handleIterationRetryAutoEdit() {
+    return this.iterationService.retryAutoEdit();
+  }
+
   @SubscribeMessage("iteration.stop")
   async handleIterationStop() {
     return this.iterationService.stop();

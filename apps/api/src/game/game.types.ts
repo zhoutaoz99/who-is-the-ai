@@ -191,6 +191,11 @@ export interface StartIterationPayload {
   rounds?: number;
   gamesPerRound?: number;
   discussionSeconds?: number;
+  fastMode?: boolean;
+  personaMode?: "random_each_game" | "fixed_per_run" | "fixed_schedule";
+  personaIds?: string[];
+  autoEdit?: boolean;
+  postRoundMode?: "manual" | "auto_edit_wait_confirm" | "auto_edit_activate_continue";
 }
 
 export interface SendChatPayload {
@@ -235,6 +240,7 @@ export interface DebugAddAiPayload {
 export interface CreateDebugAutoAiRoomPayload {
   discussionDurationSeconds?: number;
   fastMode?: boolean;
+  personaIds?: string[];
 }
 
 export interface DebugRemoveAiPayload {

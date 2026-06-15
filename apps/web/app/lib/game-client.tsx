@@ -72,6 +72,7 @@ type GameClientContextValue = {
   iterationRun: IterationRunStatus | null;
   startIteration: (payload: StartIterationPayload) => Promise<ActionResult>;
   continueIteration: () => Promise<ActionResult>;
+  retryAutoEdit: () => Promise<ActionResult>;
   stopIteration: () => Promise<ActionResult>;
   refreshIteration: () => Promise<void>;
 };
@@ -282,14 +283,20 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("game.ended", syncRoom);
     socket.on("round.tick", applyRoundTick);
 
-    // 迭代 run 实时事件:status 全量快照;game 单局完成追加到当前轮。
+    // 迭代 run 实时事件:status 全量快照;game 单局进度按 gameIndex/roomId 合并。
     socket.on("iteration.status", (payload: IterationRunStatus) =>
       setIterationRun(payload),
     );
     socket.on("iteration.game", (payload: IterationGameResult) =>
       setIterationRun((current) =>
         current && current.status === "running"
-          ? { ...current, currentRoundGames: [...current.currentRoundGames, payload] }
+          ? {
+              ...current,
+              currentRoundGames: upsertIterationGame(
+                current.currentRoundGames,
+                payload,
+              ),
+            }
           : current,
       ),
     );
@@ -607,6 +614,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       startIteration: async (payload: StartIterationPayload) =>
         emitAction<StartIterationPayload>("iteration.start", payload ?? {}),
       continueIteration: async () => emitAction("iteration.continue", {}),
+      retryAutoEdit: async () => emitAction("iteration.retryAutoEdit", {}),
       stopIteration: async () => emitAction("iteration.stop", {}),
       refreshIteration,
       joinRoom: async (roomId?: string) => {
@@ -795,4 +803,19 @@ export function useGameClient() {
     throw new Error("useGameClient must be used inside GameClientProvider");
   }
   return context;
+}
+
+function upsertIterationGame(
+  games: IterationGameResult[],
+  next: IterationGameResult,
+): IterationGameResult[] {
+  const idx = games.findIndex((game) =>
+    (next.roomId && game.roomId === next.roomId) ||
+    game.gameIndex === next.gameIndex,
+  );
+  const merged =
+    idx >= 0
+      ? games.map((game, i) => (i === idx ? { ...game, ...next } : game))
+      : [...games, next];
+  return merged.slice().sort((a, b) => (a.gameIndex ?? 0) - (b.gameIndex ?? 0));
 }

@@ -246,12 +246,21 @@ export function createDebugAutoAiPlayers(
   aiCount = DEBUG_AUTO_AI_PLAYER_COUNT,
   simulatedHumanCount = DEBUG_AUTO_SIMULATED_HUMAN_COUNT,
   defaultModelId?: string,
+  personaIds?: string[],
 ): Player[] {
   const players: Player[] = [];
-  const safeAiCount = Math.max(1, Math.floor(aiCount));
+  const requestedPersonaIds = (personaIds ?? []).filter(Boolean);
+  const safeAiCount = Math.max(1, Math.floor(aiCount), requestedPersonaIds.length);
   const safeSimulatedHumanCount = Math.max(1, Math.floor(simulatedHumanCount));
 
-  players.push(createAiPlayer(startSeatNo, ACTIVE_ICEBREAKER_PERSONA_ID, [], defaultModelId));
+  players.push(
+    createAiPlayer(
+      startSeatNo,
+      requestedPersonaIds[0] ?? ACTIVE_ICEBREAKER_PERSONA_ID,
+      [],
+      defaultModelId,
+    ),
+  );
 
   const otherPersonaIds = getActivePersonas().filter(
     (persona) => persona.id !== ACTIVE_ICEBREAKER_PERSONA_ID,
@@ -261,7 +270,10 @@ export function createDebugAutoAiPlayers(
 
   while (players.filter((player) => player.type === "ai").length < safeAiCount) {
     const aiIndex = players.filter((player) => player.type === "ai").length;
-    const personaId = otherPersonaIds[aiIndex - 1] ?? randomItem(getActivePersonas())?.id;
+    const personaId =
+      requestedPersonaIds[aiIndex] ??
+      otherPersonaIds[aiIndex - 1] ??
+      randomItem(getActivePersonas())?.id;
     players.push(
       createAiPlayer(
         startSeatNo + players.length,

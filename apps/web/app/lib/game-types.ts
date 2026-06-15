@@ -133,16 +133,45 @@ export type SpeechDiscardedPayload = {
 
 export type IterationStatus =
   | "running"
+  | "auto_editing"
   | "awaiting_activation"
+  | "awaiting_confirmation"
   | "completed"
   | "stopped"
   | "failed";
 
+export type IterationPersonaMode =
+  | "random_each_game"
+  | "fixed_per_run"
+  | "fixed_schedule";
+
+export type IterationPostRoundMode =
+  | "manual"
+  | "auto_edit_wait_confirm"
+  | "auto_edit_activate_continue";
+
+export type IterationRunOptions = {
+  fastMode: boolean;
+  personaMode: IterationPersonaMode;
+  personaIds?: string[];
+  personaSchedule?: string[][];
+  autoEdit: boolean;
+  postRoundMode: IterationPostRoundMode;
+};
+
 export type IterationGameResult = {
+  gameIndex?: number;
+  status?: "pending" | "running" | "scoring" | "finished" | "failed";
   round: number;
   roomId: string;
   winner: string | null;
   generationId: string | null;
+  currentGameRound?: number;
+  phase?: string;
+  aiAlive?: number;
+  simulatedHumanAlive?: number;
+  aiTotal?: number;
+  simulatedHumanTotal?: number;
   humanLikeScore?: number;
   aiWin?: boolean;
   error?: string;
@@ -168,6 +197,15 @@ export type IterationRound = {
   generationId: string | null;
   games: IterationGameResult[];
   aggregate: IterationRoundAggregate | null;
+  autoEdit?: {
+    status: "created" | "skipped" | "failed";
+    generationId?: string;
+    changedAssetKeys?: string[];
+    note?: string;
+    error?: string;
+    response?: string;
+    durationMs?: number;
+  };
 };
 
 export type IterationRunStatus = {
@@ -178,8 +216,11 @@ export type IterationRunStatus = {
   gamesPerRound: number;
   discussionSeconds: number;
   activeGenerationId: string | null;
+  pendingGenerationId?: string | null;
+  options?: IterationRunOptions;
   currentRoundGames: IterationGameResult[];
   rounds: IterationRound[];
+  lastAutoEdit?: IterationRound["autoEdit"] | null;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -189,6 +230,11 @@ export type StartIterationPayload = {
   rounds?: number;
   gamesPerRound?: number;
   discussionSeconds?: number;
+  fastMode?: boolean;
+  personaMode?: IterationPersonaMode;
+  personaIds?: string[];
+  autoEdit?: boolean;
+  postRoundMode?: IterationPostRoundMode;
 };
 
 export type GenerationSummary = {
