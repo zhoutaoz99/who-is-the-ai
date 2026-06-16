@@ -9,9 +9,9 @@
 | 责任人 | AI / Evaluation 维护者 |
 | 最近核对日期 | 2026-06-16 |
 | 关联代码 | `apps/api/src/ai/`、`apps/api/src/replay/`、`apps/web/app/iteration/` |
-| 关联文档 | [AI-Prompt-Eval-Details.md](./AI-Prompt-Eval-Details.md)、[AI-Human-Likeness.md](./AI-Human-Likeness.md)、[Replay-Analysis.md](./Replay-Analysis.md) |
+| 关联文档 | [AI-Prompt-Eval.md](./AI-Prompt-Eval.md)、[AI-Prompt-Eval-Auto-Optimize.md](./AI-Prompt-Eval-Auto-Optimize.md)、[AI-Prompt-Eval-Details.md](./AI-Prompt-Eval-Details.md)、[AI-Human-Likeness.md](./AI-Human-Likeness.md)、[Replay-Analysis.md](./Replay-Analysis.md) |
 
-本文聚焦整体流程与运行逻辑，配合流程图说明「自动对局评估自迭代」如何运转。设计动机与取舍见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md)，拟人化迭代记录见 [`AI-Human-Likeness.md`](AI-Human-Likeness.md)。与「复盘」([`Replay-Analysis.md`](./Replay-Analysis.md)) 的区别是：复盘是单局定性分析（开放文本、不改状态，给人读）；本文是批量定量评估（结构化 JSON 分数、聚合 scorecard、驱动版本激活/回滚）。两者共用复盘导出 JSON 与 `REPLAY_ANALYSIS_*` 模型，但**单局打分**与**自动优化器**的提示词现已走独立的**评估尺子版本库**；`ReplayService` 的单局复盘分析提示词仍保持文件来源。
+本文只讲整体流程与运行逻辑。入口与分工见 [`AI-Prompt-Eval.md`](AI-Prompt-Eval.md); 自动优化器的内部链路、重试与详情重建见 [`AI-Prompt-Eval-Auto-Optimize.md`](AI-Prompt-Eval-Auto-Optimize.md); 设计动机与取舍见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md),拟人化迭代记录见 [`AI-Human-Likeness.md`](AI-Human-Likeness.md)。与「复盘」([`Replay-Analysis.md`](./Replay-Analysis.md)) 的区别是：复盘是单局定性分析（开放文本、不改状态，给人读）；本文是批量定量评估（结构化 JSON 分数、聚合 scorecard、驱动版本激活/回滚）。两者共用复盘导出 JSON 与 `REPLAY_ANALYSIS_*` 模型，但**单局打分**与评估尺子提示词走独立版本库；`ReplayService` 的单局复盘分析提示词仍保持文件来源。
 
 ## 1. 概览
 
@@ -84,8 +84,8 @@ flowchart LR
 | **active 代** | 当前线上对局实际使用的代,由 `ai_prompt_state` 单例指针指定。**热切换**:改指针即生效,无需重启。 |
 | **评估尺子代(eval generation)** | 一组评估提示词版本的快照,当前只含 `replay-score/*` 与 `auto-optimize/*` 四个 asset。由 `eval_prompt_state` 单例指针指定 active。 |
 | **run** | 一次「开始迭代」到「完成/停止」的过程,含 K 轮。`iteration_runs` 一行。 |
-| **轮(round)** | 用当前 active 代跑 B 局 → 打分 → 聚合。轮与轮之间可人工手动优化/换版本,也可由「自动优化」基于本轮 scorecard 派生候选代后等待确认或自动继续(详细逻辑见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4)。 |
-| **自动优化(auto-optimize)** | 轮聚合后调用优化模型,基于 scorecard + 逐局摘要 + 当前代 assets 派生候选代。前端 UI、接口与代码内部统一使用 `autoOptimize` / `createAutoOptimizeGeneration` / `auto_optimizing` / `auto_optimize_*` 这一套命名。 |
+| **轮(round)** | 用当前 active 代跑 B 局 → 打分 → 聚合。轮与轮之间可人工手动优化/换版本,也可由「自动优化」基于本轮 scorecard 派生候选代后等待确认或自动继续(实现细节见 [`AI-Prompt-Eval-Auto-Optimize.md`](./AI-Prompt-Eval-Auto-Optimize.md))。 |
+| **自动优化(auto-optimize)** | 轮聚合后调用优化模型,基于 scorecard + 逐局摘要 + 当前代 assets 派生候选代。实现细节见 [`AI-Prompt-Eval-Auto-Optimize.md`](./AI-Prompt-Eval-Auto-Optimize.md)。 |
 | **scorecard** | 一轮 B 局分数的聚合(胜率、humanLikeScore 均值±标准误、各 tell 命中率、高频问题)。 |
 | **`scoreGenerationId` / `autoOptimize.evalGenerationId`** | 运行时写入 `iteration_runs.rounds` 的历史指针,分别记录“某局打分时用的评估尺子代”和“某轮自动优化时用的评估尺子代”,用于事后如实重建请求。 |
 
@@ -133,7 +133,7 @@ flowchart TD
 要点:
 - 轮后模式有三种:`manual`(手动优化/激活)、`auto_optimize_wait_confirm`(自动优化生成候选代,人工确认后继续)、`auto_optimize_activate_continue`(自动优化生成并激活,直接继续)。**默认 `auto_optimize_wait_confirm`**。
 - **自动优化每轮都跑(含末轮)**:末轮若生成候选代,候选代照常落库,但 run 仍直接 `completed`;是否采纳该候选代,由用户在后续新 run 之前到「AI 提示词版本」面板手动激活。
-- **自动优化是阻塞式大模型调用**(数十秒):`runRound` 进入优化调用前先持久化并广播 `status = auto_optimizing`,前端立即看到「自动优化中…」;`retryAutoOptimize()`(自动优化失败后用户点「重试自动优化」)同样**先 ack 再异步执行**,结果通过 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时(详见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4.3)。
+- **自动优化是阻塞式大模型调用**(数十秒):`runRound` 进入优化调用前先持久化并广播 `status = auto_optimizing`,前端立即看到「自动优化中…」;`retryAutoOptimize()` 的异步执行和详情重建见 [`AI-Prompt-Eval-Auto-Optimize.md`](./AI-Prompt-Eval-Auto-Optimize.md)。
 - 不强制换版本:保持同一代继续跑,只是为该代累积更多样本、分数会更稳。
 - **单进程互斥**:同时只允许一个 run(active 代是进程级单例)。
 
@@ -202,30 +202,13 @@ flowchart TD
 
 ---
 
-## 8. 自动优化器(轮后状态流转)
+## 8. 自动优化器
 
-轮 scorecard 产出后,若开启自动优化(`postRoundMode ≠ manual`,**默认 `auto_optimize_wait_confirm`**),`IterationService.createAutoOptimizeGeneration` 调优化模型派生候选代。本节讲**状态流转与时机**;优化器提示词、占位符、`changedAssets` 校验等内部逻辑见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4。
+自动优化器的内部链路、重试和详情重建已独立到 [`AI-Prompt-Eval-Auto-Optimize.md`](./AI-Prompt-Eval-Auto-Optimize.md)。本文只保留主循环里的位置感:
 
-```mermaid
-flowchart TD
-  RUN[/"running:本轮 B 局打分聚合完成"/] --> AE["广播 status=auto_optimizing<br/>(前端显示「自动优化中…」)"]
-  AE --> CALL["createAutoOptimizeGeneration<br/>调优化模型(阻塞,数十秒)"]
-  CALL --> GOT{"生成候选代?"}
-  GOT -- "否(skipped/failed)" --> NOCAND{"末轮?"}
-  GOT -- 是 --> LAST{"末轮?"}
-  LAST -- 是 --> DONECAND["completed<br/>候选代留在 AI 提示词版本库"]
-  LAST -- 否 --> MODE{"postRoundMode?"}
-  MODE -- wait_confirm --> CONFIRM["awaiting_confirmation<br/>「确认并继续」→ setActive → 下一轮"]
-  MODE -- activate_continue --> AUTO["setActive(候选代)<br/>→ running 下一轮"]
-  NOCAND -- 否 --> WAIT["awaiting_activation<br/>人工换版本 → 继续下一轮"]
-  NOCAND -- 是 --> DONE["completed, emit done"]
-```
-
-要点:
-- **每轮都触发(含末轮)**:不再受「是否末轮」限制。自动优化器 system / user 提示词来自当前 active 的评估尺子代,并把代号写入 `autoOptimize.evalGenerationId`。
-- **末轮落地判定**:无论有没有候选代,run 都会 `completed` 并 emit `done`;差别只在于“是否额外留下一个可供后续手动激活的 candidate generation”。
-- **阻塞调用异步化**:优化模型调用是阻塞式(数十秒),故进入前先广播 `auto_optimizing`;`retryAutoOptimize()`(自动优化失败后点「重试自动优化」)同样**先 ack 再异步执行**,结果经 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时。
-- **重启恢复**:进程重启丢失内存 `activeRunId` 后,`continueToNextRound` / `retryAutoOptimize` 经 `recoverActiveRun()` 从最近一条非终态 run 恢复,「确认并继续 / 重试自动优化」仍可用。
+- 轮聚合完成后，如果开启自动优化，`runRound` 会先广播 `status = auto_optimizing`。
+- 后续是否进入 `awaiting_confirmation`、`awaiting_activation`、`completed`，由自动优化器文档定义的模式和结果决定。
+- 如果只改自动优化器实现逻辑，优先改独立文档，不要在这里同步展开细节。
 
 ---
 

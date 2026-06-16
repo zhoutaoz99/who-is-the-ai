@@ -35,7 +35,8 @@ docs/
 3. [gameplay/AI-Interaction-Flow.md](./gameplay/AI-Interaction-Flow.md) — AI 玩家在普通对局里如何发言、投票、调模型。
 4. [gameplay/AI-Scheduling.md](./gameplay/AI-Scheduling.md) — 发言调度的设计动机(为什么不像机器人)。
 5. [ai-iteration/AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) — 拟人化迭代的完整记录。
-6. 再按需进入「自动评估闭环」「复盘」「缓存优化」等专题。
+6. [ai-iteration/AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) — 自动评估闭环入口，先看这个再进 Flow / Auto-Optimize / Details。
+7. 再按需进入「自动对抗调试房」「复盘」「缓存优化」等专题。
 
 ---
 
@@ -60,12 +61,14 @@ docs/
 | 文档 | 内容 |
 | --- | --- |
 | [AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) | AI 拟人化优化的根因分析、已落地项、可实施方案与 4 轮迭代记录。 |
+| [AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) | 自动对局评估自迭代的入口索引,说明 Flow / Auto-Optimize / Details 的分工与阅读路径。 |
+| [AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) | 自动对局评估自迭代的**整体流程**(「步骤之间怎么连」),含组件图、主循环、实时事件、数据模型。 |
+| [AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) | 自动优化器的单独维护点:轮后状态流转、请求重建、重试与日志。 |
 | [AI-Auto-Adversarial-Match.md](./ai-iteration/AI-Auto-Adversarial-Match.md) | 调试用的「AI 自动对抗」调试房:玩家建模、模拟真人强度(normal/high)、快速/普通两套发言调度、投票兜底、前端展示。 |
 | [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) | AI 提示词版本库 + 评估尺子版本库 + 单局打分 + 轮聚合 scorecard 的**内部详细逻辑**(「某一步内部怎么算」)。 |
-| [AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) | 自动对局评估自迭代的**整体流程**(「步骤之间怎么连」),含组件图、主循环、实时事件、数据模型。 |
 | [Replay-Analysis.md](./ai-iteration/Replay-Analysis.md) | 一键复盘的前后端实现、流式输出、版本感知复盘、Prompt 文件与前端展示。 |
 
-> [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) 与 [AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) 是互补的一对:前者讲单步内部计算,后者讲步骤间串联。
+> [AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) 是这条主题线的入口;[AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) 与 [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) 是互补正文:前者讲步骤间串联,后者讲单步内部计算。[AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) 是自动优化器的单独维护点。
 
 ---
 
@@ -89,7 +92,10 @@ gameplay/
                                └─ (跨目录)→ ai-iteration/*
 
 ai-iteration/
-  AI-Human-Likeness.md ── AI-Prompt-Eval-Details.md ── AI-Prompt-Eval-Flow.md
+  AI-Human-Likeness.md ── AI-Prompt-Eval-Details.md
+  AI-Prompt-Eval.md ──┬─ AI-Prompt-Eval-Flow.md
+                      ├─ AI-Prompt-Eval-Auto-Optimize.md
+                      └─ AI-Prompt-Eval-Details.md
   AI-Auto-Adversarial-Match.md ── AI-Prompt-Eval-Details.md
   Replay-Analysis.md ── AI-Prompt-Eval-Details.md
   (跨目录)→ gameplay/AI-Interaction-Flow.md、AI-Scheduling.md

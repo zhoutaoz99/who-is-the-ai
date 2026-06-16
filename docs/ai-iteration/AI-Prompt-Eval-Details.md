@@ -9,13 +9,9 @@
 | 责任人 | AI / Evaluation 维护者 |
 | 最近核对日期 | 2026-06-16 |
 | 关联代码 | `apps/api/src/ai/`、`apps/api/src/iteration/`、`eval/prompts/` |
-| 关联文档 | [AI-Prompt-Eval-Flow.md](./AI-Prompt-Eval-Flow.md)、[Replay-Analysis.md](./Replay-Analysis.md) |
+| 关联文档 | [AI-Prompt-Eval.md](./AI-Prompt-Eval.md)、[AI-Prompt-Eval-Auto-Optimize.md](./AI-Prompt-Eval-Auto-Optimize.md)、[AI-Prompt-Eval-Flow.md](./AI-Prompt-Eval-Flow.md)、[Replay-Analysis.md](./Replay-Analysis.md) |
 
-本文分工如下:
-
-- 本文 = 每个关键步骤的内部详细逻辑(版本库机制、单局打分、轮聚合的计算/判定细节)。
-- [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md) = 步骤之间的串联、状态流转、实时事件、数据模型关系(整体流程图)。
-- 两者互补不重叠:本文讲“某一步内部怎么算”，Flow 文档讲“步骤之间怎么连”。
+本文只讲版本库、单局打分和轮聚合的内部逻辑。入口与分工见 [`AI-Prompt-Eval.md`](AI-Prompt-Eval.md); 自动优化器的独立实现见 [`AI-Prompt-Eval-Auto-Optimize.md`](AI-Prompt-Eval-Auto-Optimize.md); 步骤串联、状态流转和实时事件见 [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md)。
 
 ## 1. 背景与目标
 
@@ -81,7 +77,7 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 - **历史代异步**:`getGenerationAssets(genId)` 走 DB,仅供版本感知复盘/打分取人格。
 - **热切换**:`setActive(genId)` 改指针 + `loadActive()`,引擎立即生效,无需重启。
 - **写操作**:`createGeneration({fromGenId, changedAssets, note})` / `setActive` / `markBest` / `writeScore` / `listGenerations`。
-- **自动优化(auto-optimize)**:轮聚合后若启用自动优化(`auto_optimize_wait_confirm` / `auto_optimize_activate_continue`),`IterationService.createAutoOptimizeGeneration` 会把当前代 assets、本轮 scorecard 与逐局打分摘要交给优化模型,校验 `changedAssets` 后调用 `createGeneration`;`auto_optimize_wait_confirm` 只生成 candidate 并等待人工确认,`auto_optimize_activate_continue` 会立即 `setActive` 并进入下一轮。优化模型的**原始返回正文**存入 `IterationRound.autoOptimize.response`;调用是阻塞式的,故进入优化前先广播 `auto_optimizing` 状态,`retryAutoOptimize` 先 ack 再异步执行。完整链路(优化器 system/user 提示词、占位符、校验规则、详情重建接口)见本文 §4。
+- **自动优化(auto-optimize)**:轮聚合后若启用自动优化,`IterationService.createAutoOptimizeGeneration` 会把当前代 assets、本轮 scorecard 与逐局摘要交给独立的自动优化器实现;状态、请求重建与重试策略见 [`AI-Prompt-Eval-Auto-Optimize.md`](AI-Prompt-Eval-Auto-Optimize.md)。
 
 `AiService` 的 8 处 `ai-player/*` 提示词加载已改走 registry;人格库改为可变 active 集(`getActivePersonas()`),4 个消费者(`game.rules` / `game.snapshot` / `game.service` / `ai.service`)同步切换。
 
@@ -271,47 +267,9 @@ eval_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 **实现位置**:`apps/api/src/iteration/iteration-score.ts` 的 `aggregateScores()`,由 `IterationService.buildAggregate` 调用。
 
-## 4. 自动优化器(详细逻辑)
+## 4. 自动优化器
 
-轮聚合 scorecard 产出后,若该 run 开启自动优化(`auto_optimize_wait_confirm` / `auto_optimize_activate_continue`,**默认即此模式**),`IterationService.createAutoOptimizeGeneration` 调用优化模型,基于本轮 scorecard + 逐局摘要 + 当前代 assets 派生一个候选代。
-
-> **每轮都跑(含末轮)**:自动优化不再受「是否最后一轮」限制。末轮若成功生成候选代,候选代会正常落库,但 run 仍直接进入 `completed`;用户若要采用它,需要在后续新 run 开始前手动激活该 candidate。非末轮时才会根据 `postRoundMode` 进入 `awaiting_confirmation` 或 `awaiting_activation`。详见 [`AI-Prompt-Eval-Flow.md`](./AI-Prompt-Eval-Flow.md) §4。
-
-> 命名:前端 UI、接口与代码内部统一使用 `autoOptimize` / `createAutoOptimizeGeneration` / `auto_optimizing` / `auto_optimize_*` 这一套命名。
-
-### 4.1 优化链路
-
-1. **取源代 assets**:`prompts.getGenerationAssets(generationId)`(本轮实际跑的那一代)。
-2. **锁定本轮使用的评估尺子代**: `runRound()` 在进入自动优化前读取 `evalPrompts.getActiveGenerationId()` 并传入 `createAutoOptimizeGeneration(generationId, round, evalGenerationId)`。该 `evalGenerationId` 会写入 `IterationRound.autoOptimize.evalGenerationId`。
-3. **加载 system / user 模板**:system 从该 `evalGenerationId` 读取 `auto-optimize/system-prompt-optimizer.txt`;user 模板从同一个 `evalGenerationId` 读取 `auto-optimize/user-prompt-optimizer-template.txt`。
-4. **构造 user 消息**(`buildOptimizerUserPrompt`):用 `renderTemplateString` 把 6 个占位符注入 user 模板 —— `{{generationId}}` / `{{assetKeysJson}}`(`ALL_ASSET_KEYS`)/ `{{currentPromptsJson}}` / `{{currentPersonasJson}}` / `{{scorecardJson}}`(本轮聚合 scorecard)/ `{{gamesJson}}`(逐局摘要:`roomId/winner/aiWin/humanLikeScore/error/score`)。
-5. **调用模型**(`resolveOptimizerModel()`):直接复用打分那套 **`REPLAY_ANALYSIS_*`** 配置(同 §2.2 的 baseURL/model/apiKey/temperature/reasoningEffort/thinking/timeout),不单独配优化模型。
-6. **解析 + 校验**(`validateOptimizerChangedAssets`):返回须为 `{changedAssets, note}`;只允许已知 asset key;每个 asset 必须是**完整文件内容字符串**(非 diff);调整 `ai-player/personas` 时必须**保留完全相同的 persona id 集合**;不得删除模板变量占位符 `{{...}}`;仅与源代**实际内容不同**的 asset 才计入 changedAssets(逐字相同则视为未变更)。
-7. **结果状态**:无有效变更 → `autoOptimize.status = "skipped"`;成功 → `prompts.createGeneration({fromGenId, changedAssets, note})` 生成候选代 → `"created"`;调用/校验抛错 → `"failed"`(错误信息记 `autoOptimize.error`)。
-
-### 4.2 结果留存与详情重建
-
-「自动优化记录」每条可点「生成详情」打开弹窗,按 **生成结果 → 本轮聚合 scorecard → 用户提示词 → 系统提示词 → 完整请求 JSON** 的顺序查看。各 tab 数据来源:
-
-- **生成结果**:优化模型的**原始返回正文**,存于 `IterationRound.autoOptimize.response`(失败 / 无 scorecard 跳过的情况无 response)。
-- **本轮聚合 scorecard**:直接取自该轮 `aggregate`(页面已有,无需请求)。
-- **用户提示词 / 系统提示词 / 完整请求 JSON**:由 `GET /debug/iterations/auto-optimize-request/:runId/:roundNo` 重建该轮发往模型的**完整输入**(优化器 system + user + 模型 config)。重建时优先使用 `IterationRound.autoOptimize.evalGenerationId`;只有历史数据缺该字段时才回退当前 active 评估尺子代。与打分详情的 `GET /debug/iterations/score-request/:roomId`(`buildScoreUserPrompt`)同构,只是 user 换成 `buildOptimizerUserPrompt`。
-
-### 4.3 异步执行与重试
-
-- 自动优化是**阻塞式大模型调用**(数十秒),不能放在 socket ack 路径里同步等。因此:
-  - `runRound` 在进入 `createAutoOptimizeGeneration` **之前**先持久化 `status = auto_optimizing` 并广播,前端立即看到「自动优化中…」。
-  - `retryAutoOptimize()`(自动优化失败后用户点「重试自动优化」)**先持久化 + 广播 `auto_optimizing` 并立即返回 ack**,优化调用交由 `executeRetryAutoOptimize` 异步执行,完成后再通过 `iteration.status` 事件推送结果(`awaiting_confirmation` / `awaiting_activation` / 进入下一轮 / 失败回退)——避免客户端 WebSocket 5s 超时。
-- `auto_optimizing` 是 `iteration_runs.status` 的合法取值之一;进程重启后,处于 `auto_optimizing` 的 run 因内存驱动丢失会被 `reconcileStaleRuns` 标记为 `stopped`(但**最近一轮自动优化失败且 run 仍停在 `awaiting_activation`** 的情况会被保留,以便用户点击「重试自动优化」)。
-- **重启后继续/确认/重试可用**:进程重启会丢失内存 `activeRunId`,但 DB 里 `awaiting_confirmation` / `awaiting_activation` 的 run 仍在。`continueToNextRound` 与 `retryAutoOptimize` 在 `activeRunId` 为空时会调用 `recoverActiveRun()` 从最近一条非终态 run 恢复 `activeRunId` 与 `this.rounds`(与 `stop()` 的回退一致),再做状态校验 —— 因此「确认并继续」不会因重启误报「没有进行中的迭代」。
-
-### 4.4 日志级别
-
-`createAutoOptimizeGeneration` 的日志按级别分层,默认日志只保留关键节点,完整 I/O 需开 debug 才打印:
-
-- `logger.log`(info):`自动优化开始 generationId=… round=…`、`自动优化成功 generationId=… → 新代 …(改动: …)`;失败分支用 `logger.warn` 记原因。
-- `logger.debug`:完整请求(`formatOptimizerRequestLog`,含优化器 system + user + 模型 config)与完整返回(`formatOptimizerResponseLog`,模型原始正文)——体量大,仅排查时开 debug 级查看。
-- 详情弹窗的「生成结果 / 用户提示词 / 系统提示词 / 完整请求 JSON」直接来自 `autoOptimize.response` 与 `getAutoOptimizeRequest` 重建结果,与日志级别无关。
+自动优化器的实现细节已独立到 [`AI-Prompt-Eval-Auto-Optimize.md`](./AI-Prompt-Eval-Auto-Optimize.md)。本文只保留一个入口引用，避免以后改自动优化逻辑时同步维护两篇正文。
 
 ---
 
