@@ -102,46 +102,46 @@
   gap: 10px;
 }
 /* 自动优化记录(独立于各轮 scorecard) */
-.iteration-autoedit-list {
+.iteration-auto-optimize-list {
   margin-top: 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.iter-autoedit-card {
+.iter-auto-optimize-card {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.iter-autoedit-card .room-tag {
+.iter-auto-optimize-card .room-tag {
   background: var(--muted);
   color: #fff;
   padding: 1px 7px;
   border-radius: 6px;
   font-size: 11px;
 }
-.iter-autoedit-card.status-created .room-tag {
+.iter-auto-optimize-card.status-created .room-tag {
   background: var(--accent, #0f7670);
 }
-.iter-autoedit-card.status-failed .room-tag {
+.iter-auto-optimize-card.status-failed .room-tag {
   background: #dc2626;
 }
-.iter-autoedit-card.status-running .room-tag {
+.iter-auto-optimize-card.status-running .room-tag {
   background: #2563eb;
 }
-.iter-autoedit-gen {
+.iter-auto-optimize-gen {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   font-size: 13px;
 }
-.iter-autoedit-actions {
+.iter-auto-optimize-actions {
   display: flex;
   gap: 8px;
   margin-top: 2px;
 }
-.iter-autoedit-duration {
+.iter-auto-optimize-duration {
   font-size: 12px;
   margin-left: auto;
 }
@@ -186,7 +186,7 @@
   gap: 8px;
   margin-top: 8px;
 }
-.iteration-editor {
+.iteration-optimize-form {
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--line);
@@ -194,8 +194,7 @@
   flex-direction: column;
   gap: 8px;
 }
-.iteration-editor select,
-.iteration-editor input[type="text"] {
+.iteration-optimize-form input[type="text"] {
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -203,7 +202,7 @@
   color: var(--text);
   font-size: 14px;
 }
-.iteration-editor-textarea {
+.iteration-optimize-textarea {
   width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12.5px;
@@ -299,18 +298,18 @@
   font-size: 13px;
   max-width: 260px;
 }
-.iteration-version-detail .iteration-editor-textarea {
+.iteration-version-detail .iteration-optimize-textarea {
   min-height: 360px;
 }
 
-.iteration-editor-status {
+.iteration-optimize-status {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.iteration-editor-badge {
+.iteration-optimize-badge {
   display: inline-flex;
   align-items: center;
   min-height: 24px;
@@ -320,17 +319,17 @@
   font-weight: 600;
 }
 
-.iteration-editor-badge.clean {
+.iteration-optimize-badge.clean {
   background: rgba(100, 116, 139, 0.12);
   color: #475569;
 }
 
-.iteration-editor-badge.dirty {
+.iteration-optimize-badge.dirty {
   background: rgba(217, 119, 6, 0.14);
   color: #b45309;
 }
 
-.iteration-editor-actions {
+.iteration-optimize-actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
@@ -456,7 +455,7 @@
   white-space: nowrap;
 }
 .iter-step-badge.step-running { background: var(--accent); }
-.iter-step-badge.step-auto_editing { background: #7c3aed; }
+.iter-step-badge.step-auto_optimizing { background: #7c3aed; }
 .iter-step-badge.step-awaiting_activation { background: var(--warning); }
 .iter-step-badge.step-awaiting_confirmation { background: var(--warning); }
 .iter-step-badge.step-completed { background: #2e7d32; }

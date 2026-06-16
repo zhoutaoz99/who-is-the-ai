@@ -14,10 +14,10 @@ export const REPLAY_SCORE_SYSTEM_ASSET_KEY =
   "replay-score/system-replay-score.txt";
 export const REPLAY_SCORE_USER_ASSET_KEY =
   "replay-score/user-replay-score-template.txt";
-export const AUTO_EDIT_SYSTEM_ASSET_KEY =
-  "auto-edit/system-prompt-editor.txt";
-export const AUTO_EDIT_USER_ASSET_KEY =
-  "auto-edit/user-prompt-editor-template.txt";
+export const AUTO_OPTIMIZE_SYSTEM_ASSET_KEY =
+  "auto-optimize/system-prompt-optimizer.txt";
+export const AUTO_OPTIMIZE_USER_ASSET_KEY =
+  "auto-optimize/user-prompt-optimizer-template.txt";
 
 export const EVAL_PROMPT_SOURCES = {
   [REPLAY_SCORE_SYSTEM_ASSET_KEY]: {
@@ -26,11 +26,11 @@ export const EVAL_PROMPT_SOURCES = {
   [REPLAY_SCORE_USER_ASSET_KEY]: {
     filename: "user-replay-score-template.txt",
   },
-  [AUTO_EDIT_SYSTEM_ASSET_KEY]: {
-    filename: "system-prompt-editor.txt",
+  [AUTO_OPTIMIZE_SYSTEM_ASSET_KEY]: {
+    filename: "system-prompt-optimizer.txt",
   },
-  [AUTO_EDIT_USER_ASSET_KEY]: {
-    filename: "user-prompt-editor-template.txt",
+  [AUTO_OPTIMIZE_USER_ASSET_KEY]: {
+    filename: "user-prompt-optimizer-template.txt",
   },
 } as const satisfies Record<string, { filename: string }>;
 

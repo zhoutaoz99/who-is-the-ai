@@ -32,8 +32,8 @@ const ASSET_KEYS = [
 const EVAL_ASSET_KEYS = [
   "replay-score/system-replay-score.txt",
   "replay-score/user-replay-score-template.txt",
-  "auto-edit/system-prompt-editor.txt",
-  "auto-edit/user-prompt-editor-template.txt",
+  "auto-optimize/system-prompt-optimizer.txt",
+  "auto-optimize/user-prompt-optimizer-template.txt",
 ];
 
 const TELL_LABELS: Record<string, string> = {
@@ -56,7 +56,7 @@ export default function IterationPage() {
     iterationRun,
     startIteration,
     continueIteration,
-    retryAutoEdit,
+    retryAutoOptimize,
     stopIteration,
     refreshIteration,
   } = useGameClient();
@@ -67,7 +67,7 @@ export default function IterationPage() {
   const [durationUnit, setDurationUnit] = useState<"min" | "sec">("min");
   const [sequentialSpeech, setSequentialSpeech] = useState(true);
   const [personaMode, setPersonaMode] = useState<IterationPersonaMode>("fixed_schedule");
-  const [postRoundMode, setPostRoundMode] = useState<IterationPostRoundMode>("auto_edit_wait_confirm");
+  const [postRoundMode, setPostRoundMode] = useState<IterationPostRoundMode>("auto_optimize_wait_confirm");
   const [busy, setBusy] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
   const [pageError, setPageError] = useState("");
@@ -79,7 +79,7 @@ export default function IterationPage() {
   }, [iterationRun?.currentRound]);
 
   // 自动优化生成详情弹窗:记录要查看的轮次号。
-  const [autoEditDetailRound, setAutoEditDetailRound] = useState<number | null>(null);
+  const [autoOptimizeDetailRound, setAutoOptimizeDetailRound] = useState<number | null>(null);
 
   // 预计用时 + 每名玩家发言次数:由后端按真实计时常量估算,参数变化时防抖拉取(保留上一次结果避免闪烁)。
   // 必须放在所有 early return 之前(遵守 Hooks 规则)。
@@ -92,7 +92,7 @@ export default function IterationPage() {
     const status = iterationRun?.status;
     const isActiveRun =
       status === "running" ||
-      status === "auto_editing" ||
+      status === "auto_optimizing" ||
       status === "awaiting_activation" ||
       status === "awaiting_confirmation";
     if (isActiveRun) return;
@@ -137,16 +137,16 @@ export default function IterationPage() {
     iterationRun?.status,
   ]);
 
-  // 自动优化进行中时的实时「已耗时」计时器(基于 run.updatedAt,即进入 auto_editing 的时刻)。
-  const [autoEditElapsedMs, setAutoEditElapsedMs] = useState(0);
+  // 自动优化进行中时的实时「已耗时」计时器(基于 run.updatedAt,即进入 auto_optimizing 的时刻)。
+  const [autoOptimizeElapsedMs, setAutoOptimizeElapsedMs] = useState(0);
   useEffect(() => {
-    const autoEditing = iterationRun?.status === "auto_editing";
-    if (!autoEditing || !iterationRun?.updatedAt) {
-      setAutoEditElapsedMs(0);
+    const autoOptimizing = iterationRun?.status === "auto_optimizing";
+    if (!autoOptimizing || !iterationRun?.updatedAt) {
+      setAutoOptimizeElapsedMs(0);
       return;
     }
     const startMs = new Date(iterationRun.updatedAt).getTime();
-    const tick = () => setAutoEditElapsedMs(Math.max(0, Date.now() - startMs));
+    const tick = () => setAutoOptimizeElapsedMs(Math.max(0, Date.now() - startMs));
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
@@ -156,21 +156,21 @@ export default function IterationPage() {
   const [generations, setGenerations] = useState<GenerationSummary[]>([]);
   const [activeGenId, setActiveGenId] = useState<string | null>(null);
   const [selectedGenId, setSelectedGenId] = useState<string | null>(null);
-  const [editorAsset, setEditorAsset] = useState(ASSET_KEYS[0]);
+  const [manualOptimizeAsset, setManualOptimizeAsset] = useState(ASSET_KEYS[0]);
   const [loadedAssets, setLoadedAssets] = useState<Record<string, string>>({});
   const [draftAssets, setDraftAssets] = useState<Record<string, string>>({});
-  const [editorNote, setEditorNote] = useState("");
-  const [editorBusy, setEditorBusy] = useState(false);
+  const [manualOptimizeNote, setManualOptimizeNote] = useState("");
+  const [manualOptimizeBusy, setManualOptimizeBusy] = useState(false);
 
   // 评估尺子版本管理
   const [evalGenerations, setEvalGenerations] = useState<GenerationSummary[]>([]);
   const [activeEvalGenId, setActiveEvalGenId] = useState<string | null>(null);
   const [selectedEvalGenId, setSelectedEvalGenId] = useState<string | null>(null);
-  const [evalEditorAsset, setEvalEditorAsset] = useState(EVAL_ASSET_KEYS[0]);
+  const [evalOptimizeAsset, setEvalOptimizeAsset] = useState(EVAL_ASSET_KEYS[0]);
   const [evalLoadedAssets, setEvalLoadedAssets] = useState<Record<string, string>>({});
   const [evalDraftAssets, setEvalDraftAssets] = useState<Record<string, string>>({});
-  const [evalEditorNote, setEvalEditorNote] = useState("");
-  const [evalEditorBusy, setEvalEditorBusy] = useState(false);
+  const [evalOptimizeNote, setEvalOptimizeNote] = useState("");
+  const [evalOptimizeBusy, setEvalOptimizeBusy] = useState(false);
 
   const fetchGenerations = useCallback(async () => {
     try {
@@ -206,7 +206,7 @@ export default function IterationPage() {
       setDraftAssets({});
       return;
     }
-    setEditorBusy(true);
+    setManualOptimizeBusy(true);
     try {
       const res = await fetch(`${API_URL}/debug/prompts/generations/${genId}`);
       const json = await res.json();
@@ -226,7 +226,7 @@ export default function IterationPage() {
     } catch {
       /* ignore */
     } finally {
-      setEditorBusy(false);
+      setManualOptimizeBusy(false);
     }
   }, []);
 
@@ -236,7 +236,7 @@ export default function IterationPage() {
       setEvalDraftAssets({});
       return;
     }
-    setEvalEditorBusy(true);
+    setEvalOptimizeBusy(true);
     try {
       const res = await fetch(`${API_URL}/debug/eval-prompts/generations/${genId}`);
       const json = await res.json();
@@ -251,7 +251,7 @@ export default function IterationPage() {
     } catch {
       /* ignore */
     } finally {
-      setEvalEditorBusy(false);
+      setEvalOptimizeBusy(false);
     }
   }, []);
 
@@ -260,7 +260,7 @@ export default function IterationPage() {
     fetchEvalGenerations();
   }, [fetchGenerations, fetchEvalGenerations]);
 
-  // 选中版本或切换 asset 时,加载该版本的对应提示词到右侧查看/编辑。
+  // 选中版本或切换 asset 时,加载该版本的对应提示词到右侧查看/调整。
   useEffect(() => {
     loadAsset(selectedGenId);
   }, [selectedGenId, loadAsset]);
@@ -272,25 +272,25 @@ export default function IterationPage() {
   const handleSelectGen = (genId: string) => {
     if (
       genId !== selectedGenId &&
-      editorDirty &&
+      manualOptimizeDirty &&
       !window.confirm("当前提示词版本有未保存修改，切换版本将丢失这些修改。继续吗？")
     ) {
       return;
     }
     setSelectedGenId(genId);
-    setEditorNote("");
+    setManualOptimizeNote("");
   };
 
   const handleSelectEvalGen = (genId: string) => {
     if (
       genId !== selectedEvalGenId &&
-      evalEditorDirty &&
+      evalOptimizeDirty &&
       !window.confirm("当前评估尺子有未保存修改，切换版本将丢失这些修改。继续吗？")
     ) {
       return;
     }
     setSelectedEvalGenId(genId);
-    setEvalEditorNote("");
+    setEvalOptimizeNote("");
   };
 
   // 版本差异弹窗(父代 vs 选中代)
@@ -316,16 +316,16 @@ export default function IterationPage() {
   const selectedEvalGen = evalGenerations.find((g) => g.id === selectedEvalGenId) ?? null;
   const hasParent = Boolean(selectedGen?.parentId);
   const evalHasParent = Boolean(selectedEvalGen?.parentId);
-  const editorDirtyKeys = ASSET_KEYS.filter(
+  const manualOptimizeDirtyKeys = ASSET_KEYS.filter(
     (key) => (draftAssets[key] ?? "") !== (loadedAssets[key] ?? ""),
   );
-  const evalEditorDirtyKeys = EVAL_ASSET_KEYS.filter(
+  const evalOptimizeDirtyKeys = EVAL_ASSET_KEYS.filter(
     (key) => (evalDraftAssets[key] ?? "") !== (evalLoadedAssets[key] ?? ""),
   );
-  const editorDirty = Boolean(selectedGenId) && editorDirtyKeys.length > 0;
-  const evalEditorDirty = Boolean(selectedEvalGenId) && evalEditorDirtyKeys.length > 0;
-  const editorContent = draftAssets[editorAsset] ?? "";
-  const evalEditorContent = evalDraftAssets[evalEditorAsset] ?? "";
+  const manualOptimizeDirty = Boolean(selectedGenId) && manualOptimizeDirtyKeys.length > 0;
+  const evalOptimizeDirty = Boolean(selectedEvalGenId) && evalOptimizeDirtyKeys.length > 0;
+  const manualOptimizeContent = draftAssets[manualOptimizeAsset] ?? "";
+  const evalOptimizeContent = evalDraftAssets[evalOptimizeAsset] ?? "";
 
   const openDiff = async (
     kind: "prompts" | "eval-prompts",
@@ -369,7 +369,7 @@ export default function IterationPage() {
       discussionSeconds: seconds,
       sequentialSpeech,
       personaMode,
-      autoEdit: postRoundMode !== "manual",
+      autoOptimize: postRoundMode !== "manual",
       postRoundMode,
     });
     setBusy(false);
@@ -383,10 +383,10 @@ export default function IterationPage() {
     if (!res.ok) setPageError(res.error ?? "继续失败");
   };
 
-  const handleRetryAutoEdit = async () => {
+  const handleRetryAutoOptimize = async () => {
     setRetryBusy(true);
     setPageError("");
-    const res = await retryAutoEdit();
+    const res = await retryAutoOptimize();
     setRetryBusy(false);
     if (!res.ok) {
       setPageError(res.error ?? "自动优化重试失败");
@@ -396,13 +396,13 @@ export default function IterationPage() {
     // 下方 useEffect 监听状态变化自动刷新版本列表。
   };
 
-  // 自动优化完成后刷新版本列表(异步 auto-edit 通过 socket 推送结果)。
+  // 自动优化完成后刷新版本列表(异步 auto-optimize 通过 socket 推送结果)。
   const prevStatusRef = useRef(iterationRun?.status);
   useEffect(() => {
     const prev = prevStatusRef.current;
     const cur = iterationRun?.status;
     prevStatusRef.current = cur;
-    if (prev === "auto_editing" && cur && cur !== "auto_editing") {
+    if (prev === "auto_optimizing" && cur && cur !== "auto_optimizing") {
       fetchGenerations();
     }
   }, [iterationRun?.status, fetchGenerations]);
@@ -455,15 +455,15 @@ export default function IterationPage() {
 
   const handleCreateGeneration = async () => {
     if (!selectedGenId) return;
-    if (!editorDirtyKeys.length) {
+    if (!manualOptimizeDirtyKeys.length) {
       setPageError("当前提示词未修改,无需保存");
       return;
     }
-    setEditorBusy(true);
+    setManualOptimizeBusy(true);
     setPageError("");
     try {
       const changedAssets = Object.fromEntries(
-        editorDirtyKeys.map((key) => [key, draftAssets[key] ?? ""]),
+        manualOptimizeDirtyKeys.map((key) => [key, draftAssets[key] ?? ""]),
       );
       const res = await fetch(`${API_URL}/debug/prompts/generation`, {
         method: "POST",
@@ -471,7 +471,7 @@ export default function IterationPage() {
         body: JSON.stringify({
           fromGenId: selectedGenId,
           changedAssets,
-          note: editorNote || undefined,
+          note: manualOptimizeNote || undefined,
         }),
       });
       const json = await res.json();
@@ -481,15 +481,15 @@ export default function IterationPage() {
       }
       await fetchGenerations();
       if (json.generation?.id) setSelectedGenId(json.generation.id);
-      setEditorNote("");
+      setManualOptimizeNote("");
     } finally {
-      setEditorBusy(false);
+      setManualOptimizeBusy(false);
     }
   };
 
-  const handleResetEditor = () => {
+  const handleResetManualOptimize = () => {
     setDraftAssets(loadedAssets);
-    setEditorNote("");
+    setManualOptimizeNote("");
   };
 
   const handleActivateEvalGen = async (genId: string) => {
@@ -525,15 +525,15 @@ export default function IterationPage() {
 
   const handleCreateEvalGeneration = async () => {
     if (!selectedEvalGenId) return;
-    if (!evalEditorDirtyKeys.length) {
+    if (!evalOptimizeDirtyKeys.length) {
       setPageError("当前提示词未修改,无需保存");
       return;
     }
-    setEvalEditorBusy(true);
+    setEvalOptimizeBusy(true);
     setPageError("");
     try {
       const changedAssets = Object.fromEntries(
-        evalEditorDirtyKeys.map((key) => [key, evalDraftAssets[key] ?? ""]),
+        evalOptimizeDirtyKeys.map((key) => [key, evalDraftAssets[key] ?? ""]),
       );
       const res = await fetch(`${API_URL}/debug/eval-prompts/generation`, {
         method: "POST",
@@ -541,7 +541,7 @@ export default function IterationPage() {
         body: JSON.stringify({
           fromGenId: selectedEvalGenId,
           changedAssets,
-          note: evalEditorNote || undefined,
+          note: evalOptimizeNote || undefined,
         }),
       });
       const json = await res.json();
@@ -551,15 +551,15 @@ export default function IterationPage() {
       }
       await fetchEvalGenerations();
       if (json.generation?.id) setSelectedEvalGenId(json.generation.id);
-      setEvalEditorNote("");
+      setEvalOptimizeNote("");
     } finally {
-      setEvalEditorBusy(false);
+      setEvalOptimizeBusy(false);
     }
   };
 
-  const handleResetEvalEditor = () => {
+  const handleResetEvalOptimize = () => {
     setEvalDraftAssets(evalLoadedAssets);
-    setEvalEditorNote("");
+    setEvalOptimizeNote("");
   };
 
   if (!debug) {
@@ -578,19 +578,19 @@ export default function IterationPage() {
 
   const run = iterationRun;
   const isRunning = run?.status === "running";
-  const isAutoEditing = run?.status === "auto_editing";
+  const isAutoOptimizing = run?.status === "auto_optimizing";
   const isAwaitingConfirmation = run?.status === "awaiting_confirmation";
   const isAwaiting = run?.status === "awaiting_activation" || isAwaitingConfirmation;
-  const isActive = isRunning || isAutoEditing || isAwaiting;
+  const isActive = isRunning || isAutoOptimizing || isAwaiting;
   const doneInRound = (run?.currentRoundGames ?? []).filter((g) =>
     g.status === "finished" || g.status === "failed" || Boolean(g.score) || Boolean(g.error),
   ).length;
   const totalInRound = run?.gamesPerRound ?? gamesPerRound;
   const progressPct = totalInRound > 0 ? Math.min(100, (doneInRound / totalInRound) * 100) : 0;
-  const canRetryAutoEdit =
+  const canRetryAutoOptimize =
     run?.status === "awaiting_activation" &&
-    run.options?.autoEdit === true &&
-    run.lastAutoEdit?.status === "failed";
+    run.options?.autoOptimize === true &&
+    run.lastAutoOptimize?.status === "failed";
   // 选中轮次的完整数据(已完成的轮);未完成则为 null。
   const selectedRoundData =
     run?.rounds.find((r) => r.round === selectedRound) ?? null;
@@ -735,9 +735,9 @@ export default function IterationPage() {
                   value={postRoundMode}
                   onChange={(e) => setPostRoundMode(e.target.value as IterationPostRoundMode)}
                 >
-                  <option value="manual">人工编辑</option>
-                  <option value="auto_edit_wait_confirm">自动优化后确认</option>
-                  <option value="auto_edit_activate_continue">自动优化并继续</option>
+                  <option value="manual">手动优化</option>
+                  <option value="auto_optimize_wait_confirm">自动优化后确认</option>
+                  <option value="auto_optimize_activate_continue">自动优化并继续</option>
                 </select>
               </label>
             </div>
@@ -763,7 +763,7 @@ export default function IterationPage() {
                 {busy ? "启动中…" : "开始迭代"}
               </button>
             )}
-            {(isRunning || isAutoEditing) && (
+            {(isRunning || isAutoOptimizing) && (
               <button className="secondary" onClick={handleStop}>
                 停止
               </button>
@@ -782,11 +782,11 @@ export default function IterationPage() {
                 </button>
               </>
             )}
-            {canRetryAutoEdit && (
+            {canRetryAutoOptimize && (
               <button
                 className="secondary"
                 disabled={retryBusy}
-                onClick={handleRetryAutoEdit}
+                onClick={handleRetryAutoOptimize}
                 title="重新执行自动优化,生成候选代"
               >
                 {retryBusy ? "重试中…" : "重试自动优化"}
@@ -928,25 +928,25 @@ export default function IterationPage() {
 
           {/* 选中轮次的自动优化记录(独立区块,与 scorecard 分开) */}
           {run && selectedRound != null &&
-            (run.options?.autoEdit ||
-              Boolean(selectedRoundData?.autoEdit) ||
-              (isSelectedRoundCurrent && isAutoEditing)) && (
-            <div className="iteration-autoedit-list">
+            (run.options?.autoOptimize ||
+              Boolean(selectedRoundData?.autoOptimize) ||
+              (isSelectedRoundCurrent && isAutoOptimizing)) && (
+            <div className="iteration-auto-optimize-list">
               <p className="eyebrow">第 {selectedRound} 轮 自动优化记录</p>
-              {selectedRoundData?.autoEdit ? (
-                <AutoEditCard
+              {selectedRoundData?.autoOptimize ? (
+                <AutoOptimizeCard
                   round={selectedRoundData}
                   runId={run.id}
                   onSelectGen={(id) => setSelectedGenId(id)}
-                  onViewDetail={(roundNo) => setAutoEditDetailRound(roundNo)}
+                  onViewDetail={(roundNo) => setAutoOptimizeDetailRound(roundNo)}
                 />
-              ) : isSelectedRoundCurrent && isAutoEditing ? (
-                <div className="stat-card iter-autoedit-card status-running">
+              ) : isSelectedRoundCurrent && isAutoOptimizing ? (
+                <div className="stat-card iter-auto-optimize-card status-running">
                   <div className="iter-round-head">
                     <strong>第 {run.currentRound} 轮</strong>
                     <span className="room-tag">自动优化中…</span>
-                    <span className="muted-text iter-autoedit-duration">
-                      已耗时 {formatElapsed(autoEditElapsedMs)}
+                    <span className="muted-text iter-auto-optimize-duration">
+                      已耗时 {formatElapsed(autoOptimizeElapsedMs)}
                     </span>
                   </div>
                   <div className="muted-text">正在执行自动优化,生成候选代,请稍候。</div>
@@ -1037,7 +1037,7 @@ export default function IterationPage() {
               })}
             </div>
 
-            {/* 右:选中版本的提示词查看/编辑 */}
+            {/* 右:选中版本的提示词查看/调整 */}
             <div className="iteration-version-detail">
               <div className="iteration-version-detail-head">
                 <div>
@@ -1046,16 +1046,16 @@ export default function IterationPage() {
                 </div>
                 <div className="iteration-version-detail-tools">
                   <select
-                    value={editorAsset}
+                    value={manualOptimizeAsset}
                     onChange={(e) => {
-                      setEditorAsset(e.target.value);
-                      setEditorNote("");
+                      setManualOptimizeAsset(e.target.value);
+                      setManualOptimizeNote("");
                     }}
                     disabled={!selectedGenId}
                   >
                     {ASSET_KEYS.map((k) => (
                       <option key={k} value={k}>
-                        {editorDirtyKeys.includes(k) ? `* ${k}` : k}
+                        {manualOptimizeDirtyKeys.includes(k) ? `* ${k}` : k}
                       </option>
                     ))}
                   </select>
@@ -1072,48 +1072,52 @@ export default function IterationPage() {
                   </button>
                 </div>
               </div>
-              <div className="iteration-editor-status">
-                <span className={`iteration-editor-badge ${editorDirty ? "dirty" : "clean"}`}>
-                  {editorDirty ? `已修改 ${editorDirtyKeys.length} 项` : "未修改"}
-                </span>
-                <span className="muted-text">
-                  {selectedGenId ? `当前提示词: ${editorAsset}` : "请先在左侧选择一个版本"}
-                </span>
+              <div className="iteration-optimize-form">
+                <div className="iteration-optimize-status">
+                  <span
+                    className={`iteration-optimize-badge ${manualOptimizeDirty ? "dirty" : "clean"}`}
+                  >
+                    {manualOptimizeDirty ? `已修改 ${manualOptimizeDirtyKeys.length} 项` : "未修改"}
+                  </span>
+                  <span className="muted-text">
+                    {selectedGenId ? `当前提示词: ${manualOptimizeAsset}` : "请先在左侧选择一个版本"}
+                  </span>
+                </div>
+                <textarea
+                  className="iteration-optimize-textarea"
+                  value={manualOptimizeContent}
+                  rows={20}
+                  onChange={(e) =>
+                    setDraftAssets((cur) => ({ ...cur, [manualOptimizeAsset]: e.target.value }))
+                  }
+                  placeholder={selectedGenId ? "查看或调整该 asset;调整后可创建新版本" : "—"}
+                />
+                <input
+                  type="text"
+                  value={manualOptimizeNote}
+                  onChange={(e) => setManualOptimizeNote(e.target.value)}
+                  placeholder="保存说明(可选)"
+                />
+                <div className="iteration-optimize-actions">
+                  <button
+                    className="secondary"
+                    disabled={manualOptimizeBusy || !selectedGenId || !manualOptimizeDirty}
+                    onClick={handleResetManualOptimize}
+                  >
+                    还原全部修改
+                  </button>
+                  <button
+                    className="primary-action"
+                    disabled={manualOptimizeBusy || !selectedGenId || !manualOptimizeDirty}
+                    onClick={handleCreateGeneration}
+                  >
+                    {manualOptimizeBusy ? "保存中…" : `保存 ${manualOptimizeDirtyKeys.length} 项修改为新版本`}
+                  </button>
+                </div>
+                <p className="muted-text">
+                  可以切换多个提示词分别修改,最后一次性保存为一个新版本。保存不会覆盖原版本,而是基于当前版本派生一个新版本。
+                </p>
               </div>
-              <textarea
-                className="iteration-editor-textarea"
-                value={editorContent}
-                rows={20}
-                onChange={(e) =>
-                  setDraftAssets((cur) => ({ ...cur, [editorAsset]: e.target.value }))
-                }
-                placeholder={selectedGenId ? "查看或编辑该 asset;编辑后可创建新版本" : "—"}
-              />
-              <input
-                type="text"
-                value={editorNote}
-                onChange={(e) => setEditorNote(e.target.value)}
-                placeholder="保存说明(可选)"
-              />
-              <div className="iteration-editor-actions">
-                <button
-                  className="secondary"
-                  disabled={editorBusy || !selectedGenId || !editorDirty}
-                  onClick={handleResetEditor}
-                >
-                  还原全部修改
-                </button>
-                <button
-                  className="primary-action"
-                  disabled={editorBusy || !selectedGenId || !editorDirty}
-                  onClick={handleCreateGeneration}
-                >
-                  {editorBusy ? "保存中…" : `保存 ${editorDirtyKeys.length} 项修改为新版本`}
-                </button>
-              </div>
-              <p className="muted-text">
-                可以切换多个提示词分别修改,最后一次性保存为一个新版本。保存不会覆盖原版本,而是基于当前版本派生一个新版本。
-              </p>
             </div>
           </div>
         </section>
@@ -1195,16 +1199,16 @@ export default function IterationPage() {
               </div>
               <div className="iteration-version-detail-tools">
                 <select
-                  value={evalEditorAsset}
+                  value={evalOptimizeAsset}
                   onChange={(e) => {
-                    setEvalEditorAsset(e.target.value);
-                    setEvalEditorNote("");
+                    setEvalOptimizeAsset(e.target.value);
+                    setEvalOptimizeNote("");
                   }}
                   disabled={!selectedEvalGenId}
                 >
                   {EVAL_ASSET_KEYS.map((k) => (
                     <option key={k} value={k}>
-                      {evalEditorDirtyKeys.includes(k) ? `* ${k}` : k}
+                      {evalOptimizeDirtyKeys.includes(k) ? `* ${k}` : k}
                     </option>
                   ))}
                 </select>
@@ -1226,48 +1230,50 @@ export default function IterationPage() {
                 </button>
               </div>
             </div>
-            <div className="iteration-editor-status">
-              <span className={`iteration-editor-badge ${evalEditorDirty ? "dirty" : "clean"}`}>
-                {evalEditorDirty ? `已修改 ${evalEditorDirtyKeys.length} 项` : "未修改"}
-              </span>
-              <span className="muted-text">
-                {selectedEvalGenId ? `当前提示词: ${evalEditorAsset}` : "请先在左侧选择一个版本"}
-              </span>
+            <div className="iteration-optimize-form">
+              <div className="iteration-optimize-status">
+                <span className={`iteration-optimize-badge ${evalOptimizeDirty ? "dirty" : "clean"}`}>
+                  {evalOptimizeDirty ? `已修改 ${evalOptimizeDirtyKeys.length} 项` : "未修改"}
+                </span>
+                <span className="muted-text">
+                  {selectedEvalGenId ? `当前提示词: ${evalOptimizeAsset}` : "请先在左侧选择一个版本"}
+                </span>
+              </div>
+              <textarea
+                className="iteration-optimize-textarea"
+                value={evalOptimizeContent}
+                rows={20}
+                onChange={(e) =>
+                  setEvalDraftAssets((cur) => ({ ...cur, [evalOptimizeAsset]: e.target.value }))
+                }
+                placeholder={selectedEvalGenId ? "查看或调整该评估尺子;调整后可创建新版本" : "—"}
+              />
+              <input
+                type="text"
+                value={evalOptimizeNote}
+                onChange={(e) => setEvalOptimizeNote(e.target.value)}
+                placeholder="保存说明(可选)"
+              />
+              <div className="iteration-optimize-actions">
+                <button
+                  className="secondary"
+                  disabled={evalOptimizeBusy || !selectedEvalGenId || !evalOptimizeDirty}
+                  onClick={handleResetEvalOptimize}
+                >
+                  还原全部修改
+                </button>
+                <button
+                  className="primary-action"
+                  disabled={evalOptimizeBusy || !selectedEvalGenId || !evalOptimizeDirty}
+                  onClick={handleCreateEvalGeneration}
+                >
+                  {evalOptimizeBusy ? "保存中…" : `保存 ${evalOptimizeDirtyKeys.length} 项修改为新版本`}
+                </button>
+              </div>
+              <p className="muted-text">
+                先在左侧选中版本,再切换多个提示词分别修改,最后一次性保存为一个新版本。
+              </p>
             </div>
-            <textarea
-              className="iteration-editor-textarea"
-              value={evalEditorContent}
-              rows={20}
-              onChange={(e) =>
-                setEvalDraftAssets((cur) => ({ ...cur, [evalEditorAsset]: e.target.value }))
-              }
-              placeholder={selectedEvalGenId ? "查看或编辑该评估尺子;编辑后可创建新版本" : "—"}
-            />
-            <input
-              type="text"
-              value={evalEditorNote}
-              onChange={(e) => setEvalEditorNote(e.target.value)}
-              placeholder="保存说明(可选)"
-            />
-            <div className="iteration-editor-actions">
-              <button
-                className="secondary"
-                disabled={evalEditorBusy || !selectedEvalGenId || !evalEditorDirty}
-                onClick={handleResetEvalEditor}
-              >
-                还原全部修改
-              </button>
-              <button
-                className="primary-action"
-                disabled={evalEditorBusy || !selectedEvalGenId || !evalEditorDirty}
-                onClick={handleCreateEvalGeneration}
-              >
-                {evalEditorBusy ? "保存中…" : `保存 ${evalEditorDirtyKeys.length} 项修改为新版本`}
-              </button>
-            </div>
-            <p className="muted-text">
-              先在左侧选中版本,再切换多个提示词分别修改,最后一次性保存为一个新版本。
-            </p>
           </div>
         </div>
       </section>
@@ -1344,15 +1350,15 @@ export default function IterationPage() {
         </div>
       )}
 
-      {autoEditDetailRound != null && run && (() => {
-        const detailRound = run.rounds.find((r) => r.round === autoEditDetailRound);
+      {autoOptimizeDetailRound != null && run && (() => {
+        const detailRound = run.rounds.find((r) => r.round === autoOptimizeDetailRound);
         return (
-          <AutoEditDetailModal
+          <AutoOptimizeDetailModal
             runId={run.id}
-            roundNo={autoEditDetailRound}
-            response={detailRound?.autoEdit?.response}
+            roundNo={autoOptimizeDetailRound}
+            response={detailRound?.autoOptimize?.response}
             aggregate={detailRound?.aggregate ?? null}
-            onClose={() => setAutoEditDetailRound(null)}
+            onClose={() => setAutoOptimizeDetailRound(null)}
           />
         );
       })()}
@@ -1418,7 +1424,7 @@ function RoundCard({ round }: { round: IterationRunStatus["rounds"][number] }) {
   );
 }
 
-function AutoEditCard({
+function AutoOptimizeCard({
   round,
   runId,
   onSelectGen,
@@ -1429,44 +1435,48 @@ function AutoEditCard({
   onSelectGen?: (genId: string) => void;
   onViewDetail?: (roundNo: number) => void;
 }) {
-  const edit = round.autoEdit;
-  if (!edit) return null;
+  const optimizeResult = round.autoOptimize;
+  if (!optimizeResult) return null;
   const statusText =
-    edit.status === "created" ? "已生成" : edit.status === "failed" ? "失败" : "跳过";
-  const statusClass = edit.status;
+    optimizeResult.status === "created"
+      ? "已生成"
+      : optimizeResult.status === "failed"
+        ? "失败"
+        : "跳过";
+  const statusClass = optimizeResult.status;
   return (
-    <div className={`stat-card iter-autoedit-card status-${statusClass}`}>
+    <div className={`stat-card iter-auto-optimize-card status-${statusClass}`}>
       <div className="iter-round-head">
         <strong>第 {round.round} 轮</strong>
         <span className="room-tag">{statusText}</span>
-        {typeof edit.durationMs === "number" && (
-          <span className="muted-text iter-autoedit-duration">
-            耗时 {formatElapsed(edit.durationMs)}
+        {typeof optimizeResult.durationMs === "number" && (
+          <span className="muted-text iter-auto-optimize-duration">
+            耗时 {formatElapsed(optimizeResult.durationMs)}
           </span>
         )}
       </div>
-      <div className="muted-text">{autoEditText(edit)}</div>
-      {edit.status === "created" && edit.generationId && (
-        <div className="iter-autoedit-gen">
+      <div className="muted-text">{autoOptimizeText(optimizeResult)}</div>
+      {optimizeResult.status === "created" && optimizeResult.generationId && (
+        <div className="iter-auto-optimize-gen">
           <span className="muted-text">生成代</span>
           {onSelectGen ? (
             <button
               className="compact-button"
-              onClick={() => onSelectGen(edit.generationId!)}
+              onClick={() => onSelectGen(optimizeResult.generationId!)}
               title="在 AI 提示词版本面板中选中该代"
             >
-              {edit.generationId}
+              {optimizeResult.generationId}
             </button>
           ) : (
-            <strong>{edit.generationId}</strong>
+            <strong>{optimizeResult.generationId}</strong>
           )}
-          {edit.changedAssetKeys && edit.changedAssetKeys.length > 0 && (
-            <span className="muted-text">改动:{edit.changedAssetKeys.join(", ")}</span>
+          {optimizeResult.changedAssetKeys && optimizeResult.changedAssetKeys.length > 0 && (
+            <span className="muted-text">改动:{optimizeResult.changedAssetKeys.join(", ")}</span>
           )}
         </div>
       )}
       {onViewDetail && runId && (
-        <div className="iter-autoedit-actions">
+        <div className="iter-auto-optimize-actions">
           <button
             className="compact-button"
             onClick={() => onViewDetail(round.round)}
@@ -1500,7 +1510,7 @@ function currentStepText(
   switch (run.status) {
     case "running":
       return `第 ${run.currentRound}/${run.totalRounds} 轮进行中:已跑 ${doneInRound}/${totalInRound} 局,跑完自动逐局打分并聚合成 scorecard`;
-    case "auto_editing":
+    case "auto_optimizing":
       return `第 ${run.currentRound} 轮已完成,正在执行自动优化,生成候选代,请稍候…`;
     case "awaiting_activation":
       return `第 ${run.currentRound} 轮已完成。请在「AI 提示词版本」面板创建/激活下一代,再点「继续下一轮」`;
@@ -1574,10 +1584,10 @@ function personaModeDescription(mode: string): string {
 function postRoundModeLabel(mode: string): string {
   switch (mode) {
     case "manual":
-      return "人工编辑";
-    case "auto_edit_wait_confirm":
+      return "手动优化";
+    case "auto_optimize_wait_confirm":
       return "自动优化后确认";
-    case "auto_edit_activate_continue":
+    case "auto_optimize_activate_continue":
       return "自动优化并继续";
     default:
       return mode;
@@ -1618,13 +1628,17 @@ function phaseLabel(phase: string | undefined): string {
   }
 }
 
-function autoEditText(edit: NonNullable<IterationRunStatus["rounds"][number]["autoEdit"]>): string {
-  if (edit.status === "created") {
-    const keys = edit.changedAssetKeys?.length ? `(${edit.changedAssetKeys.join(", ")})` : "";
-    return `已生成 ${edit.generationId ?? "-"} ${keys}${edit.note ? ` · ${edit.note}` : ""}`;
+function autoOptimizeText(
+  optimizeResult: NonNullable<IterationRunStatus["rounds"][number]["autoOptimize"]>,
+): string {
+  if (optimizeResult.status === "created") {
+    const keys = optimizeResult.changedAssetKeys?.length
+      ? `(${optimizeResult.changedAssetKeys.join(", ")})`
+      : "";
+    return `已生成 ${optimizeResult.generationId ?? "-"} ${keys}${optimizeResult.note ? ` · ${optimizeResult.note}` : ""}`;
   }
-  if (edit.status === "failed") return `失败:${edit.error ?? "未知错误"}`;
-  return `跳过:${edit.error ?? "无变更"}`;
+  if (optimizeResult.status === "failed") return `失败:${optimizeResult.error ?? "未知错误"}`;
+  return `跳过:${optimizeResult.error ?? "无变更"}`;
 }
 
 const TELL_DESCRIPTIONS: Record<string, string> = {
@@ -2026,7 +2040,7 @@ function ScoreDetailModal({
   );
 }
 
-type AutoEditRequestData = {
+type AutoOptimizeRequestData = {
   system: string;
   user: string;
   config: {
@@ -2038,7 +2052,7 @@ type AutoEditRequestData = {
   };
 };
 
-function AutoEditDetailModal({
+function AutoOptimizeDetailModal({
   runId,
   roundNo,
   response,
@@ -2052,7 +2066,7 @@ function AutoEditDetailModal({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<"result" | "scorecard" | "user" | "system" | "request">("result");
-  const [data, setData] = useState<AutoEditRequestData | null>(null);
+  const [data, setData] = useState<AutoOptimizeRequestData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -2069,7 +2083,7 @@ function AutoEditDetailModal({
     let cancelled = false;
     setLoading(true);
     setError("");
-    fetch(`${API_URL}/debug/iterations/auto-edit-request/${runId}/${roundNo}`)
+    fetch(`${API_URL}/debug/iterations/auto-optimize-request/${runId}/${roundNo}`)
       .then((r) => r.json())
       .then((json) => {
         if (cancelled) return;
@@ -2234,7 +2248,7 @@ function statusLabel(s: string): string {
   switch (s) {
     case "running":
       return "进行中";
-    case "auto_editing":
+    case "auto_optimizing":
       return "自动优化中";
     case "awaiting_activation":
       return "等待激活下一代";

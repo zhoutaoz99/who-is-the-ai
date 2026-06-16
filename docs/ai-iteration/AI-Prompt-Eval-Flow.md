@@ -15,7 +15,7 @@
 
 ## 1. 概览
 
-点击「开始迭代」→ 服务端**进程内**用当前激活的 **AI 提示词代** 跑一批无头对局 → 每局结束时再取当前激活的 **评估尺子代** 做量化打分 → 聚合成 scorecard → 轮间由人工在页面上编辑多个提示词并一次保存成新版本,或由自动优化器派生候选代 → 继续下一轮,循环 K 轮。两套版本库独立切换,全程实时可见进度,版本可一键回滚。
+点击「开始迭代」→ 服务端**进程内**用当前激活的 **AI 提示词代** 跑一批无头对局 → 每局结束时再取当前激活的 **评估尺子代** 做量化打分 → 聚合成 scorecard → 轮间由人工在页面上**手动优化**多个提示词并一次保存成新版本,或由自动优化器派生候选代 → 继续下一轮,循环 K 轮。两套版本库独立切换,全程实时可见进度,版本可一键回滚。
 
 ---
 
@@ -71,7 +71,7 @@ flowchart LR
 - **对局在进程内跑完**:`IterationService` 直接调 `GameService.createDebugAutoAiRoom + startGame`,纯服务端定时器推进(讨论→投票→淘汰→下一轮→结束),**不需要 socket 客户端**。
 - **IterationService 不碰 socket**:它用 `EventEmitter` 发本地事件,由 `GameGateway` 桥接成 `iteration.*` 广播,保持可测试、解耦。
 - **两套版本库并行**:AI 行为提示词与评估尺子分库管理;切 AI 代不会顺带改打分口径,切评估尺子也不会改 AI 行为。
-- **评估尺子当前覆盖范围**:版本库只覆盖 `replay-score/*` 与 `auto-edit/*`;`system-replay-analysis.txt` / `user-replay-analysis-template.txt` 仍由 `ReplayService` 直接读文件。
+- **评估尺子当前覆盖范围**:版本库只覆盖 `replay-score/*` 与 `auto-optimize/*`;`system-replay-analysis.txt` / `user-replay-analysis-template.txt` 仍由 `ReplayService` 直接读文件。
 - **`eval/prompts/*` 现在是 seed / fallback**:首启播种 `eval-gen-0001`、DB 缺数据时回退读取文件;正常运行时打分和自动优化都优先读 `eval_prompt_*` 里的 active generation。
 
 ---
@@ -82,12 +82,12 @@ flowchart LR
 | --- | --- |
 | **代(generation)** | 一组提示词版本的快照(6 个文本模板 + 人格库 JSON 的各一个版本号)。`ai_prompt_generations` 一行。 |
 | **active 代** | 当前线上对局实际使用的代,由 `ai_prompt_state` 单例指针指定。**热切换**:改指针即生效,无需重启。 |
-| **评估尺子代(eval generation)** | 一组评估提示词版本的快照,当前只含 `replay-score/*` 与 `auto-edit/*` 四个 asset。由 `eval_prompt_state` 单例指针指定 active。 |
+| **评估尺子代(eval generation)** | 一组评估提示词版本的快照,当前只含 `replay-score/*` 与 `auto-optimize/*` 四个 asset。由 `eval_prompt_state` 单例指针指定 active。 |
 | **run** | 一次「开始迭代」到「完成/停止」的过程,含 K 轮。`iteration_runs` 一行。 |
-| **轮(round)** | 用当前 active 代跑 B 局 → 打分 → 聚合。轮与轮之间可人工换版本,也可由「自动优化」基于本轮 scorecard 派生候选代后等待确认或自动继续(详细逻辑见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4)。 |
-| **自动优化(auto-edit)** | 轮聚合后调用编辑模型,基于 scorecard + 逐局摘要 + 当前代 assets 派生候选代。UI 称「自动优化」,代码标识符沿用历史名 `autoEdit` / `createAutoEditGeneration` / 状态 `auto_editing` / 轮后模式 `auto_edit_*`。 |
+| **轮(round)** | 用当前 active 代跑 B 局 → 打分 → 聚合。轮与轮之间可人工手动优化/换版本,也可由「自动优化」基于本轮 scorecard 派生候选代后等待确认或自动继续(详细逻辑见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4)。 |
+| **自动优化(auto-optimize)** | 轮聚合后调用优化模型,基于 scorecard + 逐局摘要 + 当前代 assets 派生候选代。前端 UI、接口与代码内部统一使用 `autoOptimize` / `createAutoOptimizeGeneration` / `auto_optimizing` / `auto_optimize_*` 这一套命名。 |
 | **scorecard** | 一轮 B 局分数的聚合(胜率、humanLikeScore 均值±标准误、各 tell 命中率、高频问题)。 |
-| **`scoreGenerationId` / `autoEdit.evalGenerationId`** | 运行时写入 `iteration_runs.rounds` 的历史指针,分别记录“某局打分时用的评估尺子代”和“某轮自动优化时用的评估尺子代”,用于事后如实重建请求。 |
+| **`scoreGenerationId` / `autoOptimize.evalGenerationId`** | 运行时写入 `iteration_runs.rounds` 的历史指针,分别记录“某局打分时用的评估尺子代”和“某轮自动优化时用的评估尺子代”,用于事后如实重建请求。 |
 
 ---
 
@@ -105,7 +105,7 @@ flowchart TD
     R2 --> R3["聚合 scorecard"]
     R3 --> R4["writeScore(active代, scorecard)<br/>持久化该轮到 iteration_runs.rounds"]
     R4 --> AE{"开启自动优化?<br/>(postRoundMode ≠ manual)"}
-    AE -- 是 --> EDIT["广播 status=auto_editing<br/>自动优化器 createGeneration(candidate)<br/>(每轮含末轮)"]
+    AE -- 是 --> EDIT["广播 status=auto_optimizing<br/>自动优化器 createGeneration(candidate)<br/>(每轮含末轮)"]
     EDIT --> CAND{"生成候选代?"}
     AE -- 否(manual) --> NOCAND["无候选代"]
     CAND -- 否(跳过/失败) --> NOCAND
@@ -131,9 +131,9 @@ flowchart TD
 ```
 
 要点:
-- 轮后模式有三种:`manual`(人工编辑/激活)、`auto_edit_wait_confirm`(自动优化生成候选代,人工确认后继续)、`auto_edit_activate_continue`(自动优化生成并激活,直接继续)。**默认 `auto_edit_wait_confirm`**。
+- 轮后模式有三种:`manual`(手动优化/激活)、`auto_optimize_wait_confirm`(自动优化生成候选代,人工确认后继续)、`auto_optimize_activate_continue`(自动优化生成并激活,直接继续)。**默认 `auto_optimize_wait_confirm`**。
 - **自动优化每轮都跑(含末轮)**:末轮若生成候选代,候选代照常落库,但 run 仍直接 `completed`;是否采纳该候选代,由用户在后续新 run 之前到「AI 提示词版本」面板手动激活。
-- **自动优化是阻塞式大模型调用**(数十秒):`runRound` 进入编辑调用前先持久化并广播 `status = auto_editing`,前端立即看到「自动优化中…」;`retryAutoEdit()`(自动优化失败后用户点「重试自动优化」)同样**先 ack 再异步执行**,结果通过 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时(详见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4.3)。
+- **自动优化是阻塞式大模型调用**(数十秒):`runRound` 进入优化调用前先持久化并广播 `status = auto_optimizing`,前端立即看到「自动优化中…」;`retryAutoOptimize()`(自动优化失败后用户点「重试自动优化」)同样**先 ack 再异步执行**,结果通过 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时(详见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4.3)。
 - 不强制换版本:保持同一代继续跑,只是为该代累积更多样本、分数会更稳。
 - **单进程互斥**:同时只允许一个 run(active 代是进程级单例)。
 
@@ -157,7 +157,7 @@ flowchart TD
   AGG --> WRITE["prompts.writeScore(generationId, scorecard)"]
   WRITE --> AE{"开启自动优化?"}
   AE -- 否 --> PERSIST["rounds.push({round, generationId, games, aggregate})<br/>写 iteration_runs"]
-  AE -- 是 --> EDIT["status=auto_editing<br/>createAutoEditGeneration"]
+  AE -- 是 --> EDIT["status=auto_optimizing<br/>createAutoOptimizeGeneration"]
   EDIT --> PERSIST
   PERSIST --> STATUS{"本轮结束后状态?"}
   STATUS -- 末轮 --> CMP[status=completed, emit done]
@@ -204,12 +204,12 @@ flowchart TD
 
 ## 8. 自动优化器(轮后状态流转)
 
-轮 scorecard 产出后,若开启自动优化(`postRoundMode ≠ manual`,**默认 `auto_edit_wait_confirm`**),`IterationService.createAutoEditGeneration` 调编辑模型派生候选代。本节讲**状态流转与时机**;编辑器提示词、占位符、`changedAssets` 校验等内部逻辑见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4。
+轮 scorecard 产出后,若开启自动优化(`postRoundMode ≠ manual`,**默认 `auto_optimize_wait_confirm`**),`IterationService.createAutoOptimizeGeneration` 调优化模型派生候选代。本节讲**状态流转与时机**;优化器提示词、占位符、`changedAssets` 校验等内部逻辑见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §4。
 
 ```mermaid
 flowchart TD
-  RUN[/"running:本轮 B 局打分聚合完成"/] --> AE["广播 status=auto_editing<br/>(前端显示「自动优化中…」)"]
-  AE --> CALL["createAutoEditGeneration<br/>调编辑模型(阻塞,数十秒)"]
+  RUN[/"running:本轮 B 局打分聚合完成"/] --> AE["广播 status=auto_optimizing<br/>(前端显示「自动优化中…」)"]
+  AE --> CALL["createAutoOptimizeGeneration<br/>调优化模型(阻塞,数十秒)"]
   CALL --> GOT{"生成候选代?"}
   GOT -- "否(skipped/failed)" --> NOCAND{"末轮?"}
   GOT -- 是 --> LAST{"末轮?"}
@@ -222,10 +222,10 @@ flowchart TD
 ```
 
 要点:
-- **每轮都触发(含末轮)**:不再受「是否末轮」限制。自动优化器 system / user 提示词来自当前 active 的评估尺子代,并把代号写入 `autoEdit.evalGenerationId`。
+- **每轮都触发(含末轮)**:不再受「是否末轮」限制。自动优化器 system / user 提示词来自当前 active 的评估尺子代,并把代号写入 `autoOptimize.evalGenerationId`。
 - **末轮落地判定**:无论有没有候选代,run 都会 `completed` 并 emit `done`;差别只在于“是否额外留下一个可供后续手动激活的 candidate generation”。
-- **阻塞调用异步化**:编辑模型调用是阻塞式(数十秒),故进入前先广播 `auto_editing`;`retryAutoEdit()`(自动优化失败后点「重试自动优化」)同样**先 ack 再异步执行**,结果经 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时。
-- **重启恢复**:进程重启丢失内存 `activeRunId` 后,`continueToNextRound` / `retryAutoEdit` 经 `recoverActiveRun()` 从最近一条非终态 run 恢复,「确认并继续 / 重试自动优化」仍可用。
+- **阻塞调用异步化**:优化模型调用是阻塞式(数十秒),故进入前先广播 `auto_optimizing`;`retryAutoOptimize()`(自动优化失败后点「重试自动优化」)同样**先 ack 再异步执行**,结果经 `iteration.status` 事件推送,避免客户端 WebSocket 5s 超时。
+- **重启恢复**:进程重启丢失内存 `activeRunId` 后,`continueToNextRound` / `retryAutoOptimize` 经 `recoverActiveRun()` 从最近一条非终态 run 恢复,「确认并继续 / 重试自动优化」仍可用。
 
 ---
 
@@ -260,8 +260,8 @@ sequenceDiagram
 ```
 
 - 前端首屏与断线重连走 `GET /debug/iterations`(返回当前/最近 run 快照)兜底。
-- 事件:`iteration.status`(全量快照,含 `running / auto_editing / awaiting_activation / awaiting_confirmation / completed / stopped / failed` 等状态)、`iteration.game`(单局)、`iteration.round`(轮聚合)、`iteration.done`。
-- 自动优化结果(候选代 id / 失败原因 / 模型原始返回)随 `iteration.status` 全量快照下发,前端无需单独轮询;`retryAutoEdit` 的异步结果亦通过同一事件推送。
+- 事件:`iteration.status`(全量快照,含 `running / auto_optimizing / awaiting_activation / awaiting_confirmation / completed / stopped / failed` 等状态)、`iteration.game`(单局)、`iteration.round`(轮聚合)、`iteration.done`。
+- 自动优化结果(候选代 id / 失败原因 / 模型原始返回)随 `iteration.status` 全量快照下发,前端无需单独轮询;`retryAutoOptimize` 的异步结果亦通过同一事件推送。
 
 ---
 
@@ -274,7 +274,7 @@ erDiagram
   eval_prompt_assets ||--o{ eval_prompt_generations : "manifest 引用版本"
   eval_prompt_state ||--|| eval_prompt_generations : "active 指针"
   iteration_runs ||--|| ai_prompt_generations : "每轮评估某一 AI 代"
-  iteration_runs ||--|| eval_prompt_generations : "rounds[].games[].scoreGenerationId / rounds[].autoEdit.evalGenerationId"
+  iteration_runs ||--|| eval_prompt_generations : "rounds[].games[].scoreGenerationId / rounds[].autoOptimize.evalGenerationId"
 
   ai_prompt_assets {
     text asset_key
@@ -349,8 +349,8 @@ erDiagram
 **前端 `/iteration` 页面(唯一入口)**
 设置 B/K/时长 → 开始迭代 → 实时看进度 → 轮间在两个版本面板里操作:
 
-- **「AI 提示词版本」**:左侧选 AI generation,右侧可在 7 个 asset 间切换编辑。允许**同时修改多个提示词/人格正文**,下拉里对已改 asset 标 `*`,状态栏显示“已修改 N 项”;点击保存时会把所有脏修改一次性提交给 `POST /debug/prompts/generation`,派生一个新的 AI 子代。切换 asset 不丢草稿,切换 generation 会在有未保存修改时确认。
-- **「评估尺子版本」**:交互与上面一致,但编辑对象是 `replay-score/*` 与 `auto-edit/*` 四个 asset。保存时调用 `POST /debug/eval-prompts/generation`,派生一个新的 `eval-gen-*`。切 active 后,后续新局打分与后续自动优化立即改用新的评估尺子。
+- **「AI 提示词版本」**:左侧选 AI generation,右侧可在 7 个 asset 间切换调整。允许**同时修改多个提示词/人格正文**,下拉里对已改 asset 标 `*`,状态栏显示“已修改 N 项”;点击保存时会把所有脏修改一次性提交给 `POST /debug/prompts/generation`,派生一个新的 AI 子代。切换 asset 不丢草稿,切换 generation 会在有未保存修改时确认。
+- **「评估尺子版本」**:交互与上面一致,但调整对象是 `replay-score/*` 与 `auto-optimize/*` 四个 asset。保存时调用 `POST /debug/eval-prompts/generation`,派生一个新的 `eval-gen-*`。切 active 后,后续新局打分与后续自动优化立即改用新的评估尺子。
 
 两块面板都支持「与父代对比」查看差异(高亮增删行,**仅列出与父代有差异的 asset**)；版本行支持「删除」(**存在子版本时不允许**;删除激活代会自动回退到其父代)。
 
@@ -361,6 +361,6 @@ erDiagram
 - AI 提示词版本库(`apps/api/src/ai/prompt-version.controller.ts`):`GET /debug/prompts/generations`、`GET /debug/prompts/generations/:id`、`POST /debug/prompts/generation`、`POST /debug/prompts/active`、`POST /debug/prompts/best`、`POST /debug/prompts/score`、`DELETE /debug/prompts/generation/:id`。
 - 评估尺子版本库(`apps/api/src/ai/eval-prompt-version.controller.ts`):`GET /debug/eval-prompts/generations`、`GET /debug/eval-prompts/generations/:id`、`POST /debug/eval-prompts/generation`、`POST /debug/eval-prompts/active`、`DELETE /debug/eval-prompts/generation/:id`。
 
-迭代 run 的 HTTP 兜底/详情接口(在 `apps/api/src/iteration/iteration.controller.ts`):`GET /debug/iterations`(当前/最近 run 快照)、`GET /debug/iterations/estimate`(按 `rounds/gamesPerRound/discussionSeconds/postRoundMode/sequentialSpeech` 估算预计用时与「每名玩家发言次数」,供参数面板动态提示)、`GET /debug/iterations/scorer-prompt`(当前 active 评估尺子代的打分 system prompt)、`GET /debug/iterations/score-request/:roomId`(按该局记录的 `scoreGenerationId` 重建打分请求)、`GET /debug/iterations/auto-edit-request/:runId/:roundNo`(按该轮记录的 `autoEdit.evalGenerationId` 重建自动优化请求,供详情弹窗)。
+迭代 run 的 HTTP 兜底/详情接口(在 `apps/api/src/iteration/iteration.controller.ts`):`GET /debug/iterations`(当前/最近 run 快照)、`GET /debug/iterations/estimate`(按 `rounds/gamesPerRound/discussionSeconds/postRoundMode/sequentialSpeech` 估算预计用时与「每名玩家发言次数」,供参数面板动态提示)、`GET /debug/iterations/scorer-prompt`(当前 active 评估尺子代的打分 system prompt)、`GET /debug/iterations/score-request/:roomId`(按该局记录的 `scoreGenerationId` 重建打分请求)、`GET /debug/iterations/auto-optimize-request/:runId/:roundNo`(按该轮记录的 `autoOptimize.evalGenerationId` 重建自动优化请求,供详情弹窗)。
 
 > 入口在首页 `{debug && ...}` 门控,需 `DEBUG=true` 且 API 在运行。

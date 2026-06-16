@@ -3,8 +3,8 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { AiService } from "../ai/ai.service";
 import {
-  AUTO_EDIT_SYSTEM_ASSET_KEY,
-  AUTO_EDIT_USER_ASSET_KEY,
+  AUTO_OPTIMIZE_SYSTEM_ASSET_KEY,
+  AUTO_OPTIMIZE_USER_ASSET_KEY,
   EvalPromptRegistry,
   REPLAY_SCORE_SYSTEM_ASSET_KEY,
   REPLAY_SCORE_USER_ASSET_KEY,
@@ -50,14 +50,14 @@ const POLL_INTERVAL_MS = 2500;
 const STUCK_AFTER_MS = 90_000;
 const SCORE_TIMEOUT_MS = 120_000;
 const DEFAULT_PERSONA_MODE: IterationPersonaMode = "fixed_schedule";
-const DEFAULT_POST_ROUND_MODE: IterationPostRoundMode = "auto_edit_wait_confirm";
+const DEFAULT_POST_ROUND_MODE: IterationPostRoundMode = "auto_optimize_wait_confirm";
 
 /**
  * 进程内自动对局评估自迭代编排器。
  * - 用 GameService 直接驱动 debug 自动对局(纯服务端定时器,无需 socket 客户端)。
  * - 单进程互斥:同时只允许一个 run。
  * - 通过 EventEmitter 对外发本地事件(status/game/round/done),由网关桥接成 socket 广播。
- * 评估循环自动跑;版本激活由前端人工操作(自动优化器预留 editor 钩子,本期不接)。
+ * 评估循环自动跑;版本激活由前端人工操作(自动优化器预留 optimizer 钩子,本期不接)。
  */
 @Injectable()
 export class IterationService implements OnModuleInit {
@@ -210,7 +210,7 @@ export class IterationService implements OnModuleInit {
     return { ok: true };
   }
 
-  async retryAutoEdit(): Promise<{ ok: boolean; error?: string; generationId?: string }> {
+  async retryAutoOptimize(): Promise<{ ok: boolean; error?: string; generationId?: string }> {
     // 内存 activeRunId 可能在进程重启后丢失;若 DB 仍有非终态 run,则恢复后再重试。
     if (!this.activeRunId) {
       const recovered = await this.recoverActiveRun();
@@ -221,7 +221,7 @@ export class IterationService implements OnModuleInit {
       return { ok: false, error: "当前不在可重试自动优化的状态" };
     }
     const options = this.rowOptions(row);
-    if (!this.shouldAutoEdit(options)) {
+    if (!this.shouldAutoOptimize(options)) {
       return { ok: false, error: "本次迭代未开启自动优化" };
     }
 
@@ -235,11 +235,11 @@ export class IterationService implements OnModuleInit {
     // 先进入"自动优化中"状态,立即返回 ack,AI 调用异步执行以避免客户端 WebSocket 5s 超时。
     await this.persist({
       ...row,
-      status: "auto_editing",
+      status: "auto_optimizing",
       updated_at: new Date().toISOString(),
     });
     this.emitStatus(
-      "auto_editing",
+      "auto_optimizing",
       row.current_round,
       row.total_rounds,
       row.games_per_round,
@@ -247,7 +247,7 @@ export class IterationService implements OnModuleInit {
     );
 
     // 异步执行自动优化,完成后通过 iteration.status 事件推送结果。
-    void this.executeRetryAutoEdit(
+    void this.executeRetryAutoOptimize(
       row,
       rounds,
       last,
@@ -260,7 +260,7 @@ export class IterationService implements OnModuleInit {
     return { ok: true };
   }
 
-  private async executeRetryAutoEdit(
+  private async executeRetryAutoOptimize(
     row: IterationRunRow,
     rounds: IterationRound[],
     last: IterationRound,
@@ -270,13 +270,13 @@ export class IterationService implements OnModuleInit {
     if (this.stopRequested) return;
 
     const evalGenerationId =
-      last.autoEdit?.evalGenerationId ?? this.evalPrompts.getActiveGenerationId();
-    const retryResult = await this.createAutoEditGeneration(
+      last.autoOptimize?.evalGenerationId ?? this.evalPrompts.getActiveGenerationId();
+    const retryResult = await this.createAutoOptimizeGeneration(
       lastGenerationId,
       last,
       evalGenerationId,
     );
-    const updatedRound: IterationRound = { ...last, autoEdit: retryResult };
+    const updatedRound: IterationRound = { ...last, autoOptimize: retryResult };
     rounds[rounds.length - 1] = updatedRound;
     this.rounds = rounds;
 
@@ -301,13 +301,13 @@ export class IterationService implements OnModuleInit {
         freshRow.games_per_round,
         freshRow.discussion_seconds,
       );
-      this.events.emit("iteration.autoEditFailed", {
+      this.events.emit("iteration.autoOptimizeFailed", {
         error: retryResult.error ?? "自动优化重试未生成新代",
       });
       return;
     }
 
-    if (options.postRoundMode === "auto_edit_activate_continue") {
+    if (options.postRoundMode === "auto_optimize_activate_continue") {
       await this.prompts.setActive(createdGenerationId);
       const nextRound = freshRow.current_round + 1;
       await this.persist({
@@ -375,7 +375,7 @@ export class IterationService implements OnModuleInit {
    * 估算一次迭代的预计用时(秒),供前端参数面板提示。仅作参考,实际受模型速度与对局结束轮数影响。
    * 用后端真实计时常量(VOTE_DURATION_MS 等可被 env 覆盖),避免前端硬编码漂移。
    * 模型:K 轮 × 每轮 ceil(B / 并发) 批 × 单局(平均 (MAX_ROUNDS-1) 天 × (讨论 + 投票 + 交接) + 打分)
-   *      + (开启自动优化时)每轮 + 编辑模型调用。
+   *      + (开启自动优化时)每轮 + 优化模型调用。
    */
   estimateIteration(params: {
     rounds?: number;
@@ -404,7 +404,7 @@ export class IterationService implements OnModuleInit {
     const TURNOVER_SEC = (NEXT_ROUND_DELAY_MS + AUTO_RESOLVE_DELAY_MS) / 1000;
     const AVG_GAME_ROUNDS = Math.max(1, MAX_ROUNDS - 1); // 一局平均进行的天数
     const SCORE_SEC = 20; // 单局打分模型调用(估算)
-    const AUTO_OPTIMIZE_SEC = 45; // 单轮自动优化编辑模型调用(估算)
+    const AUTO_OPTIMIZE_SEC = 45; // 单轮自动优化优化模型调用(估算)
 
     const perGameRoundSec = discussionSeconds + VOTE_SEC + TURNOVER_SEC;
     const perGameSec = AVG_GAME_ROUNDS * perGameRoundSec + SCORE_SEC;
@@ -488,12 +488,12 @@ export class IterationService implements OnModuleInit {
   }
 
   /**
-   * 重建某轮自动优化时发往大模型的完整请求(编辑器 system + user + 模型 config),
+   * 重建某轮自动优化时发往大模型的完整请求(优化器 system + user + 模型 config),
    * 供前端在自动优化记录的详情弹窗中如实展示生成过程输入。
-   * user 用与 createAutoEditGeneration 相同的 buildEditorUserPrompt
+   * user 用与 createAutoOptimizeGeneration 相同的 buildOptimizerUserPrompt
    * (含 assetKeys / 当前 prompts / personas / scorecard / games)。
    */
-  async getAutoEditRequest(runId: string, roundNo: number): Promise<{
+  async getAutoOptimizeRequest(runId: string, roundNo: number): Promise<{
     ok: boolean;
     request?: { system: string; user: string; config: ReturnType<IterationService["getScoreModelConfig"]> };
     error?: string;
@@ -509,12 +509,12 @@ export class IterationService implements OnModuleInit {
     try {
       const assets = await this.prompts.getGenerationAssets(round.generationId);
       const evalGenerationId =
-        round.autoEdit?.evalGenerationId ?? this.evalPrompts.getActiveGenerationId();
+        round.autoOptimize?.evalGenerationId ?? this.evalPrompts.getActiveGenerationId();
       const system = await this.evalPrompts.getPromptForGeneration(
         evalGenerationId,
-        AUTO_EDIT_SYSTEM_ASSET_KEY,
+        AUTO_OPTIMIZE_SYSTEM_ASSET_KEY,
       );
-      const user = await this.buildEditorUserPrompt(
+      const user = await this.buildOptimizerUserPrompt(
         round.generationId,
         round,
         assets,
@@ -607,24 +607,24 @@ export class IterationService implements OnModuleInit {
     const isLast = roundNo >= totalRounds;
     // 自动优化在每一轮(含最后一轮)后都跑;最后一轮生成的候选代照常落库,
     // run 直接进入 completed(见下方 status 计算),候选代会保留在 AI 提示词版本列表里供手动激活。
-    if (generationId && this.shouldAutoEdit(options)) {
+    if (generationId && this.shouldAutoOptimize(options)) {
       const evalGenerationId = this.evalPrompts.getActiveGenerationId();
       // 进入自动优化前持久化并广播"自动优化中",让前端展示独立状态。
       await this.persist({
         ...row,
-        status: "auto_editing",
+        status: "auto_optimizing",
         rounds: persistedRounds,
         updated_at: new Date().toISOString(),
       });
       this.emitStatus(
-        "auto_editing",
+        "auto_optimizing",
         roundNo,
         totalRounds,
         gamesPerRound,
         discussionSeconds,
       );
 
-      round.autoEdit = await this.createAutoEditGeneration(
+      round.autoOptimize = await this.createAutoOptimizeGeneration(
         generationId,
         round,
         evalGenerationId,
@@ -632,15 +632,15 @@ export class IterationService implements OnModuleInit {
       if (this.stopRequested) return;
     }
 
-    const autoEditGenerationId =
-      round.autoEdit?.status === "created" ? round.autoEdit.generationId : undefined;
+    const autoOptimizeGenerationId =
+      round.autoOptimize?.status === "created" ? round.autoOptimize.generationId : undefined;
     const shouldAutoContinue =
       !isLast &&
-      autoEditGenerationId &&
-      options.postRoundMode === "auto_edit_activate_continue";
+      autoOptimizeGenerationId &&
+      options.postRoundMode === "auto_optimize_activate_continue";
 
     if (shouldAutoContinue) {
-      await this.prompts.setActive(autoEditGenerationId);
+      await this.prompts.setActive(autoOptimizeGenerationId);
       const nextRound = roundNo + 1;
       await this.persist({
         ...row,
@@ -661,13 +661,13 @@ export class IterationService implements OnModuleInit {
     // 不再停在 awaiting_activation,避免 run 非终态占用、阻断开新 run。
     const status: IterationStatus = isLast
       ? "completed"
-      : autoEditGenerationId && options.postRoundMode === "auto_edit_wait_confirm"
+      : autoOptimizeGenerationId && options.postRoundMode === "auto_optimize_wait_confirm"
         ? "awaiting_confirmation"
         : "awaiting_activation";
     await this.persist({
       ...row,
       status,
-      pending_generation_id: status === "awaiting_confirmation" ? autoEditGenerationId : null,
+      pending_generation_id: status === "awaiting_confirmation" ? autoOptimizeGenerationId : null,
       rounds: persistedRounds,
       updated_at: new Date().toISOString(),
     });
@@ -679,7 +679,7 @@ export class IterationService implements OnModuleInit {
       totalRounds,
       gamesPerRound,
       discussionSeconds,
-      status === "awaiting_confirmation" ? autoEditGenerationId : null,
+      status === "awaiting_confirmation" ? autoOptimizeGenerationId : null,
     );
     if (status === "completed") {
       this.events.emit("done", { runId, status });
@@ -703,11 +703,11 @@ export class IterationService implements OnModuleInit {
     const explicitPostRoundMode = normalizePostRoundMode(payload.postRoundMode);
     let postRoundMode =
       explicitPostRoundMode ??
-      (payload.autoEdit === true ? "auto_edit_wait_confirm" : DEFAULT_POST_ROUND_MODE);
-    if (payload.autoEdit === true && postRoundMode === "manual") {
-      postRoundMode = "auto_edit_wait_confirm";
+      (payload.autoOptimize === true ? "auto_optimize_wait_confirm" : DEFAULT_POST_ROUND_MODE);
+    if (payload.autoOptimize === true && postRoundMode === "manual") {
+      postRoundMode = "auto_optimize_wait_confirm";
     }
-    if (payload.autoEdit === false) {
+    if (payload.autoOptimize === false) {
       postRoundMode = "manual";
     }
 
@@ -728,7 +728,7 @@ export class IterationService implements OnModuleInit {
       sequentialSpeech: payload.sequentialSpeech !== false,
       personaMode,
       personaIds: requestedPersonaIds.length > 0 ? requestedPersonaIds : undefined,
-      autoEdit: postRoundMode !== "manual",
+      autoOptimize: postRoundMode !== "manual",
       postRoundMode,
     };
 
@@ -765,7 +765,7 @@ export class IterationService implements OnModuleInit {
       personaSchedule: Array.isArray(raw.personaSchedule)
         ? raw.personaSchedule.filter((entry): entry is string[] => Array.isArray(entry))
         : undefined,
-      autoEdit: raw.postRoundMode !== "manual" && raw.autoEdit === true,
+      autoOptimize: raw.postRoundMode !== "manual" && raw.autoOptimize === true,
       postRoundMode: normalizePostRoundMode(raw.postRoundMode) ?? DEFAULT_POST_ROUND_MODE,
     };
   }
@@ -775,15 +775,15 @@ export class IterationService implements OnModuleInit {
     return options.personaSchedule[gameIndex % options.personaSchedule.length];
   }
 
-  private shouldAutoEdit(options: IterationRunOptions): boolean {
-    return options.autoEdit && options.postRoundMode !== "manual";
+  private shouldAutoOptimize(options: IterationRunOptions): boolean {
+    return options.autoOptimize && options.postRoundMode !== "manual";
   }
 
-  private async createAutoEditGeneration(
+  private async createAutoOptimizeGeneration(
     generationId: string,
     round: IterationRound,
     evalGenerationId: string,
-  ): Promise<NonNullable<IterationRound["autoEdit"]>> {
+  ): Promise<NonNullable<IterationRound["autoOptimize"]>> {
     if (!round.aggregate) {
       return { status: "skipped", error: "本轮没有有效 scorecard,跳过自动优化" };
     }
@@ -794,12 +794,12 @@ export class IterationService implements OnModuleInit {
         `自动优化开始 generationId=${generationId} round=${round.round}`,
       );
       const assets = await this.prompts.getGenerationAssets(generationId);
-      const { modelConfig, options } = this.resolveEditorModel();
+      const { modelConfig, options } = this.resolveOptimizerModel();
       const systemPrompt = await this.evalPrompts.getPromptForGeneration(
         evalGenerationId,
-        AUTO_EDIT_SYSTEM_ASSET_KEY,
+        AUTO_OPTIMIZE_SYSTEM_ASSET_KEY,
       );
-      const userPrompt = await this.buildEditorUserPrompt(
+      const userPrompt = await this.buildOptimizerUserPrompt(
         generationId,
         round,
         assets,
@@ -807,7 +807,7 @@ export class IterationService implements OnModuleInit {
       );
 
       this.logger.debug(
-        this.formatEditorRequestLog(
+        this.formatOptimizerRequestLog(
           generationId,
           systemPrompt,
           userPrompt,
@@ -823,13 +823,13 @@ export class IterationService implements OnModuleInit {
         options,
       );
 
-      this.logger.debug(this.formatEditorResponseLog(generationId, content));
+      this.logger.debug(this.formatOptimizerResponseLog(generationId, content));
 
       const parsed = parseJsonObject(content);
       if (!isRecord(parsed)) {
         throw new Error(`自动优化返回非 JSON 对象: ${content.slice(0, 200)}`);
       }
-      const changedAssets = this.validateEditorChangedAssets(parsed, assets);
+      const changedAssets = this.validateOptimizerChangedAssets(parsed, assets);
       const changedAssetKeys = Object.keys(changedAssets);
       if (changedAssetKeys.length === 0) {
         return {
@@ -844,7 +844,7 @@ export class IterationService implements OnModuleInit {
       const note =
         typeof parsed.note === "string" && parsed.note.trim()
           ? parsed.note.trim().slice(0, 500)
-          : `auto-edit after round ${round.round}`;
+          : `auto-optimize after round ${round.round}`;
       const generation = await this.prompts.createGeneration({
         fromGenId: generationId,
         changedAssets,
@@ -874,7 +874,7 @@ export class IterationService implements OnModuleInit {
     }
   }
 
-  private async buildEditorUserPrompt(
+  private async buildOptimizerUserPrompt(
     generationId: string,
     round: IterationRound,
     assets: Awaited<ReturnType<PromptRegistry["getGenerationAssets"]>>,
@@ -890,7 +890,7 @@ export class IterationService implements OnModuleInit {
     }));
     return this.evalPrompts.renderForGeneration(
       evalGenerationId,
-      AUTO_EDIT_USER_ASSET_KEY,
+      AUTO_OPTIMIZE_USER_ASSET_KEY,
       {
       generationId,
       assetKeysJson: JSON.stringify(ALL_ASSET_KEYS, null, 2),
@@ -902,7 +902,7 @@ export class IterationService implements OnModuleInit {
     );
   }
 
-  private formatEditorRequestLog(
+  private formatOptimizerRequestLog(
     generationId: string,
     systemPrompt: string,
     userPrompt: string,
@@ -933,7 +933,7 @@ export class IterationService implements OnModuleInit {
     ].join("\n");
   }
 
-  private formatEditorResponseLog(generationId: string, content: string): string {
+  private formatOptimizerResponseLog(generationId: string, content: string): string {
     const separator = "=".repeat(72);
     const subSeparator = "-".repeat(72);
     return [
@@ -947,7 +947,7 @@ export class IterationService implements OnModuleInit {
     ].join("\n");
   }
 
-  private validateEditorChangedAssets(
+  private validateOptimizerChangedAssets(
     parsed: Record<string, unknown>,
     assets: Awaited<ReturnType<PromptRegistry["getGenerationAssets"]>>,
   ): Record<string, string> {
@@ -1208,7 +1208,7 @@ export class IterationService implements OnModuleInit {
     };
   }
 
-  private resolveEditorModel(): {
+  private resolveOptimizerModel(): {
     modelConfig: AiModelCallConfig;
     options: { baseURL: string; apiKey: string; timeoutMs: number };
   } {
@@ -1282,7 +1282,7 @@ export class IterationService implements OnModuleInit {
   private async mostRecentNonTerminalRow(): Promise<IterationRunRow | null> {
     const res = await this.postgres.query<IterationRunRow>(
       `SELECT * FROM iteration_runs
-       WHERE status IN ('running','auto_editing','awaiting_activation','awaiting_confirmation')
+       WHERE status IN ('running','auto_optimizing','awaiting_activation','awaiting_confirmation')
        ORDER BY updated_at DESC LIMIT 1`,
     );
     return res.rows[0] ?? null;
@@ -1304,10 +1304,10 @@ export class IterationService implements OnModuleInit {
 
   /**
    * 进程重启后:内存里的 run 全丢了。
-   * - 大多数非终态 run(running/auto_editing/awaiting_activation)已无内存驱动,标记为 stopped。
-   *   其中 auto_editing 的自动优化调用已丢失,必须清理。
-   * - 例外:处于"自动优化失败"(awaiting_activation + 末轮 autoEdit.status=failed)的 run
-   *   允许保留,用户可继续重试自动优化;为此把内存 activeRunId 指回最近一条,使 retryAutoEdit 可用。
+   * - 大多数非终态 run(running/auto_optimizing/awaiting_activation)已无内存驱动,标记为 stopped。
+   *   其中 auto_optimizing 的自动优化调用已丢失,必须清理。
+   * - 例外:处于"自动优化失败"(awaiting_activation + 末轮 autoOptimize.status=failed)的 run
+   *   允许保留,用户可继续重试自动优化;为此把内存 activeRunId 指回最近一条,使 retryAutoOptimize 可用。
    */
   private async reconcileStaleRuns(): Promise<void> {
     const res = await this.postgres.query<{
@@ -1316,25 +1316,25 @@ export class IterationService implements OnModuleInit {
       rounds: unknown;
     }>(
       `SELECT id, status, rounds FROM iteration_runs
-       WHERE status IN ('running','auto_editing','awaiting_activation')
+       WHERE status IN ('running','auto_optimizing','awaiting_activation')
        ORDER BY updated_at DESC`,
     );
 
-    const failedAutoEditIds: string[] = [];
+    const failedAutoOptimizeIds: string[] = [];
     const toStopIds: string[] = [];
     for (const row of res.rows) {
-      if (this.isAutoEditFailedRow(row)) {
-        failedAutoEditIds.push(row.id);
+      if (this.isAutoOptimizeFailedRow(row)) {
+        failedAutoOptimizeIds.push(row.id);
       } else {
         toStopIds.push(row.id);
       }
     }
 
-    if (failedAutoEditIds.length > 0) {
+    if (failedAutoOptimizeIds.length > 0) {
       // 取最近一条(updated_at DESC 排第一)作为活跃 run,其余保留待用户手动处理。
-      this.activeRunId = failedAutoEditIds[0];
+      this.activeRunId = failedAutoOptimizeIds[0];
       this.logger.log(
-        `启动时保留 ${failedAutoEditIds.length} 个处于"自动优化失败"状态的迭代 run(可继续重试),activeRunId=${this.activeRunId}`,
+        `启动时保留 ${failedAutoOptimizeIds.length} 个处于"自动优化失败"状态的迭代 run(可继续重试),activeRunId=${this.activeRunId}`,
       );
     }
 
@@ -1352,14 +1352,14 @@ export class IterationService implements OnModuleInit {
     }
   }
 
-  /** 判断某 run 是否处于"自动优化失败"状态(末轮 autoEdit.status=failed),用于启动清理时保留。 */
-  private isAutoEditFailedRow(row: { status: string; rounds: unknown }): boolean {
+  /** 判断某 run 是否处于"自动优化失败"状态(末轮 autoOptimize.status=failed),用于启动清理时保留。 */
+  private isAutoOptimizeFailedRow(row: { status: string; rounds: unknown }): boolean {
     if (row.status !== "awaiting_activation") return false;
     if (!Array.isArray(row.rounds) || row.rounds.length === 0) return false;
     const last = row.rounds[row.rounds.length - 1] as
-      | { autoEdit?: { status?: string } }
+      | { autoOptimize?: { status?: string } }
       | undefined;
-    return last?.autoEdit?.status === "failed";
+    return last?.autoOptimize?.status === "failed";
   }
 
   private rowToStatus(row: IterationRunRow): IterationRunStatus {
@@ -1380,7 +1380,7 @@ export class IterationService implements OnModuleInit {
           ? this.currentRoundGames
           : rounds[rounds.length - 1]?.games ?? [],
       rounds,
-      lastAutoEdit: rounds[rounds.length - 1]?.autoEdit ?? null,
+      lastAutoOptimize: rounds[rounds.length - 1]?.autoOptimize ?? null,
       error: undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -1412,7 +1412,7 @@ export class IterationService implements OnModuleInit {
           ? this.currentRoundGames
           : this.rounds[this.rounds.length - 1]?.games ?? [],
       rounds: this.rounds,
-      lastAutoEdit: this.rounds[this.rounds.length - 1]?.autoEdit ?? null,
+      lastAutoOptimize: this.rounds[this.rounds.length - 1]?.autoOptimize ?? null,
     });
   }
 
@@ -1438,7 +1438,7 @@ export class IterationService implements OnModuleInit {
       options: this.currentOptions ?? undefined,
       currentRoundGames: [],
       rounds: this.rounds,
-      lastAutoEdit: this.rounds[this.rounds.length - 1]?.autoEdit ?? null,
+      lastAutoOptimize: this.rounds[this.rounds.length - 1]?.autoOptimize ?? null,
       error,
     });
     this.activeRunId = null;
@@ -1499,8 +1499,8 @@ function normalizePersonaMode(value: unknown): IterationPersonaMode | null {
 
 function normalizePostRoundMode(value: unknown): IterationPostRoundMode | null {
   return value === "manual" ||
-    value === "auto_edit_wait_confirm" ||
-    value === "auto_edit_activate_continue"
+    value === "auto_optimize_wait_confirm" ||
+    value === "auto_optimize_activate_continue"
     ? value
     : null;
 }

@@ -27,7 +27,7 @@
 - **批量平均,不逐局改**:每轮跑 B 局聚合成 scorecard,只做一处有针对性的改动。
 - **版本历史可回滚**:每次改动 = 一个新"代(generation)",父子代关系会被保留;回滚 = 改 active 指针,不动 git、不重启。
 
-> 范围:版本库 + 评估闭环已落地(进程内 `IterationService` + `/iteration` 页面);新版本可由人工按 scorecard 手动创建,也可由「自动优化」(代码 `autoEdit`)生成候选代后等待确认或自动激活;对手保持 normal 难度;默认 B/K 等常量见 [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md) §11。当前**评估尺子版本库**只覆盖 `replay-score/*` 与 `auto-edit/*`;`ReplayService` 的单局复盘分析提示词(`system-replay-analysis.txt` / `user-replay-analysis-template.txt`)仍保持文件来源。
+> 范围:版本库 + 评估闭环已落地(进程内 `IterationService` + `/iteration` 页面);新版本可由人工按 scorecard 手动创建,也可由「自动优化」(代码 `autoOptimize`)生成候选代后等待确认或自动激活;对手保持 normal 难度;默认 B/K 等常量见 [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md) §11。当前**评估尺子版本库**只覆盖 `replay-score/*` 与 `auto-optimize/*`;`ReplayService` 的单局复盘分析提示词(`system-replay-analysis.txt` / `user-replay-analysis-template.txt`)仍保持文件来源。
 > 另:AI 近期连胜、纯胜率区分度低,故主要靠 tell 命中率 / 自然度等先行指标区分版本好坏。
 
 ## 1. 版本管理(详细逻辑)
@@ -46,7 +46,7 @@
 | `ai-player/user-vote-template.txt` | 投票用户模板 |
 | `ai-player/personas` | 人格库(存 JSON 字符串) |
 
-**不纳入 AI 提示词版本库**:`sim-human/*`(对手,冻结以保证评估公平)、`replay-score/*` / `auto-edit/*`(走独立评估尺子版本库)、`system-replay-analysis.txt` / `user-replay-analysis-template.txt`(复盘分析尺子,保持文件来源)。
+**不纳入 AI 提示词版本库**:`sim-human/*`(对手,冻结以保证评估公平)、`replay-score/*` / `auto-optimize/*`(走独立评估尺子版本库)、`system-replay-analysis.txt` / `user-replay-analysis-template.txt`(复盘分析尺子,保持文件来源)。
 
 ### 1.2 数据模型
 
@@ -81,16 +81,16 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 - **历史代异步**:`getGenerationAssets(genId)` 走 DB,仅供版本感知复盘/打分取人格。
 - **热切换**:`setActive(genId)` 改指针 + `loadActive()`,引擎立即生效,无需重启。
 - **写操作**:`createGeneration({fromGenId, changedAssets, note})` / `setActive` / `markBest` / `writeScore` / `listGenerations`。
-- **自动优化(auto-edit)**:轮聚合后若启用自动优化(`auto_edit_wait_confirm` / `auto_edit_activate_continue`),`IterationService.createAutoEditGeneration` 会把当前代 assets、本轮 scorecard 与逐局打分摘要交给编辑模型,校验 `changedAssets` 后调用 `createGeneration`;`auto_edit_wait_confirm` 只生成 candidate 并等待人工确认,`auto_edit_activate_continue` 会立即 `setActive` 并进入下一轮。编辑模型的**原始返回正文**存入 `IterationRound.autoEdit.response`;调用是阻塞式的,故进入编辑前先广播 `auto_editing` 状态,`retryAutoEdit` 先 ack 再异步执行。完整链路(编辑器 system/user 提示词、占位符、校验规则、详情重建接口)见本文 §4。
+- **自动优化(auto-optimize)**:轮聚合后若启用自动优化(`auto_optimize_wait_confirm` / `auto_optimize_activate_continue`),`IterationService.createAutoOptimizeGeneration` 会把当前代 assets、本轮 scorecard 与逐局打分摘要交给优化模型,校验 `changedAssets` 后调用 `createGeneration`;`auto_optimize_wait_confirm` 只生成 candidate 并等待人工确认,`auto_optimize_activate_continue` 会立即 `setActive` 并进入下一轮。优化模型的**原始返回正文**存入 `IterationRound.autoOptimize.response`;调用是阻塞式的,故进入优化前先广播 `auto_optimizing` 状态,`retryAutoOptimize` 先 ack 再异步执行。完整链路(优化器 system/user 提示词、占位符、校验规则、详情重建接口)见本文 §4。
 
 `AiService` 的 8 处 `ai-player/*` 提示词加载已改走 registry;人格库改为可变 active 集(`getActivePersonas()`),4 个消费者(`game.rules` / `game.snapshot` / `game.service` / `ai.service`)同步切换。
 
-### 1.4 人工编辑器(多 asset 草稿保存)
+### 1.4 手动优化面板(多 asset 草稿保存)
 
 前端 `/iteration` 页面中的 **「AI 提示词版本」** 面板不再要求“一次只能改一个 asset 再立即保存”。当前交互是:
 
 - 左侧选择某个 generation,右侧一次性加载该代的 **7 个 asset 全量正文** 进入前端草稿 Map。
-- 右上 asset 下拉只决定“当前正在编辑哪一个 asset”;切换 asset **不会丢失** 已修改的其他 asset 草稿。
+- 右上 asset 下拉只决定“当前正在调整哪一个 asset”;切换 asset **不会丢失** 已修改的其他 asset 草稿。
 - 被改过的 asset 会在下拉选项中以 `*` 标识,状态条显示“已修改 N 项”。
 - 点击「保存 N 项修改为新版本」时,前端会把所有脏 asset 一次性组装成一个 `changedAssets` 对象发给 `POST /debug/prompts/generation`,从而**把多个提示词改动合并进同一个新代**。
 - 「还原全部修改」会把当前代下所有草稿恢复到刚加载时的状态;切换 generation 时若存在未保存草稿会二次确认。
@@ -113,8 +113,8 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 | --- | --- |
 | `replay-score/system-replay-score.txt` | 单局量化打分 system prompt |
 | `replay-score/user-replay-score-template.txt` | 单局量化打分 user 模板 |
-| `auto-edit/system-prompt-editor.txt` | 自动优化器 system prompt |
-| `auto-edit/user-prompt-editor-template.txt` | 自动优化器 user 模板 |
+| `auto-optimize/system-prompt-optimizer.txt` | 自动优化器 system prompt |
+| `auto-optimize/user-prompt-optimizer-template.txt` | 自动优化器 user 模板 |
 
 **暂不纳入该版本库:**`system-replay-analysis.txt` / `user-replay-analysis-template.txt`(单局复盘分析,仍走文件)。
 
@@ -136,8 +136,8 @@ eval_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 - `EvalPromptRegistry` 负责播种 `eval-gen-0001`、维护 active 指针、按 generation 读取 asset、人工派生/激活/删除版本。
 - `IterationService.scoreReplay` 在每局进入打分前会读取当前 `evalPrompts.getActiveGenerationId()` 作为 `scoreGenerationId`,随后 system/user prompt 都按这一个评估 generation 取值。
-- `IterationService.createAutoEditGeneration` 在每轮进入自动优化前会读取当前 active 评估 generation,并把它记录到 `IterationRound.autoEdit.evalGenerationId`。
-- `GET /debug/iterations/score-request/:roomId` 与 `GET /debug/iterations/auto-edit-request/:runId/:roundNo` 重建历史请求时,优先使用这些**已记录的评估尺子代号**,而不是简单读取“当前 active 尺子”,避免事后切换尺子后详情失真。
+- `IterationService.createAutoOptimizeGeneration` 在每轮进入自动优化前会读取当前 active 评估 generation,并把它记录到 `IterationRound.autoOptimize.evalGenerationId`。
+- `GET /debug/iterations/score-request/:roomId` 与 `GET /debug/iterations/auto-optimize-request/:runId/:roundNo` 重建历史请求时,优先使用这些**已记录的评估尺子代号**,而不是简单读取“当前 active 尺子”,避免事后切换尺子后详情失真。
 
 当前评估尺子版本库的写操作只有:
 
@@ -147,12 +147,12 @@ eval_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 与 AI 提示词版本库不同,它**当前没有** `markBest` / `writeScore` 这类“效果排名”操作;用途仅限人工试验不同评估口径。
 
-### 1.7 评估尺子编辑器(多 asset 草稿保存)
+### 1.7 评估尺子手动优化面板(多 asset 草稿保存)
 
 前端 `/iteration` 页面中的 **「评估尺子版本」** 面板与 AI 提示词版本面板采用相同的多 asset 草稿模型:
 
 - 左侧选版本,右侧把该代全部评估 asset 载入草稿 Map。
-- 可在 `replay-score/*` 与 `auto-edit/*` 间来回切换编辑,已改 asset 用 `*` 标记。
+- 可在 `replay-score/*` 与 `auto-optimize/*` 间来回切换调整,已改 asset 用 `*` 标记。
 - 保存时把**所有脏 asset** 一次性提交给 `POST /debug/eval-prompts/generation`,生成一个新的 `eval-gen-*` 子代。
 - 切换 generation 时若存在未保存草稿会提醒;切换 asset 不会丢草稿;「还原全部修改」会整体回退到当前代已加载正文。
 
@@ -273,45 +273,45 @@ eval_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 ## 4. 自动优化器(详细逻辑)
 
-轮聚合 scorecard 产出后,若该 run 开启自动优化(`auto_edit_wait_confirm` / `auto_edit_activate_continue`,**默认即此模式**),`IterationService.createAutoEditGeneration` 调用编辑模型,基于本轮 scorecard + 逐局摘要 + 当前代 assets 派生一个候选代。
+轮聚合 scorecard 产出后,若该 run 开启自动优化(`auto_optimize_wait_confirm` / `auto_optimize_activate_continue`,**默认即此模式**),`IterationService.createAutoOptimizeGeneration` 调用优化模型,基于本轮 scorecard + 逐局摘要 + 当前代 assets 派生一个候选代。
 
 > **每轮都跑(含末轮)**:自动优化不再受「是否最后一轮」限制。末轮若成功生成候选代,候选代会正常落库,但 run 仍直接进入 `completed`;用户若要采用它,需要在后续新 run 开始前手动激活该 candidate。非末轮时才会根据 `postRoundMode` 进入 `awaiting_confirmation` 或 `awaiting_activation`。详见 [`AI-Prompt-Eval-Flow.md`](./AI-Prompt-Eval-Flow.md) §4。
 
-> 命名:前端 UI 与本文称「自动优化」;代码标识符沿用历史名 `autoEdit` / `createAutoEditGeneration` / 状态 `auto_editing` / 轮后模式 `auto_edit_*`,二者指同一件事。
+> 命名:前端 UI、接口与代码内部统一使用 `autoOptimize` / `createAutoOptimizeGeneration` / `auto_optimizing` / `auto_optimize_*` 这一套命名。
 
-### 4.1 编辑链路
+### 4.1 优化链路
 
 1. **取源代 assets**:`prompts.getGenerationAssets(generationId)`(本轮实际跑的那一代)。
-2. **锁定本轮使用的评估尺子代**: `runRound()` 在进入自动优化前读取 `evalPrompts.getActiveGenerationId()` 并传入 `createAutoEditGeneration(generationId, round, evalGenerationId)`。该 `evalGenerationId` 会写入 `IterationRound.autoEdit.evalGenerationId`。
-3. **加载 system / user 模板**:system 从该 `evalGenerationId` 读取 `auto-edit/system-prompt-editor.txt`;user 模板从同一个 `evalGenerationId` 读取 `auto-edit/user-prompt-editor-template.txt`。
-4. **构造 user 消息**(`buildEditorUserPrompt`):用 `renderTemplateString` 把 6 个占位符注入 user 模板 —— `{{generationId}}` / `{{assetKeysJson}}`(`ALL_ASSET_KEYS`)/ `{{currentPromptsJson}}` / `{{currentPersonasJson}}` / `{{scorecardJson}}`(本轮聚合 scorecard)/ `{{gamesJson}}`(逐局摘要:`roomId/winner/aiWin/humanLikeScore/error/score`)。
-5. **调用模型**(`resolveEditorModel()`):直接复用打分那套 **`REPLAY_ANALYSIS_*`** 配置(同 §2.2 的 baseURL/model/apiKey/temperature/reasoningEffort/thinking/timeout),不单独配编辑模型。
-6. **解析 + 校验**(`validateEditorChangedAssets`):返回须为 `{changedAssets, note}`;只允许已知 asset key;每个 asset 必须是**完整文件内容字符串**(非 diff);编辑 `ai-player/personas` 必须**保留完全相同的 persona id 集合**;不得删除模板变量占位符 `{{...}}`;仅与源代**实际内容不同**的 asset 才计入 changedAssets(逐字相同则视为未变更)。
-7. **结果状态**:无有效变更 → `autoEdit.status = "skipped"`;成功 → `prompts.createGeneration({fromGenId, changedAssets, note})` 生成候选代 → `"created"`;调用/校验抛错 → `"failed"`(错误信息记 `autoEdit.error`)。
+2. **锁定本轮使用的评估尺子代**: `runRound()` 在进入自动优化前读取 `evalPrompts.getActiveGenerationId()` 并传入 `createAutoOptimizeGeneration(generationId, round, evalGenerationId)`。该 `evalGenerationId` 会写入 `IterationRound.autoOptimize.evalGenerationId`。
+3. **加载 system / user 模板**:system 从该 `evalGenerationId` 读取 `auto-optimize/system-prompt-optimizer.txt`;user 模板从同一个 `evalGenerationId` 读取 `auto-optimize/user-prompt-optimizer-template.txt`。
+4. **构造 user 消息**(`buildOptimizerUserPrompt`):用 `renderTemplateString` 把 6 个占位符注入 user 模板 —— `{{generationId}}` / `{{assetKeysJson}}`(`ALL_ASSET_KEYS`)/ `{{currentPromptsJson}}` / `{{currentPersonasJson}}` / `{{scorecardJson}}`(本轮聚合 scorecard)/ `{{gamesJson}}`(逐局摘要:`roomId/winner/aiWin/humanLikeScore/error/score`)。
+5. **调用模型**(`resolveOptimizerModel()`):直接复用打分那套 **`REPLAY_ANALYSIS_*`** 配置(同 §2.2 的 baseURL/model/apiKey/temperature/reasoningEffort/thinking/timeout),不单独配优化模型。
+6. **解析 + 校验**(`validateOptimizerChangedAssets`):返回须为 `{changedAssets, note}`;只允许已知 asset key;每个 asset 必须是**完整文件内容字符串**(非 diff);调整 `ai-player/personas` 时必须**保留完全相同的 persona id 集合**;不得删除模板变量占位符 `{{...}}`;仅与源代**实际内容不同**的 asset 才计入 changedAssets(逐字相同则视为未变更)。
+7. **结果状态**:无有效变更 → `autoOptimize.status = "skipped"`;成功 → `prompts.createGeneration({fromGenId, changedAssets, note})` 生成候选代 → `"created"`;调用/校验抛错 → `"failed"`(错误信息记 `autoOptimize.error`)。
 
 ### 4.2 结果留存与详情重建
 
 「自动优化记录」每条可点「生成详情」打开弹窗,按 **生成结果 → 本轮聚合 scorecard → 用户提示词 → 系统提示词 → 完整请求 JSON** 的顺序查看。各 tab 数据来源:
 
-- **生成结果**:编辑模型的**原始返回正文**,存于 `IterationRound.autoEdit.response`(失败 / 无 scorecard 跳过的情况无 response)。
+- **生成结果**:优化模型的**原始返回正文**,存于 `IterationRound.autoOptimize.response`(失败 / 无 scorecard 跳过的情况无 response)。
 - **本轮聚合 scorecard**:直接取自该轮 `aggregate`(页面已有,无需请求)。
-- **用户提示词 / 系统提示词 / 完整请求 JSON**:由 `GET /debug/iterations/auto-edit-request/:runId/:roundNo` 重建该轮发往模型的**完整输入**(编辑器 system + user + 模型 config)。重建时优先使用 `IterationRound.autoEdit.evalGenerationId`;只有历史数据缺该字段时才回退当前 active 评估尺子代。与打分详情的 `GET /debug/iterations/score-request/:roomId`(`buildScoreUserPrompt`)同构,只是 user 换成 `buildEditorUserPrompt`。
+- **用户提示词 / 系统提示词 / 完整请求 JSON**:由 `GET /debug/iterations/auto-optimize-request/:runId/:roundNo` 重建该轮发往模型的**完整输入**(优化器 system + user + 模型 config)。重建时优先使用 `IterationRound.autoOptimize.evalGenerationId`;只有历史数据缺该字段时才回退当前 active 评估尺子代。与打分详情的 `GET /debug/iterations/score-request/:roomId`(`buildScoreUserPrompt`)同构,只是 user 换成 `buildOptimizerUserPrompt`。
 
 ### 4.3 异步执行与重试
 
 - 自动优化是**阻塞式大模型调用**(数十秒),不能放在 socket ack 路径里同步等。因此:
-  - `runRound` 在进入 `createAutoEditGeneration` **之前**先持久化 `status = auto_editing` 并广播,前端立即看到「自动优化中…」。
-  - `retryAutoEdit()`(自动优化失败后用户点「重试自动优化」)**先持久化 + 广播 `auto_editing` 并立即返回 ack**,编辑调用交由 `executeRetryAutoEdit` 异步执行,完成后再通过 `iteration.status` 事件推送结果(`awaiting_confirmation` / `awaiting_activation` / 进入下一轮 / 失败回退)——避免客户端 WebSocket 5s 超时。
-- `auto_editing` 是 `iteration_runs.status` 的合法取值之一;进程重启后,处于 `auto_editing` 的 run 因内存驱动丢失会被 `reconcileStaleRuns` 标记为 `stopped`(但**最近一轮自动优化失败且 run 仍停在 `awaiting_activation`** 的情况会被保留,以便用户点击「重试自动优化」)。
-- **重启后继续/确认/重试可用**:进程重启会丢失内存 `activeRunId`,但 DB 里 `awaiting_confirmation` / `awaiting_activation` 的 run 仍在。`continueToNextRound` 与 `retryAutoEdit` 在 `activeRunId` 为空时会调用 `recoverActiveRun()` 从最近一条非终态 run 恢复 `activeRunId` 与 `this.rounds`(与 `stop()` 的回退一致),再做状态校验 —— 因此「确认并继续」不会因重启误报「没有进行中的迭代」。
+  - `runRound` 在进入 `createAutoOptimizeGeneration` **之前**先持久化 `status = auto_optimizing` 并广播,前端立即看到「自动优化中…」。
+  - `retryAutoOptimize()`(自动优化失败后用户点「重试自动优化」)**先持久化 + 广播 `auto_optimizing` 并立即返回 ack**,优化调用交由 `executeRetryAutoOptimize` 异步执行,完成后再通过 `iteration.status` 事件推送结果(`awaiting_confirmation` / `awaiting_activation` / 进入下一轮 / 失败回退)——避免客户端 WebSocket 5s 超时。
+- `auto_optimizing` 是 `iteration_runs.status` 的合法取值之一;进程重启后,处于 `auto_optimizing` 的 run 因内存驱动丢失会被 `reconcileStaleRuns` 标记为 `stopped`(但**最近一轮自动优化失败且 run 仍停在 `awaiting_activation`** 的情况会被保留,以便用户点击「重试自动优化」)。
+- **重启后继续/确认/重试可用**:进程重启会丢失内存 `activeRunId`,但 DB 里 `awaiting_confirmation` / `awaiting_activation` 的 run 仍在。`continueToNextRound` 与 `retryAutoOptimize` 在 `activeRunId` 为空时会调用 `recoverActiveRun()` 从最近一条非终态 run 恢复 `activeRunId` 与 `this.rounds`(与 `stop()` 的回退一致),再做状态校验 —— 因此「确认并继续」不会因重启误报「没有进行中的迭代」。
 
 ### 4.4 日志级别
 
-`createAutoEditGeneration` 的日志按级别分层,默认日志只保留关键节点,完整 I/O 需开 debug 才打印:
+`createAutoOptimizeGeneration` 的日志按级别分层,默认日志只保留关键节点,完整 I/O 需开 debug 才打印:
 
 - `logger.log`(info):`自动优化开始 generationId=… round=…`、`自动优化成功 generationId=… → 新代 …(改动: …)`;失败分支用 `logger.warn` 记原因。
-- `logger.debug`:完整请求(`formatEditorRequestLog`,含编辑器 system + user + 模型 config)与完整返回(`formatEditorResponseLog`,模型原始正文)——体量大,仅排查时开 debug 级查看。
-- 详情弹窗的「生成结果 / 用户提示词 / 系统提示词 / 完整请求 JSON」直接来自 `autoEdit.response` 与 `getAutoEditRequest` 重建结果,与日志级别无关。
+- `logger.debug`:完整请求(`formatOptimizerRequestLog`,含优化器 system + user + 模型 config)与完整返回(`formatOptimizerResponseLog`,模型原始正文)——体量大,仅排查时开 debug 级查看。
+- 详情弹窗的「生成结果 / 用户提示词 / 系统提示词 / 完整请求 JSON」直接来自 `autoOptimize.response` 与 `getAutoOptimizeRequest` 重建结果,与日志级别无关。
 
 ---
 
@@ -340,6 +340,6 @@ apps/api/src/iteration/                        # 进程内编排(IterationServic
 apps/web/app/iteration/page.tsx                # 前端入口页
 eval/prompts/system-replay-score.txt           # 评估尺子版本库的 seed / 回退来源
 eval/prompts/user-replay-score-template.txt    # 打分 user 模板 seed / 回退来源
-eval/prompts/system-prompt-editor.txt          # 自动优化器 system 提示词 seed / 回退来源
-eval/prompts/user-prompt-editor-template.txt   # 自动优化器 user 模板 seed / 回退来源
+eval/prompts/system-prompt-optimizer.txt          # 自动优化器 system 提示词 seed / 回退来源
+eval/prompts/user-prompt-optimizer-template.txt   # 自动优化器 user 模板 seed / 回退来源
 ```

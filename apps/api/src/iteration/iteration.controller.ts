@@ -77,9 +77,9 @@ export class IterationController {
     }
   }
 
-  /** 重建某轮自动优化的完整请求(编辑器 system + user + config),如实展示生成过程输入。 */
-  @Get("auto-edit-request/:runId/:roundNo")
-  async getAutoEditRequest(
+  /** 重建某轮自动优化的完整请求(优化器 system + user + config),如实展示生成过程输入。 */
+  @Get("auto-optimize-request/:runId/:roundNo")
+  async getAutoOptimizeRequest(
     @Param("runId") runId: string,
     @Param("roundNo") roundNo: string,
   ) {
@@ -87,7 +87,7 @@ export class IterationController {
     const round = Number(roundNo);
     if (!Number.isFinite(round)) return { ok: false, error: "无效的轮次" };
     try {
-      return await this.iterationService.getAutoEditRequest(runId, round);
+      return await this.iterationService.getAutoOptimizeRequest(runId, round);
     } catch (error) {
       return {
         ok: false,

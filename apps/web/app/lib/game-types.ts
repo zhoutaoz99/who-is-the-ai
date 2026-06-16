@@ -133,7 +133,7 @@ export type SpeechDiscardedPayload = {
 
 export type IterationStatus =
   | "running"
-  | "auto_editing"
+  | "auto_optimizing"
   | "awaiting_activation"
   | "awaiting_confirmation"
   | "completed"
@@ -147,15 +147,15 @@ export type IterationPersonaMode =
 
 export type IterationPostRoundMode =
   | "manual"
-  | "auto_edit_wait_confirm"
-  | "auto_edit_activate_continue";
+  | "auto_optimize_wait_confirm"
+  | "auto_optimize_activate_continue";
 
 export type IterationRunOptions = {
   sequentialSpeech: boolean;
   personaMode: IterationPersonaMode;
   personaIds?: string[];
   personaSchedule?: string[][];
-  autoEdit: boolean;
+  autoOptimize: boolean;
   postRoundMode: IterationPostRoundMode;
 };
 
@@ -198,7 +198,7 @@ export type IterationRound = {
   generationId: string | null;
   games: IterationGameResult[];
   aggregate: IterationRoundAggregate | null;
-  autoEdit?: {
+  autoOptimize?: {
     status: "created" | "skipped" | "failed";
     generationId?: string;
     evalGenerationId?: string;
@@ -222,7 +222,7 @@ export type IterationRunStatus = {
   options?: IterationRunOptions;
   currentRoundGames: IterationGameResult[];
   rounds: IterationRound[];
-  lastAutoEdit?: IterationRound["autoEdit"] | null;
+  lastAutoOptimize?: IterationRound["autoOptimize"] | null;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -235,7 +235,7 @@ export type StartIterationPayload = {
   sequentialSpeech?: boolean;
   personaMode?: IterationPersonaMode;
   personaIds?: string[];
-  autoEdit?: boolean;
+  autoOptimize?: boolean;
   postRoundMode?: IterationPostRoundMode;
 };
 

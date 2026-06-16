@@ -1,6 +1,6 @@
 请基于以下材料派生下一代 AI 玩家提示词/persona 候选版本。
 
-== 允许编辑的 asset key ==
+== 允许调整的 asset key ==
 {{assetKeysJson}}
 
 == 当前 generation ==
@@ -26,4 +26,4 @@
   "note": "一句话说明本次改动针对的主要问题"
 }
 
-如果需要编辑 personas,changedAssets["ai-player/personas"] 必须是完整 JSON 字符串,并保留原 persona id 集合。
+如果需要调整 personas,changedAssets["ai-player/personas"] 必须是完整 JSON 字符串,并保留原 persona id 集合。

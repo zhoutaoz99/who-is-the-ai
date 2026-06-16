@@ -2,7 +2,7 @@ import type { GameScore, Scorecard } from "./iteration-score";
 
 export type IterationStatus =
   | "running"
-  | "auto_editing"
+  | "auto_optimizing"
   | "awaiting_activation"
   | "awaiting_confirmation"
   | "completed"
@@ -16,15 +16,15 @@ export type IterationPersonaMode =
 
 export type IterationPostRoundMode =
   | "manual"
-  | "auto_edit_wait_confirm"
-  | "auto_edit_activate_continue";
+  | "auto_optimize_wait_confirm"
+  | "auto_optimize_activate_continue";
 
 export interface IterationRunOptions {
   sequentialSpeech: boolean;
   personaMode: IterationPersonaMode;
   personaIds?: string[];
   personaSchedule?: string[][];
-  autoEdit: boolean;
+  autoOptimize: boolean;
   postRoundMode: IterationPostRoundMode;
 }
 
@@ -35,7 +35,7 @@ export interface StartIterationPayload {
   sequentialSpeech?: boolean;
   personaMode?: IterationPersonaMode;
   personaIds?: string[];
-  autoEdit?: boolean;
+  autoOptimize?: boolean;
   postRoundMode?: IterationPostRoundMode;
 }
 
@@ -67,7 +67,7 @@ export interface IterationRound {
   generationId: string | null;
   games: IterationGameResult[];
   aggregate: Scorecard | null;
-  autoEdit?: {
+  autoOptimize?: {
     status: "created" | "skipped" | "failed";
     generationId?: string;
     evalGenerationId?: string;
@@ -95,7 +95,7 @@ export interface IterationRunStatus {
   /** 本轮已完成的局(进行中实时更新)。 */
   currentRoundGames: IterationGameResult[];
   rounds: IterationRound[];
-  lastAutoEdit?: IterationRound["autoEdit"] | null;
+  lastAutoOptimize?: IterationRound["autoOptimize"] | null;
   error?: string;
   createdAt: string;
   updatedAt: string;

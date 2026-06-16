@@ -72,7 +72,7 @@ type GameClientContextValue = {
   iterationRun: IterationRunStatus | null;
   startIteration: (payload: StartIterationPayload) => Promise<ActionResult>;
   continueIteration: () => Promise<ActionResult>;
-  retryAutoEdit: () => Promise<ActionResult>;
+  retryAutoOptimize: () => Promise<ActionResult>;
   stopIteration: () => Promise<ActionResult>;
   refreshIteration: () => Promise<void>;
 };
@@ -616,7 +616,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       startIteration: async (payload: StartIterationPayload) =>
         emitAction<StartIterationPayload>("iteration.start", payload ?? {}),
       continueIteration: async () => emitAction("iteration.continue", {}),
-      retryAutoEdit: async () => emitAction("iteration.retryAutoEdit", {}),
+      retryAutoOptimize: async () => emitAction("iteration.retryAutoOptimize", {}),
       stopIteration: async () => emitAction("iteration.stop", {}),
       refreshIteration,
       joinRoom: async (roomId?: string) => {
