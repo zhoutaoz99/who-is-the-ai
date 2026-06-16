@@ -19,24 +19,16 @@ export const AUTO_OPTIMIZE_SYSTEM_ASSET_KEY =
 export const AUTO_OPTIMIZE_USER_ASSET_KEY =
   "auto-optimize/user-prompt-optimizer-template.txt";
 
-export const EVAL_PROMPT_SOURCES = {
-  [REPLAY_SCORE_SYSTEM_ASSET_KEY]: {
-    filename: "system-replay-score.txt",
-  },
-  [REPLAY_SCORE_USER_ASSET_KEY]: {
-    filename: "user-replay-score-template.txt",
-  },
-  [AUTO_OPTIMIZE_SYSTEM_ASSET_KEY]: {
-    filename: "system-prompt-optimizer.txt",
-  },
-  [AUTO_OPTIMIZE_USER_ASSET_KEY]: {
-    filename: "user-prompt-optimizer-template.txt",
-  },
-} as const satisfies Record<string, { filename: string }>;
-
-export const EVAL_PROMPT_ASSET_KEYS = Object.keys(
-  EVAL_PROMPT_SOURCES,
-) as Array<keyof typeof EVAL_PROMPT_SOURCES>;
+/**
+ * 评估尺子 asset key = 相对 eval/prompts/ 的文件路径
+ * (与 prompt-loader 的 ai-player/* 同构:磁盘子目录与 key 前缀一一对应)。
+ */
+export const EVAL_PROMPT_ASSET_KEYS = [
+  REPLAY_SCORE_SYSTEM_ASSET_KEY,
+  REPLAY_SCORE_USER_ASSET_KEY,
+  AUTO_OPTIMIZE_SYSTEM_ASSET_KEY,
+  AUTO_OPTIMIZE_USER_ASSET_KEY,
+] as const;
 
 export type EvalPromptAssetKey = (typeof EVAL_PROMPT_ASSET_KEYS)[number];
 
@@ -380,20 +372,22 @@ export class EvalPromptRegistry implements OnModuleInit {
   }
 
   private readSourceAsset(key: EvalPromptAssetKey): string {
-    const source = EVAL_PROMPT_SOURCES[key];
-    if (!source) throw new Error(`未知评估尺子 asset: ${key}`);
-    return this.readEvalPromptFile(source.filename);
+    return this.readEvalPromptFile(key);
   }
 
-  private readEvalPromptFile(filename: string): string {
+  /** relativePath 为相对 eval/prompts/ 的路径(即 asset key)。 */
+  private readEvalPromptFile(relativePath: string): string {
     const override =
-      filename === "system-replay-score.txt"
+      relativePath === REPLAY_SCORE_SYSTEM_ASSET_KEY
         ? process.env.EVAL_SCORE_PROMPT_PATH?.trim()
         : null;
     if (override && existsSync(override)) {
       return readFileSync(override, "utf-8");
     }
-    return readFileSync(join(this.resolveEvalPromptsDir(), filename), "utf-8");
+    return readFileSync(
+      join(this.resolveEvalPromptsDir(), relativePath),
+      "utf-8",
+    );
   }
 
   private resolveEvalPromptsDir(): string {
@@ -406,7 +400,9 @@ export class EvalPromptRegistry implements OnModuleInit {
       join(__dirname, "..", "..", "..", "..", "eval", "prompts"),
     ].filter(Boolean) as string[];
     this.evalPromptsDirCache =
-      dirs.find((d) => existsSync(join(d, "system-replay-score.txt"))) ?? null;
+      dirs.find((d) =>
+        existsSync(join(d, "replay-score", "system-replay-score.txt")),
+      ) ?? null;
     if (!this.evalPromptsDirCache) {
       throw new Error(`找不到 eval/prompts 目录(含评估尺子),已尝试: ${dirs.join(", ")}`);
     }

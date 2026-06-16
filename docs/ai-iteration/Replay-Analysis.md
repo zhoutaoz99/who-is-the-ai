@@ -11,7 +11,7 @@
 | 关联代码 | `apps/api/src/replay/`、`apps/web/app/replay/`、`apps/api/src/ai/prompts/` |
 | 关联文档 | [AI-Prompt-Eval-Flow.md](./AI-Prompt-Eval-Flow.md)、[AI-Prompt-Eval-Details.md](./AI-Prompt-Eval-Details.md) |
 
-本文是单局定性复盘(`POST /replay/analyze`，流式输出开放式文本，只读不改)。自迭代([`AI-Prompt-Eval-Flow.md`](./AI-Prompt-Eval-Flow.md)) 则是批量跑无头对局、用冻结尺子输出可比的 JSON 分数给提示词版本排名、驱动版本激活/回滚。两者共用「复盘导出 JSON + `REPLAY_ANALYSIS_*` 评审模型」，但尺子与输出不同：复盘用 `prompts/system-replay-analysis.txt` 出文本，自迭代用 `eval/prompts/system-replay-score.txt` 出结构化分数。
+本文是单局定性复盘(`POST /replay/analyze`，流式输出开放式文本，只读不改)。自迭代([`AI-Prompt-Eval-Flow.md`](./AI-Prompt-Eval-Flow.md)) 则是批量跑无头对局、用冻结尺子输出可比的 JSON 分数给提示词版本排名、驱动版本激活/回滚。两者共用「复盘导出 JSON + `REPLAY_ANALYSIS_*` 评审模型」，但尺子与输出不同：复盘用 `prompts/system-replay-analysis.txt` 出文本，自迭代用 `eval/prompts/replay-score/system-replay-score.txt` 出结构化分数。
 
 ## 1. 背景与目标
 

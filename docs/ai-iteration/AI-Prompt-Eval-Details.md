@@ -186,8 +186,8 @@ apps/api/src/replay/replay.controller.ts       # GET /replay/:roomId/export
 apps/api/src/replay/replay.service.ts          # 版本感知复盘分析
 apps/api/src/iteration/                        # 进程内编排(IterationService / iteration-score / types / controller)
 apps/web/app/iteration/page.tsx                # 前端入口页
-eval/prompts/system-replay-score.txt           # 评估尺子版本库的 seed / 回退来源
-eval/prompts/user-replay-score-template.txt    # 打分 user 模板 seed / 回退来源
-eval/prompts/system-prompt-optimizer.txt          # 自动优化器 system 提示词 seed / 回退来源
-eval/prompts/user-prompt-optimizer-template.txt   # 自动优化器 user 模板 seed / 回退来源
+eval/prompts/replay-score/system-replay-score.txt            # 评估尺子版本库的 seed / 回退来源
+eval/prompts/replay-score/user-replay-score-template.txt     # 打分 user 模板 seed / 回退来源
+eval/prompts/auto-optimize/system-prompt-optimizer.txt       # 自动优化器 system 提示词 seed / 回退来源
+eval/prompts/auto-optimize/user-prompt-optimizer-template.txt # 自动优化器 user 模板 seed / 回退来源
 ```

@@ -63,7 +63,7 @@
 
 ### 2.3 system 尺子 `replay-score/system-replay-score.txt`
 
-运行时读取的是**当前或指定 `scoreGenerationId` 的版本库内容**;`eval/prompts/system-replay-score.txt` 只是首启播种/缺省回退来源。该 prompt 要求只输出固定两段文本:`[[score]]` 和 `[[analysis]]`。代码只解析 `[[score]]`;`[[analysis]]` 原样留给详情页和自动优化器。
+运行时读取的是**当前或指定 `scoreGenerationId` 的版本库内容**;`eval/prompts/replay-score/system-replay-score.txt` 只是首启播种/缺省回退来源。该 prompt 要求只输出固定两段文本:`[[score]]` 和 `[[analysis]]`。代码只解析 `[[score]]`;`[[analysis]]` 原样留给详情页和自动优化器。
 
 ```text
 [[score]]
@@ -99,7 +99,7 @@ fix_hint: 发言策略应要求先给具体行为证据,再表达怀疑或投票
 
 ### 2.4 user 模板 `replay-score/user-replay-score-template.txt`
 
-运行时同样取自评估尺子版本库;文件 `eval/prompts/user-replay-score-template.txt` 只是播种源。模板使用 `{{replayJson}}` / `{{personasJson}}` 两个占位符(由 `renderTemplateString` 渲染):
+运行时同样取自评估尺子版本库;文件 `eval/prompts/replay-score/user-replay-score-template.txt` 只是播种源。模板使用 `{{replayJson}}` / `{{personasJson}}` 两个占位符(由 `renderTemplateString` 渲染):
 
 ```text
 请基于以下两段材料对本局进行量化打分:① 本局复盘 JSON;② 本局 AI 人格定义。
@@ -239,7 +239,7 @@ const evalGenerationId = this.evalPrompts.getActiveGenerationId();
 
 #### 4.2.4 System Prompt 设计
 
-运行时 system prompt 从该 `evalGenerationId` 的 `auto-optimize/system-prompt-optimizer.txt` 读取。文件 `eval/prompts/system-prompt-optimizer.txt` 只是 seed / fallback。
+运行时 system prompt 从该 `evalGenerationId` 的 `auto-optimize/system-prompt-optimizer.txt` 读取。文件 `eval/prompts/auto-optimize/system-prompt-optimizer.txt` 只是 seed / fallback。
 
 当前 system prompt 的职责是限定优化器的角色、输出格式和安全边界:
 

@@ -196,7 +196,7 @@ flowchart TD
 
 - **运行时默认口径**取决于当前 active 评估尺子代。
 - **历史详情回放**优先取 `scoreGenerationId`,因此切换评估尺子后不会污染旧局的 score-request。
-- `eval/prompts/system-replay-score.txt` 只是 seed / fallback,不是唯一运行时来源。
+- `eval/prompts/replay-score/system-replay-score.txt` 只是 seed / fallback,不是唯一运行时来源。
 
 > 字段定义、判定要点、scorecard 计算公式属于**详细逻辑**,见 [`AI-Prompt-Eval-Auto-Optimize.md`](./AI-Prompt-Eval-Auto-Optimize.md) §2(单局打分)与 §3(轮聚合)。
 
