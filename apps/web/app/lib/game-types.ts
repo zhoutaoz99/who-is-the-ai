@@ -179,6 +179,20 @@ export type IterationGameResult = {
   score?: Record<string, unknown> | null;
 };
 
+export type IssueCode =
+  | "ROUND1_PUSH_VOTE"
+  | "SINGLE_CHAR_WHEN_NAMED"
+  | "SAMPLE_LINE_COPY"
+  | "LOCKSTEP_BLOCK_VOTE"
+  | "FORMULAIC_VOTE_REASON"
+  | "TEAMMATE_MISFIRE"
+  | "POST_PROVOCATION_SKIP"
+  | "TEMPLATE_PHRASE"
+  | "WEAK_SUSPICION"
+  | "OVER_DEFENSIVE"
+  | "LOW_THREAT_TARGETING"
+  | "LOW_CONTEXT_AWARENESS";
+
 export type IterationRoundAggregate = {
   n: number;
   aiWinRate: number;
@@ -187,9 +201,10 @@ export type IterationRoundAggregate = {
   humanLikeScore: { mean: number; se: number };
   naturalnessAiVsHuman: { mean: number; se: number };
   voteThreatTargeting: { mean: number; se: number };
-  tells: Record<string, number>;
-  tellGameRates: Record<string, number>;
-  topIssues: Array<{ issue: string; count: number }>;
+  issueCounts: Partial<Record<IssueCode, number>>;
+  issueGameRates: Partial<Record<IssueCode, number>>;
+  primaryIssues: Array<{ code: IssueCode; count: number }>;
+  confidenceMix: Partial<Record<"low" | "medium" | "high", number>>;
   generatedAt: string;
 };
 

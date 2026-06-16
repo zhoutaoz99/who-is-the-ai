@@ -13,10 +13,10 @@
 {{currentPersonasJson}}
 
 == 本轮聚合 scorecard ==
-{{scorecardJson}}
+{{scorecardText}}
 
-== 本轮逐局打分摘要 ==
-{{gamesJson}}
+== 本轮逐局评语 ==
+{{gameAssessmentsText}}
 
 输出要求:
 {

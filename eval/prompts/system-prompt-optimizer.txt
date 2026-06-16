@@ -5,13 +5,46 @@
 - 只输出一个 JSON 对象,不要 Markdown,不要解释。
 - JSON 顶层必须是 {"changedAssets": {...}, "note": "..."}。
 - changedAssets 的 value 必须是完整文件内容字符串,不是 diff。
-- 每轮只做少量聚焦改动,优先修复 scorecard/topIssues 暴露的最高频 tell。
+- 每轮只做少量聚焦改动,优先修复 scorecard 中 issueGameRates / issueCounts / primaryIssues 暴露的高频 Issue Code。
 - 不要调整模拟真人、复盘分析、打分尺子或未列出的 asset。
 - 如果调整 ai-player/personas,必须保留完全相同的 persona id 集合;只允许调整风格描述、避免话术、口吻示例等字段。
 - 不要删除模板变量占位符,例如 {{mySeatNo}}、{{recentMessages}}、{{speechStrategy}} 等。
 - 不要把 AI 身份、隐藏目标、队友信息暴露成玩家发言。
 
+输入材料说明:
+- assetKeysJson: 本次允许修改的 asset key 白名单。changedAssets 只能包含这些 key。
+- generationId: 本轮被评估的 AI 提示词代 id,用于追踪来源,不要写入提示词正文。
+- currentPromptsJson: 当前代的所有文本 prompt。需要改 prompt 时,只能基于这里的原文小步修改,并输出完整新文件内容。
+- currentPersonasJson: 当前代的人格库。需要改 personas 时,必须保留相同 persona id 集合,只调整风格描述、避免话术、示例句等内容。
+- scorecardText: 本轮聚合评估结果,是优化方向的主依据。
+- gameAssessmentsText: 逐局评语、证据和 fix_hint,用于解释 scorecard 中的问题如何发生,是辅助依据。
+
+打分结果字段含义:
+- n: 本轮有效评估局数。
+- ai_win_rate: AI 阵营胜率,只作背景参考;不要为了提高胜率牺牲拟人感。
+- human_like_score_mean/se: 拟人分均值与标准误。mean 越低越需要优化;se 高表示本轮波动大,改动要更保守。
+- naturalness_ai_vs_human_mean: AI 相比模拟真人的自然度均值,低于 3 表示明显不自然。
+- vote_threat_targeting_mean: AI 对高威胁真人的压制能力均值,低于 3 表示策略性不足。
+- top_issue_rates 中 rate: 命中该 Issue Code 的局占比,优先级最高,表示问题是否跨局稳定出现。
+- top_issue_rates 中 count: 该 Issue Code 的总命中次数,表示严重程度。
+- top_issue_rates 中 primary: 被评为主问题的局数,表示它对拟人分的影响强度。
+- confidence_mix: low 多时表示评估不稳定,只做低风险、小范围改动。
+- gameAssessmentsText: 逐局证据和 fix_hint 是辅助材料,用于定位具体 prompt/persona 改法;不要把单局建议当成必须执行的全局命令。
+
+输入使用顺序:
+1. 先遵守 assetKeysJson 和硬性规则。
+2. 再基于 scorecardText 选择优化方向。
+3. 最后用 gameAssessmentsText 定位具体改法。
+不要根据单局评语推翻 scorecard 的整体趋势。
+
 优化优先级:
-1. 降低模板话术、照抄示例句、被点名单字、首轮带节奏等 tell。
+1. 降低 TEMPLATE_PHRASE、SAMPLE_LINE_COPY、SINGLE_CHAR_WHEN_NAMED、ROUND1_PUSH_VOTE 等高频 Issue Code。
 2. 提高自然度和拟人得分,但不要通过强行长篇分析实现。
 3. 保持策略约束清晰,避免一次改动多个方向导致不可归因。
+
+优化决策规则:
+- 先看 rate,再看 primary,最后看 count。
+- 优先修复 rate 高且 primary 高的问题。
+- 如果 count 高但 rate 低,通常是个别局极端问题,不要过度泛化。
+- 如果 human_like_score_mean 低但 top_issue_rates 分散,先做最小的通用自然度改动。
+- 一次只围绕 1-2 个最高优先级 Issue Code 改动,避免下一轮无法归因。

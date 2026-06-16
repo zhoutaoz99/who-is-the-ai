@@ -30,7 +30,15 @@ import type { RoomSnapshot } from "../game/game.types";
 import { PostgresService } from "../data/postgres.service";
 import { buildReplayExportData } from "../replay/replay-export.builder";
 import { ReplayService } from "../replay/replay.service";
-import { aggregateScores, type GameScore, type Scorecard } from "./iteration-score";
+import {
+  aggregateAssessments,
+  ISSUE_CODES,
+  parseAssessmentText,
+  type GameAssessment,
+  type GameAssessmentObjective,
+  type ModelAssessment,
+  type Scorecard,
+} from "./iteration-score";
 import type {
   IterationGameResult,
   IterationPostRoundMode,
@@ -688,12 +696,11 @@ export class IterationService implements OnModuleInit {
   }
 
   private buildAggregate(games: IterationGameResult[]): Scorecard | null {
-    // 用每局的完整打分(tells/naturalness/voteThreatTargeting/topIssues 等)聚合。
-    const scores: GameScore[] = games
+    const scores: GameAssessment[] = games
       .filter((g) => g.error === undefined && g.score)
-      .map((g) => g.score as GameScore);
+      .map((g) => g.score as GameAssessment);
     if (!scores.length) return null;
-    return aggregateScores(scores);
+    return aggregateAssessments(scores);
   }
 
   private async normalizeOptions(
@@ -880,14 +887,6 @@ export class IterationService implements OnModuleInit {
     assets: Awaited<ReturnType<PromptRegistry["getGenerationAssets"]>>,
     evalGenerationId: string,
   ): Promise<string> {
-    const games = round.games.map((game) => ({
-      roomId: game.roomId,
-      winner: game.winner,
-      aiWin: game.aiWin,
-      humanLikeScore: game.humanLikeScore,
-      error: game.error,
-      score: game.score ?? null,
-    }));
     return this.evalPrompts.renderForGeneration(
       evalGenerationId,
       AUTO_OPTIMIZE_USER_ASSET_KEY,
@@ -896,10 +895,68 @@ export class IterationService implements OnModuleInit {
       assetKeysJson: JSON.stringify(ALL_ASSET_KEYS, null, 2),
       currentPromptsJson: JSON.stringify(assets.prompts, null, 2),
       currentPersonasJson: JSON.stringify(assets.personas, null, 2),
-      scorecardJson: JSON.stringify(round.aggregate, null, 2),
-      gamesJson: JSON.stringify(games, null, 2),
+      scorecardText: this.formatScorecardText(round.aggregate),
+      gameAssessmentsText: this.formatGameAssessmentsText(round.games),
       },
     );
+  }
+
+  private formatScorecardText(scorecard: Scorecard | null): string {
+    if (!scorecard) return "(本轮无有效 scorecard)";
+    const issueRows = [...ISSUE_CODES]
+      .map((code) => ({
+        code,
+        rate: scorecard.issueGameRates[code] ?? 0,
+        count: scorecard.issueCounts[code] ?? 0,
+        primaryCount: scorecard.primaryIssues.find((item) => item.code === code)?.count ?? 0,
+      }))
+      .filter((item) => item.rate > 0 || item.count > 0 || item.primaryCount > 0)
+      .sort((a, b) => b.rate - a.rate || b.count - a.count || b.primaryCount - a.primaryCount);
+
+    return [
+      `n: ${scorecard.n}`,
+      `ai_win_rate: ${round2(scorecard.aiWinRate)}`,
+      `ai_survivors_mean: ${scorecard.aiSurvivorsMean}`,
+      `rounds_played_mean: ${scorecard.roundsPlayedMean}`,
+      `human_like_score_mean: ${scorecard.humanLikeScore.mean}`,
+      `human_like_score_se: ${scorecard.humanLikeScore.se}`,
+      `naturalness_ai_vs_human_mean: ${scorecard.naturalnessAiVsHuman.mean}`,
+      `vote_threat_targeting_mean: ${scorecard.voteThreatTargeting.mean}`,
+      "top_issue_rates:",
+      ...(issueRows.length
+        ? issueRows.map(
+            (item) =>
+              `- ${item.code}: rate=${item.rate}, count=${item.count}, primary=${item.primaryCount}`,
+          )
+        : ["- none"]),
+      `confidence_mix: low=${scorecard.confidenceMix.low ?? 0}, medium=${scorecard.confidenceMix.medium ?? 0}, high=${scorecard.confidenceMix.high ?? 0}`,
+    ].join("\n");
+  }
+
+  private formatGameAssessmentsText(games: IterationGameResult[]): string {
+    return games
+      .map((game, index) => {
+        if (game.error || !game.score) {
+          return [
+            `[game ${index + 1}] room=${game.roomId || "-"} status=failed`,
+            `error: ${game.error ?? "无有效评估"}`,
+          ].join("\n");
+        }
+        const score = game.score;
+        const primary = score.machine.primaryIssueCodes.join(", ") || "none";
+        return [
+          `[game ${index + 1}] room=${game.roomId} score=${score.machine.humanLikeScore} primary=${primary}`,
+          `ai_win: ${score.objective.aiWin}`,
+          `issue_counts: ${formatIssueCounts(score.machine.issueCounts) || "none"}`,
+          `summary: ${score.analysis.summary || "(空)"}`,
+          "evidence:",
+          ...(score.analysis.evidence.length
+            ? score.analysis.evidence.map((item) => `- ${item}`)
+            : ["- (空)"]),
+          `fix_hint: ${score.analysis.fixHint || "(空)"}`,
+        ].join("\n");
+      })
+      .join("\n\n");
   }
 
   private formatOptimizerRequestLog(
@@ -1052,10 +1109,15 @@ export class IterationService implements OnModuleInit {
 
       // scoreReplay 内部用 buildScoreUserPrompt 注入 user 模板 + 该局 AI 人格定义。
       const scoreGenerationId = this.evalPrompts.getActiveGenerationId();
-      const score = await this.scoreReplay(replay, scoreGenerationId);
+      const modelAssessment = await this.scoreReplay(replay, scoreGenerationId);
+      const objective = this.buildAssessmentObjective(finished);
+      const score: GameAssessment = {
+        objective,
+        ...modelAssessment,
+      };
       base.scoreGenerationId = scoreGenerationId;
-      base.humanLikeScore = score.humanLikeScore;
-      base.aiWin = score.aiWin;
+      base.humanLikeScore = score.machine.humanLikeScore;
+      base.aiWin = objective.aiWin;
       base.score = score;
       base.status = "finished";
       return base;
@@ -1094,6 +1156,20 @@ export class IterationService implements OnModuleInit {
     throw new Error("对局超时");
   }
 
+  private buildAssessmentObjective(room: RoomSnapshot): GameAssessmentObjective {
+    const aiPlayers = room.players.filter((player) => player.revealedType === "ai");
+    return {
+      aiWin: room.winner === "ai",
+      aiSurvivors: aiPlayers.filter((player) => player.status === "alive").length,
+      roundsPlayed: room.currentRound,
+      aiPersonas: aiPlayers.map((player) => player.aiPersonaId).filter(isNonEmptyString),
+      perAi: aiPlayers.map((player) => ({
+        personaId: player.aiPersonaId ?? player.aiPersonaName ?? player.id,
+        eliminatedRound: player.eliminatedRound ?? null,
+      })),
+    };
+  }
+
   private gameProgressFromSnapshot(room: RoomSnapshot): Partial<IterationGameResult> {
     const aiPlayers = room.players.filter(
       (player) => player.revealedType === "ai" || Boolean(player.aiPersonaId),
@@ -1130,7 +1206,7 @@ export class IterationService implements OnModuleInit {
   private async scoreReplay(
     replay: Record<string, unknown>,
     evalGenerationId: string,
-  ): Promise<GameScore & Record<string, unknown>> {
+  ): Promise<ModelAssessment> {
     const systemPrompt = await this.evalPrompts.getPromptForGeneration(
       evalGenerationId,
       REPLAY_SCORE_SYSTEM_ASSET_KEY,
@@ -1143,9 +1219,7 @@ export class IterationService implements OnModuleInit {
       modelConfig,
       options,
     );
-    const parsed = parseJsonObject(content);
-    if (!parsed) throw new Error(`打分返回非 JSON: ${content.slice(0, 200)}`);
-    return parsed as GameScore & Record<string, unknown>;
+    return parseAssessmentText(content);
   }
 
   /** 打分 user 消息:复盘 JSON + 本局 AI 人格定义(让模型能判 sampleLineCopy/templatePhrase 等 tell)。 */
@@ -1516,6 +1590,24 @@ function shuffle<T>(items: T[]): T[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function round2(x: number): number {
+  return Math.round(x * 100) / 100;
+}
+
+function formatIssueCounts(counts: GameAssessment["machine"]["issueCounts"]): string {
+  return [...ISSUE_CODES]
+    .map((code) => {
+      const count = counts[code] ?? 0;
+      return count > 0 ? `${code}=${count}` : "";
+    })
+    .filter(Boolean)
+    .join(", ");
 }
 
 function parsePersonas(content: string): AiPersonaContext[] {

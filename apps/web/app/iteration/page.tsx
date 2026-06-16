@@ -7,6 +7,7 @@ import { useAuth } from "../lib/auth-client";
 import { useGameClient } from "../lib/game-client";
 import type {
   GenerationSummary,
+  IssueCode,
   IterationGameResult,
   IterationPersonaMode,
   IterationPostRoundMode,
@@ -36,15 +37,34 @@ const EVAL_ASSET_KEYS = [
   "auto-optimize/user-prompt-optimizer-template.txt",
 ];
 
-const TELL_LABELS: Record<string, string> = {
-  round1PushVote: "首轮带节奏",
-  singleCharWhenNamed: "被点名单字",
-  sampleLineCopy: "照抄示例句",
-  lockstepBlockVote: "AI 锁步同投",
-  formulaicVoteReason: "投票理由同质",
-  teammateMisfire: "误投队友",
-  postProvocationSkip: "挑衅后消失",
-  templatePhrase: "模板话术",
+const ISSUE_LABELS: Record<string, string> = {
+  ROUND1_PUSH_VOTE: "首轮带投",
+  SINGLE_CHAR_WHEN_NAMED: "点名逃避",
+  SAMPLE_LINE_COPY: "照抄示例",
+  LOCKSTEP_BLOCK_VOTE: "锁步投票",
+  FORMULAIC_VOTE_REASON: "理由模板",
+  TEAMMATE_MISFIRE: "误投队友",
+  POST_PROVOCATION_SKIP: "挑衅后消失",
+  TEMPLATE_PHRASE: "模板话术",
+  WEAK_SUSPICION: "怀疑空泛",
+  OVER_DEFENSIVE: "过度自辩",
+  LOW_THREAT_TARGETING: "威胁定位弱",
+  LOW_CONTEXT_AWARENESS: "上下文弱",
+};
+
+const ISSUE_DESCRIPTIONS: Record<string, string> = {
+  ROUND1_PUSH_VOTE: "第一轮过早催投、带投、怂恿投票。",
+  SINGLE_CHAR_WHEN_NAMED: "被点名后只回单字或极短逃避。",
+  SAMPLE_LINE_COPY: "照抄或轻微改写人格 sampleLines。",
+  LOCKSTEP_BLOCK_VOTE: "多个 AI 投票目标过度一致。",
+  FORMULAIC_VOTE_REASON: "投票理由同质化、模板化。",
+  TEAMMATE_MISFIRE: "AI 投给己方 AI。",
+  POST_PROVOCATION_SKIP: "被挑衅或点名后连续消失。",
+  TEMPLATE_PHRASE: "出现 avoidPhrases 或常见模板话术。",
+  WEAK_SUSPICION: "怀疑没有具体行为证据。",
+  OVER_DEFENSIVE: "被质疑后过度自辩。",
+  LOW_THREAT_TARGETING: "没有压制最活跃、最会抓 AI 的真人。",
+  LOW_CONTEXT_AWARENESS: "发言没有接住当轮上下文。",
 };
 
 export default function IterationPage() {
@@ -1400,7 +1420,7 @@ function RoundCard({ round }: { round: IterationRunStatus["rounds"][number] }) {
       </div>
     );
   }
-  const tellsSorted = Object.entries(a.tells)
+  const issuesSorted = Object.entries(a.issueCounts)
     .filter(([, v]) => v > 0)
     .sort((x, y) => y[1] - x[1]);
   return (
@@ -1419,28 +1439,29 @@ function RoundCard({ round }: { round: IterationRunStatus["rounds"][number] }) {
         <span>威胁定位 {a.voteThreatTargeting.mean}</span>
       </div>
 
-      {/* tells 迷你条形图 */}
-      <div className="iter-tells">
-        {tellsSorted.length === 0 ? (
-          <span className="muted-text">无 tell 命中 🎉</span>
+      <div className="iter-issues-bars">
+        {issuesSorted.length === 0 ? (
+          <span className="muted-text">无 issue 命中</span>
         ) : (
-          tellsSorted.map(([k, v]) => {
-            const rate = a.tellGameRates[k] ?? 0;
+          issuesSorted.map(([k, v]) => {
+            const rate = a.issueGameRates[k as IssueCode] ?? 0;
             return (
-              <div key={k} className="iter-tell-row">
-                <span className="iter-tell-label">{TELL_LABELS[k] ?? k}</span>
-                <div className="iter-tell-bar">
-                  <div className="iter-tell-fill" style={{ width: `${Math.round(rate * 100)}%` }} />
+              <div key={k} className="iter-issue-row">
+                <span className="iter-issue-label">{ISSUE_LABELS[k] ?? k}</span>
+                <div className="iter-issue-bar">
+                  <div className="iter-issue-fill" style={{ width: `${Math.round(rate * 100)}%` }} />
                 </div>
-                <span className="iter-tell-count">{v}</span>
+                <span className="iter-issue-count">{v}</span>
               </div>
             );
           })
         )}
       </div>
 
-      {a.topIssues[0] && (
-        <div className="muted-text">主要问题:{a.topIssues[0].issue}</div>
+      {a.primaryIssues[0] && (
+        <div className="muted-text">
+          主要问题:{ISSUE_LABELS[a.primaryIssues[0].code] ?? a.primaryIssues[0].code}
+        </div>
       )}
     </div>
   );
@@ -1663,17 +1684,6 @@ function autoOptimizeText(
   return `跳过:${optimizeResult.error ?? "无变更"}`;
 }
 
-const TELL_DESCRIPTIONS: Record<string, string> = {
-  round1PushVote: "第一轮怂恿投票/带节奏(投就完了/直接投/催投票)",
-  singleCharWhenNamed: "被点名只回单字(在/额/嗯)",
-  sampleLineCopy: "照抄人格示例句或换字拼接",
-  lockstepBlockVote: "两名 AI 投票目标完全一致的轮次",
-  formulaicVoteReason: "投票理由同质化(太积极/追着问)",
-  teammateMisfire: "投给己方另一名 AI",
-  postProvocationSkip: "抛挑衅/被点名后连续 skip 消失",
-  templatePhrase: "模板话术(先看看/先听听/观察一下/带节奏/有点可疑)",
-};
-
 function GameCard({
   g,
   onViewReplay,
@@ -1793,24 +1803,30 @@ function ScoreDetailModal({
   }, []);
 
   const s: ScoreData | null = (g.score as ScoreData) ?? null;
+  const machine: ScoreData = (s?.machine as ScoreData) ?? {};
+  const objective: ScoreData = (s?.objective as ScoreData) ?? {};
+  const analysis: ScoreData = (s?.analysis as ScoreData) ?? {};
   // 本局 AI 的人格 id:优先用 replay 的玩家表,回退到打分结果的 aiPersonas/perAi。
   const replayAiIds: string[] = (replay?.players ?? [])
     .filter((p: Record<string, any>) => p.revealedType === "ai" && p.aiPersonaId)
     .map((p: Record<string, any>) => p.aiPersonaId);
-  const fallbackIds: string[] = Array.isArray(s?.aiPersonas)
-    ? s.aiPersonas
-    : Array.isArray(s?.perAi)
-      ? s.perAi.map((p: Record<string, any>) => p.personaId).filter(Boolean)
+  const fallbackIds: string[] = Array.isArray(objective.aiPersonas)
+    ? objective.aiPersonas
+    : Array.isArray(objective.perAi)
+      ? objective.perAi.map((p: Record<string, any>) => p.personaId).filter(Boolean)
       : [];
   const aiPersonaIds: string[] = replayAiIds.length ? replayAiIds : fallbackIds;
   const gamePersonas: Array<Record<string, any>> = (personas ?? []).filter((p) =>
     aiPersonaIds.includes(p.id),
   );
-  const tells: Record<string, number> = s?.tells ?? {};
-  const totalTells = Object.values(tells).reduce((a, b) => a + (Number(b) || 0), 0);
-  const tellsSorted = Object.entries(tells).sort((x, y) => (Number(y[1]) || 0) - (Number(x[1]) || 0));
-  const perAi: Array<Record<string, any>> = Array.isArray(s?.perAi) ? s.perAi : [];
-  const topIssues: string[] = Array.isArray(s?.topIssues) ? s.topIssues : [];
+  const issueCounts: Record<string, number> = (machine.issueCounts as Record<string, number>) ?? {};
+  const totalIssues = Object.values(issueCounts).reduce((a, b) => a + (Number(b) || 0), 0);
+  const issuesSorted = Object.entries(issueCounts).sort((x, y) => (Number(y[1]) || 0) - (Number(x[1]) || 0));
+  const perAi: Array<Record<string, any>> = Array.isArray(objective.perAi) ? objective.perAi : [];
+  const primaryIssueCodes: string[] = Array.isArray(machine.primaryIssueCodes)
+    ? machine.primaryIssueCodes
+    : [];
+  const evidence: string[] = Array.isArray(analysis.evidence) ? analysis.evidence : [];
 
   // 懒加载:首次切到「完整请求」tab 时,从后端取该局打分的真实请求(system+user+config)。
   const loadScoreRequest = async () => {
@@ -1852,12 +1868,12 @@ function ScoreDetailModal({
         <div className="iter-score-modal-body">
           {/* 指标卡 */}
           <div className="iter-metric-grid">
-            <Metric label="拟人度 (0-100)" value={num(s?.humanLikeScore)} />
-            <Metric label="自然度 (1-5)" value={num(s?.naturalnessAiVsHuman)} />
-            <Metric label="威胁定位 (1-5)" value={num(s?.voteThreatTargeting)} />
-            <Metric label="AI 胜" value={s?.aiWin ? "是" : "否"} />
-            <Metric label="存活 AI" value={num(s?.aiSurvivors)} />
-            <Metric label="进行轮数" value={num(s?.roundsPlayed)} />
+            <Metric label="拟人度 (0-100)" value={num(machine.humanLikeScore)} />
+            <Metric label="自然度 (1-5)" value={num(machine.naturalnessAiVsHuman)} />
+            <Metric label="威胁定位 (1-5)" value={num(machine.voteThreatTargeting)} />
+            <Metric label="AI 胜" value={objective.aiWin ? "是" : "否"} />
+            <Metric label="存活 AI" value={num(objective.aiSurvivors)} />
+            <Metric label="进行轮数" value={num(objective.roundsPlayed)} />
           </div>
 
           {/* AI 存活 */}
@@ -1947,24 +1963,24 @@ function ScoreDetailModal({
             ))}
           </div>
 
-          {/* tells */}
+          {/* Issue Code */}
           <div className="iter-section">
             <p className="eyebrow">
-              tell 命中(共 {totalTells} 次{totalTells === 0 ? " 🎉" : ""})
+              Issue Code 命中(共 {totalIssues} 次)
             </p>
-            <div className="iter-tells-modal">
-              {tellsSorted.map(([k, v]) => {
+            <div className="iter-issues-modal">
+              {issuesSorted.map(([k, v]) => {
                 const count = Number(v) || 0;
                 return (
                   <div
                     key={k}
-                    className={`iter-tell-modal-row ${count > 0 ? "hit" : ""}`}
+                    className={`iter-issue-modal-row ${count > 0 ? "hit" : ""}`}
                   >
-                    <div className="iter-tell-modal-head">
-                      <strong>{TELL_LABELS[k] ?? k}</strong>
-                      <span className="iter-tell-count">{count}</span>
+                    <div className="iter-issue-modal-head">
+                      <strong>{ISSUE_LABELS[k] ?? k}</strong>
+                      <span className="iter-issue-count">{count}</span>
                     </div>
-                    <div className="muted-text">{TELL_DESCRIPTIONS[k] ?? ""}</div>
+                    <div className="muted-text">{ISSUE_DESCRIPTIONS[k] ?? ""}</div>
                   </div>
                 );
               })}
@@ -1972,16 +1988,33 @@ function ScoreDetailModal({
           </div>
 
           {/* 主要问题 */}
-          {topIssues.length > 0 && (
+          {primaryIssueCodes.length > 0 && (
             <div className="iter-section">
               <p className="eyebrow">主要问题</p>
               <ul className="iter-issues">
-                {topIssues.map((issue, i) => (
-                  <li key={i}>{issue}</li>
+                {primaryIssueCodes.map((code, i) => (
+                  <li key={i}>{ISSUE_LABELS[code] ?? code}</li>
                 ))}
               </ul>
             </div>
           )}
+
+          <div className="iter-section">
+            <p className="eyebrow">评语</p>
+            <div className="iter-analysis">
+              <p>{typeof analysis.summary === "string" && analysis.summary ? analysis.summary : "(空)"}</p>
+              {evidence.length > 0 && (
+                <ul className="iter-issues">
+                  {evidence.map((item, i) => (
+                    <li key={i}>{item}</li>
+                  ))}
+                </ul>
+              )}
+              {typeof analysis.fixHint === "string" && analysis.fixHint && (
+                <p className="muted-text">改进方向:{analysis.fixHint}</p>
+              )}
+            </div>
+          </div>
 
           {/* 原始 I/O 选项卡 */}
           <div className="iter-section">
@@ -1990,7 +2023,7 @@ function ScoreDetailModal({
                 className={`iter-tab ${tab === "score" ? "active" : ""}`}
                 onClick={() => setTab("score")}
               >
-                打分结果 JSON
+                打分结果
               </button>
               <button
                 className={`iter-tab ${tab === "replay" ? "active" : ""}`}

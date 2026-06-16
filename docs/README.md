@@ -63,12 +63,12 @@ docs/
 | [AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) | AI 拟人化优化的根因分析、已落地项、可实施方案与 4 轮迭代记录。 |
 | [AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) | 自动对局评估自迭代的入口索引,说明 Flow / Auto-Optimize / Details 的分工与阅读路径。 |
 | [AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) | 自动对局评估自迭代的**整体流程**(「步骤之间怎么连」),含组件图、主循环、实时事件、数据模型。 |
-| [AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) | 自动优化器的单独维护点:轮后状态流转、请求重建、重试与日志。 |
+| [AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) | 单局打分、scorecard 聚合和自动优化器的单独维护点。 |
 | [AI-Auto-Adversarial-Match.md](./ai-iteration/AI-Auto-Adversarial-Match.md) | 调试用的「AI 自动对抗」调试房:玩家建模、模拟真人强度(normal/high)、快速/普通两套发言调度、投票兜底、前端展示。 |
-| [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) | AI 提示词版本库 + 评估尺子版本库 + 单局打分 + 轮聚合 scorecard 的**内部详细逻辑**(「某一步内部怎么算」)。 |
+| [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) | AI 提示词版本库 + 评估尺子版本库 + 手动优化面板与版本感知复盘。 |
 | [Replay-Analysis.md](./ai-iteration/Replay-Analysis.md) | 一键复盘的前后端实现、流式输出、版本感知复盘、Prompt 文件与前端展示。 |
 
-> [AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) 是这条主题线的入口;[AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) 与 [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) 是互补正文:前者讲步骤间串联,后者讲单步内部计算。[AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) 是自动优化器的单独维护点。
+> [AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) 是这条主题线的入口;[AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) 讲步骤间串联;[AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) 讲单局打分、scorecard 和自动优化器;[AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) 讲版本管理和手动优化面板。
 
 ---
 

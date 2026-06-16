@@ -86,7 +86,7 @@ flowchart LR
 | **run** | 一次「开始迭代」到「完成/停止」的过程,含 K 轮。`iteration_runs` 一行。 |
 | **轮(round)** | 用当前 active 代跑 B 局 → 打分 → 聚合。轮与轮之间可人工手动优化/换版本,也可由「自动优化」基于本轮 scorecard 派生候选代后等待确认或自动继续(实现细节见 [`AI-Prompt-Eval-Auto-Optimize.md`](./AI-Prompt-Eval-Auto-Optimize.md))。 |
 | **自动优化(auto-optimize)** | 轮聚合后调用优化模型,基于 scorecard + 逐局摘要 + 当前代 assets 派生候选代。实现细节见 [`AI-Prompt-Eval-Auto-Optimize.md`](./AI-Prompt-Eval-Auto-Optimize.md)。 |
-| **scorecard** | 一轮 B 局分数的聚合(胜率、humanLikeScore 均值±标准误、各 tell 命中率、高频问题)。 |
+| **scorecard** | 一轮 B 局分数的聚合(胜率、humanLikeScore 均值±标准误、各 Issue Code 命中率、高频主问题)。 |
 | **`scoreGenerationId` / `autoOptimize.evalGenerationId`** | 运行时写入 `iteration_runs.rounds` 的历史指针,分别记录“某局打分时用的评估尺子代”和“某轮自动优化时用的评估尺子代”,用于事后如实重建请求。 |
 
 ---
@@ -153,7 +153,7 @@ flowchart TD
   GN --> COLLECT
   COLLECT --> ALLDONE{"B 局都完成?"}
   ALLDONE -- 否 --> POOL
-  ALLDONE -- 是 --> AGG["aggregateScores(有效分数)<br/>→ scorecard"]
+  ALLDONE -- 是 --> AGG["aggregateAssessments(有效评估)<br/>→ scorecard"]
   AGG --> WRITE["prompts.writeScore(generationId, scorecard)"]
   WRITE --> AE{"开启自动优化?"}
   AE -- 否 --> PERSIST["rounds.push({round, generationId, games, aggregate})<br/>写 iteration_runs"]
@@ -190,7 +190,7 @@ flowchart TD
 
 ## 7. 打分与聚合(版本化评估尺子)
 
-每局 replay 都会先锁定一个 `scoreGenerationId`,再从该评估尺子代读取 `replay-score/system-replay-score.txt` 与 `replay-score/user-replay-score-template.txt` 打分,输出严格 JSON(`aiWin` / `aiSurvivors` / `roundsPlayed` / `humanLikeScore` / `naturalnessAiVsHuman` / `voteThreatTargeting` / `tells`(8 项)/ `topIssues`)；一轮 B 局的分数由 `aggregateScores` 聚合成 scorecard,回写该 AI 代的 `ai_prompt_generations.score`,「AI 提示词版本」面板即可看到每代分数。
+每局 replay 都会先锁定一个 `scoreGenerationId`,再从该评估尺子代读取 `replay-score/system-replay-score.txt` 与 `replay-score/user-replay-score-template.txt` 打分。模型输出固定文本协议 `[[score]] + [[analysis]]`;服务端从房间快照计算客观项,从 `[[score]]` 解析 `humanLikeScore` / `naturalnessAiVsHuman` / `voteThreatTargeting` / `issueCounts` / `primaryIssueCodes`,再由 `aggregateAssessments` 聚合成 scorecard,回写该 AI 代的 `ai_prompt_generations.score`,「AI 提示词版本」面板即可看到每代分数。
 
 这意味着:
 
@@ -198,7 +198,7 @@ flowchart TD
 - **历史详情回放**优先取 `scoreGenerationId`,因此切换评估尺子后不会污染旧局的 score-request。
 - `eval/prompts/system-replay-score.txt` 只是 seed / fallback,不是唯一运行时来源。
 
-> 字段定义、判定要点、scorecard 计算公式属于**详细逻辑**,见 [`AI-Prompt-Eval-Details.md`](./AI-Prompt-Eval-Details.md) §2.3(尺子 JSON 与判定要点)与 §3(聚合公式)。
+> 字段定义、判定要点、scorecard 计算公式属于**详细逻辑**,见 [`AI-Prompt-Eval-Auto-Optimize.md`](./AI-Prompt-Eval-Auto-Optimize.md) §2(单局打分)与 §3(轮聚合)。
 
 ---
 

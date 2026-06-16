@@ -4,5 +4,5 @@
 {{replayJson}}
 
 == 二、本局 AI 人格定义 ==
-(用于判断 tell:sampleLines 对照判 sampleLineCopy 照抄示例句;avoidPhrases 对照判 templatePhrase 模板话术)
+(用于判断 SAMPLE_LINE_COPY 是否照抄 sampleLines,以及 TEMPLATE_PHRASE 是否命中 avoidPhrases 或模板话术)
 {{personasJson}}

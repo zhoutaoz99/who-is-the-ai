@@ -1,4 +1,4 @@
-import type { GameScore, Scorecard } from "./iteration-score";
+import type { GameAssessment, Scorecard } from "./iteration-score";
 
 export type IterationStatus =
   | "running"
@@ -57,8 +57,8 @@ export interface IterationGameResult {
   humanLikeScore?: number;
   aiWin?: boolean;
   error?: string;
-  /** 该局完整打分(含 tells/naturalness/voteThreatTargeting/topIssues),供轮聚合使用。 */
-  score?: GameScore;
+  /** 该局完整评估(客观项 + Issue Code 结构化头 + 自由文本评语),供轮聚合与优化器使用。 */
+  score?: GameAssessment;
 }
 
 /** 一轮的聚合记录(持久化进 iteration_runs.rounds)。 */
