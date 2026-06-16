@@ -172,6 +172,9 @@ export default function IterationPage() {
   const [evalOptimizeNote, setEvalOptimizeNote] = useState("");
   const [evalOptimizeBusy, setEvalOptimizeBusy] = useState(false);
 
+  // 版本管理 tab:AI 提示词版本在前,评估尺子版本在后;切换 tab 不会丢失草稿(各自 state 独立保留)。
+  const [versionTab, setVersionTab] = useState<"eval" | "prompts">("prompts");
+
   const fetchGenerations = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/debug/prompts/generations`);
@@ -937,7 +940,10 @@ export default function IterationPage() {
                 <AutoOptimizeCard
                   round={selectedRoundData}
                   runId={run.id}
-                  onSelectGen={(id) => setSelectedGenId(id)}
+                  onSelectGen={(id) => {
+                    setSelectedGenId(id);
+                    setVersionTab("prompts");
+                  }}
                   onViewDetail={(roundNo) => setAutoOptimizeDetailRound(roundNo)}
                 />
               ) : isSelectedRoundCurrent && isAutoOptimizing ? (
@@ -959,17 +965,39 @@ export default function IterationPage() {
         </section>
       </section>
 
-      {/* 版本管理(全宽,左列表 / 右查看) */}
+      {/* 版本管理(全宽,左列表 / 右查看)—— 评估尺子 / AI 提示词 用 tab 切换 */}
       <section className="panel lobby-card iteration-version-section">
           <div className="lobby-card-header">
             <div>
-              <p className="eyebrow">AI Prompt Versions</p>
-              <h2>AI 提示词版本</h2>
+              <p className="eyebrow">Version Management</p>
+              <h2>版本管理</h2>
             </div>
-            <button className="compact-button" onClick={fetchGenerations}>
+            <button
+              className="compact-button"
+              onClick={() => {
+                fetchGenerations();
+                fetchEvalGenerations();
+              }}
+            >
               刷新
             </button>
           </div>
+          <div className="iter-tabs iter-version-tabs">
+            <button
+              className={`iter-tab ${versionTab === "prompts" ? "active" : ""}`}
+              onClick={() => setVersionTab("prompts")}
+            >
+              AI 提示词版本
+            </button>
+            <button
+              className={`iter-tab ${versionTab === "eval" ? "active" : ""}`}
+              onClick={() => setVersionTab("eval")}
+            >
+              评估尺子版本
+            </button>
+          </div>
+          {versionTab === "prompts" && (
+            <>
           <p className="muted-text">
             这里管理 AI 玩家实际运行的 7 个提示词 asset 与人格库。可在多个 asset 间分别修改,最后一次性保存成一个新版本;激活后只影响后续新开的对局。
           </p>
@@ -1120,18 +1148,10 @@ export default function IterationPage() {
               </div>
             </div>
           </div>
-        </section>
-
-      <section className="panel lobby-card iteration-version-section">
-        <div className="lobby-card-header">
-          <div>
-            <p className="eyebrow">Eval Rulers</p>
-            <h2>评估尺子版本</h2>
-          </div>
-          <button className="compact-button" onClick={fetchEvalGenerations}>
-            刷新
-          </button>
-        </div>
+            </>
+          )}
+          {versionTab === "eval" && (
+            <>
         <p className="muted-text">
           这里管理单局打分与自动优化器使用的评估提示词。可在多个评估 asset 间分别修改,最后一次性保存成一个新版本;激活后只影响后续新打分的对局和后续自动优化。
         </p>
@@ -1276,6 +1296,8 @@ export default function IterationPage() {
             </div>
           </div>
         </div>
+            </>
+          )}
       </section>
       </main>
 

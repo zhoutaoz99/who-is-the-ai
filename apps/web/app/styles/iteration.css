@@ -338,6 +338,9 @@
 .iteration-version-section {
   margin-top: 18px;
 }
+.iter-version-tabs {
+  margin: 10px 0 0;
+}
 
 /* 版本差异弹窗 */
 .iteration-version-detail-tools {
