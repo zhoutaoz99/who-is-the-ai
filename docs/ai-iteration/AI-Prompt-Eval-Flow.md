@@ -7,11 +7,11 @@
 | 适用范围 | 自动对局评估自迭代的整体流程、状态流转与数据模型 |
 | 目标读者 | 后端开发、评审者 |
 | 责任人 | AI / Evaluation 维护者 |
-| 最近核对日期 | 2026-06-16 |
+| 最近核对日期 | 2026-06-17 |
 | 关联代码 | `apps/api/src/ai/`、`apps/api/src/replay/`、`apps/web/app/iteration/` |
 | 关联文档 | [AI-Prompt-Eval.md](./AI-Prompt-Eval.md)、[AI-Prompt-Eval-Auto-Optimize.md](./AI-Prompt-Eval-Auto-Optimize.md)、[AI-Prompt-Eval-Details.md](./AI-Prompt-Eval-Details.md)、[AI-Human-Likeness.md](./AI-Human-Likeness.md)、[Replay-Analysis.md](./Replay-Analysis.md) |
 
-本文只讲整体流程与运行逻辑。入口与分工见 [`AI-Prompt-Eval.md`](AI-Prompt-Eval.md); 自动优化器的内部链路、重试与详情重建见 [`AI-Prompt-Eval-Auto-Optimize.md`](AI-Prompt-Eval-Auto-Optimize.md); 设计动机与取舍见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md),拟人化迭代记录见 [`AI-Human-Likeness.md`](AI-Human-Likeness.md)。与「复盘」([`Replay-Analysis.md`](./Replay-Analysis.md)) 的区别是：复盘是单局定性分析（开放文本、不改状态，给人读）；本文是批量定量评估（结构化 JSON 分数、聚合 scorecard、驱动版本激活/回滚）。两者共用复盘导出 JSON 与 `REPLAY_ANALYSIS_*` 模型，但**单局打分**与评估尺子提示词走独立版本库；`ReplayService` 的单局复盘分析提示词仍保持文件来源。
+本文只讲整体流程与运行逻辑。入口与分工见 [`AI-Prompt-Eval.md`](AI-Prompt-Eval.md); 自动优化器的内部链路、重试与详情重建见 [`AI-Prompt-Eval-Auto-Optimize.md`](AI-Prompt-Eval-Auto-Optimize.md); 设计动机与取舍见 [`AI-Prompt-Eval-Details.md`](AI-Prompt-Eval-Details.md),拟人化迭代记录见 [`AI-Human-Likeness.md`](AI-Human-Likeness.md)。与「单局审计」([`Replay-Analysis.md`](./Replay-Analysis.md)) 的区别是：单局审计只抓本局内高置信、可举证、可定位的硬问题；本文是批量定量评估（结构化 JSON 分数、聚合 scorecard、驱动版本激活/回滚），用于发现多局后才稳定暴露的隐藏 tell、拟人化趋势和版本优劣。两者共用复盘导出 JSON 与 `REPLAY_ANALYSIS_*` 模型，但**单局打分**与评估尺子提示词走独立版本库；`ReplayService` 的单局审计提示词仍保持文件来源。
 
 ## 1. 概览
 

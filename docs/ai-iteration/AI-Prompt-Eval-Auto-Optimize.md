@@ -7,7 +7,7 @@
 | 适用范围 | 自动对局评估自迭代中的单局打分、轮聚合 scorecard、自动优化器、轮后状态流转与详情重建 |
 | 目标读者 | 后端开发、评审者 |
 | 责任人 | AI / Evaluation 维护者 |
-| 最近核对日期 | 2026-06-16 |
+| 最近核对日期 | 2026-06-17 |
 | 关联代码 | `apps/api/src/iteration/`、`apps/api/src/ai/`、`apps/web/app/iteration/` |
 | 关联文档 | [AI-Prompt-Eval.md](./AI-Prompt-Eval.md)、[AI-Prompt-Eval-Flow.md](./AI-Prompt-Eval-Flow.md)、[AI-Prompt-Eval-Details.md](./AI-Prompt-Eval-Details.md)、[Replay-Analysis.md](./Replay-Analysis.md) |
 
@@ -46,7 +46,7 @@
 
 ### 2.2 打分模型配置
 
-复用复盘分析那套 **`REPLAY_ANALYSIS_*`** 环境变量(不是 AI 玩家的模型),由 `resolveScoreModel()` 解析。下表只列环境变量与**代码默认值**;实际取值以 `.env` 为准。
+复用单局审计那套 **`REPLAY_ANALYSIS_*`** 环境变量(不是 AI 玩家的模型),由 `resolveScoreModel()` 解析。下表只列环境变量与**代码默认值**;实际取值以 `.env` 为准。
 
 | 项 | 环境变量 | 代码默认 |
 |---|---|---|
@@ -165,7 +165,7 @@ fix_hint: 发言策略应要求先给具体行为证据,再表达怀疑或投票
 
 边界上也要说清:
 
-- 少量局数、纯人工阅读的场景，可以只看开放文本复盘，不必强依赖结构化聚合。
+- 少量局数、只排查明显硬问题的场景，可以看单局审计；只要涉及隐藏模式、拟人化趋势或版本优劣，仍应依赖多局结构化聚合。
 - 一旦进入批量自动优化，尤其是几十局到上百局，不能把“总结规律”和“统计频次”全部外包给优化模型。
 - 当前边界是:客观指标由服务端从 replay/room 快照计算,主观判断由模型输出 Issue Code 与自由文本证据,再统一进入 `scorecard`。
 
@@ -222,7 +222,7 @@ ai-player/user-vote-template.txt
 ai-player/personas
 ```
 
-自动优化器不得改 `sim-human/*`、复盘分析提示词、单局打分尺子,也不得新增 asset key。
+自动优化器不得改 `sim-human/*`、单局审计提示词、单局打分尺子,也不得新增 asset key。
 
 #### 4.2.3 评估尺子代锁定
 

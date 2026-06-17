@@ -4,10 +4,10 @@
 | --- | --- |
 | 文档类型 | Design |
 | 文档状态 | Active |
-| 适用范围 | 自动对局评估自迭代中的版本库、手动优化与版本感知复盘 |
+| 适用范围 | 自动对局评估自迭代中的版本库、手动优化与版本感知单局审计 |
 | 目标读者 | 后端开发、评审者 |
 | 责任人 | AI / Evaluation 维护者 |
-| 最近核对日期 | 2026-06-16 |
+| 最近核对日期 | 2026-06-17 |
 | 关联代码 | `apps/api/src/ai/`、`apps/api/src/iteration/`、`eval/prompts/` |
 | 关联文档 | [AI-Prompt-Eval.md](./AI-Prompt-Eval.md)、[AI-Prompt-Eval-Auto-Optimize.md](./AI-Prompt-Eval-Auto-Optimize.md)、[AI-Prompt-Eval-Flow.md](./AI-Prompt-Eval-Flow.md)、[Replay-Analysis.md](./Replay-Analysis.md) |
 
@@ -23,7 +23,7 @@
 - **批量平均,不逐局改**:每轮跑 B 局聚合成 scorecard,只做一处有针对性的改动。
 - **版本历史可回滚**:每次改动 = 一个新"代(generation)",父子代关系会被保留;回滚 = 改 active 指针,不动 git、不重启。
 
-> 范围:版本库 + 评估闭环已落地(进程内 `IterationService` + `/iteration` 页面);新版本可由人工按 scorecard 手动创建,也可由「自动优化」(代码 `autoOptimize`)生成候选代后等待确认或自动激活;对手保持 normal 难度;默认 B/K 等常量见 [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md) §11。当前**评估尺子版本库**只覆盖 `replay-score/*` 与 `auto-optimize/*`;`ReplayService` 的单局复盘分析提示词(`system-replay-analysis.txt` / `user-replay-analysis-template.txt`)仍保持文件来源。
+> 范围:版本库 + 评估闭环已落地(进程内 `IterationService` + `/iteration` 页面);新版本可由人工按 scorecard 手动创建,也可由「自动优化」(代码 `autoOptimize`)生成候选代后等待确认或自动激活;对手保持 normal 难度;默认 B/K 等常量见 [`AI-Prompt-Eval-Flow.md`](AI-Prompt-Eval-Flow.md) §11。当前**评估尺子版本库**只覆盖 `replay-score/*` 与 `auto-optimize/*`;`ReplayService` 的单局硬问题审计提示词(`system-replay-analysis.txt` / `user-replay-analysis-template.txt`)仍保持文件来源。
 > 另:AI 近期连胜、纯胜率区分度低,故主要靠 tell 命中率 / 自然度等先行指标区分版本好坏。
 
 ## 2. 版本管理(详细逻辑)
@@ -42,7 +42,7 @@
 | `ai-player/user-vote-template.txt` | 投票用户模板 |
 | `ai-player/personas` | 人格库(存 JSON 字符串) |
 
-**不纳入 AI 提示词版本库**:`sim-human/*`(对手,冻结以保证评估公平)、`replay-score/*` / `auto-optimize/*`(走独立评估闭环版本库)、`system-replay-analysis.txt` / `user-replay-analysis-template.txt`(复盘分析尺子,保持文件来源)。
+**不纳入 AI 提示词版本库**:`sim-human/*`(对手,冻结以保证评估公平)、`replay-score/*` / `auto-optimize/*`(走独立评估闭环版本库)、`system-replay-analysis.txt` / `user-replay-analysis-template.txt`(单局硬问题审计尺子,保持文件来源)。
 
 ### 2.2 数据模型
 
@@ -74,7 +74,7 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 - `onModuleInit`:`await postgres.ready` → 库空则事务播种 `gen-0001`(从当前文件 + `DEFAULT_AI_PERSONAS`)→ `loadActive()`。
 - **热路径同步**:`getPrompt(key)` / `render(key, vars)` / `getActiveGenerationId()` 读内存 Map,零额外延迟(与旧 `prompt-loader` 一致)。
-- **历史代异步**:`getGenerationAssets(genId)` 走 DB,仅供版本感知复盘/打分取人格。
+- **历史代异步**:`getGenerationAssets(genId)` 走 DB,仅供版本感知单局审计/打分取人格。
 - **热切换**:`setActive(genId)` 改指针 + `loadActive()`,引擎立即生效,无需重启。
 - **写操作**:`createGeneration({fromGenId, changedAssets, note})` / `setActive` / `markBest` / `writeScore` / `listGenerations`。
 - **运行时接入**:单局打分、scorecard 聚合、`scoreRequest`/`autoOptimizeRequest` 重建等运行时逻辑见 [`AI-Prompt-Eval-Auto-Optimize.md`](AI-Prompt-Eval-Auto-Optimize.md)。
@@ -93,11 +93,11 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 
 这层交互与后端 `PromptRegistry.createGeneration({ changedAssets })` 的不可变版本模型配套:保存动作不会覆盖原代,而是派生一个新的 child generation。
 
-### 2.5 对局打标 + 版本感知复盘
+### 2.5 对局打标 + 版本感知单局审计
 
 - `game.start` 时盖戳 `room.promptGenerationId = registry.getActiveGenerationId()`(随 `room_data` 自动持久化)。
 - `GET /replay/:roomId/export` 返回的 JSON 顶层带 `promptGenerationId`。
-- 复盘分析(`/replay/analyze` → `buildReplayAnalysisPrompt`):从 replay 的 `promptGenerationId`(缺失则按 `roomId` 查库,再缺失回退当前 active)取**那一局当时运行的那一代** asset 注入,**而非当前 active** —— 避免迭代后回看旧局张冠李戴。
+- 单局审计(`/replay/analyze` → `buildReplayAnalysisPrompt`):从 replay 的 `promptGenerationId`(缺失则按 `roomId` 查库,再缺失回退当前 active)取**那一局当时运行的那一代** asset 注入,**而非当前 active** —— 避免迭代后回看旧局张冠李戴。
 
 ### 2.6 评估尺子版本库
 
@@ -112,7 +112,7 @@ ai_prompt_state(id int PK default 1 CHECK(id=1), active_generation_id text)
 | `auto-optimize/system-prompt-optimizer.txt` | 自动优化器 system prompt |
 | `auto-optimize/user-prompt-optimizer-template.txt` | 自动优化器 user 模板 |
 
-**暂不纳入该版本库:**`system-replay-analysis.txt` / `user-replay-analysis-template.txt`(单局复盘分析,仍走文件)。
+**暂不纳入该版本库:**`system-replay-analysis.txt` / `user-replay-analysis-template.txt`(单局硬问题审计,仍走文件)。
 
 **数据模型(与 AI 提示词版本库平行):**
 
@@ -183,7 +183,7 @@ apps/api/src/game/game.snapshot.ts             # getActivePersonas()
 apps/api/src/game/game.service.ts             # 盖戳 + getActivePersonas()
 apps/api/src/replay/replay-export.builder.ts   # 服务端 replay 导出
 apps/api/src/replay/replay.controller.ts       # GET /replay/:roomId/export
-apps/api/src/replay/replay.service.ts          # 版本感知复盘分析
+apps/api/src/replay/replay.service.ts          # 版本感知单局审计
 apps/api/src/iteration/                        # 进程内编排(IterationService / iteration-score / types / controller)
 apps/web/app/iteration/page.tsx                # 前端入口页
 eval/prompts/replay-score/system-replay-score.txt            # 评估尺子版本库的 seed / 回退来源

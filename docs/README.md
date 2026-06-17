@@ -56,7 +56,7 @@ docs/
 
 ### ai-iteration/ — 用于迭代 AI 玩家
 
-离线工具与迭代记录:批量跑无头对局、按评估尺子代量化打分、AI 提示词版本库 / 评估尺子版本库、自动对抗调试房,以及复盘分析(既是玩家功能、也是评估闭环的数据源)。
+离线工具与迭代记录:批量跑无头对局、按评估尺子代量化打分、AI 提示词版本库 / 评估尺子版本库、自动对抗调试房,以及单局硬问题审计(使用 replay JSON 排查单局内高置信问题)。
 
 | 文档 | 内容 |
 | --- | --- |
@@ -65,8 +65,8 @@ docs/
 | [AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) | 自动对局评估自迭代的**整体流程**(「步骤之间怎么连」),含组件图、主循环、实时事件、数据模型。 |
 | [AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) | 单局打分、scorecard 聚合和自动优化器的单独维护点。 |
 | [AI-Auto-Adversarial-Match.md](./ai-iteration/AI-Auto-Adversarial-Match.md) | 调试用的「AI 自动对抗」调试房:玩家建模、模拟真人强度(normal/high)、快速/普通两套发言调度、投票兜底、前端展示。 |
-| [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) | AI 提示词版本库 + 评估尺子版本库 + 手动优化面板与版本感知复盘。 |
-| [Replay-Analysis.md](./ai-iteration/Replay-Analysis.md) | 一键复盘的前后端实现、流式输出、版本感知复盘、Prompt 文件与前端展示。 |
+| [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) | AI 提示词版本库 + 评估尺子版本库 + 手动优化面板与版本感知单局审计。 |
+| [Replay-Analysis.md](./ai-iteration/Replay-Analysis.md) | 单局硬问题审计的前后端实现、流式输出、版本感知审计、Prompt 文件、前端展示，以及它与自动对局评估自迭代的边界。 |
 
 > [AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) 是这条主题线的入口;[AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) 讲步骤间串联;[AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) 讲单局打分、scorecard 和自动优化器;[AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) 讲版本管理和手动优化面板。
 

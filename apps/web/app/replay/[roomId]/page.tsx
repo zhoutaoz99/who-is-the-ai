@@ -901,12 +901,12 @@ export default function ReplayPage() {
 
       if (!res.ok) {
         const message = await readErrorResponse(res);
-        setAnalysisError(message || "复盘分析失败");
+        setAnalysisError(message || "单局审计失败");
         return;
       }
 
       if (!res.body) {
-        setAnalysisError("复盘分析响应为空");
+        setAnalysisError("单局审计响应为空");
         return;
       }
 
@@ -999,7 +999,7 @@ export default function ReplayPage() {
             className="replay-analyze-btn"
             onClick={handleAnalyzeReplay}
           >
-            {analysisLoading ? "中断" : analysisText || analysisError || analysisInterrupted ? "重试复盘" : "一键复盘"}
+            {analysisLoading ? "中断" : analysisText || analysisError || analysisInterrupted ? "重试审计" : "单局审计"}
           </button>
           <button
             className={`secondary${showPreview ? " replay-preview-active" : ""}`}
@@ -1018,12 +1018,12 @@ export default function ReplayPage() {
 
       {(analysisLoading || analysisText || analysisError || analysisInterrupted) && (
         <section className="replay-section replay-analysis-section">
-          <h2>一键复盘</h2>
+          <h2>单局硬问题审计</h2>
           {analysisLoading && (
-            <div className="replay-analysis-status">正在分析对局记录...</div>
+            <div className="replay-analysis-status">正在审计单局硬问题...</div>
           )}
           {analysisInterrupted && !analysisLoading && (
-            <div className="replay-analysis-status">已中断，可重试复盘。</div>
+            <div className="replay-analysis-status">已中断，可重试审计。</div>
           )}
           {analysisError && (
             <div className="replay-debug-error">{analysisError}</div>
