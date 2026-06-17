@@ -326,6 +326,58 @@ export class EvalPromptRegistry implements OnModuleInit {
     }
   }
 
+  // ---------- 从本地文件同步到数据库 ----------
+
+  /**
+   * 把 eval/prompts/ 本地文件内容同步进【种子版本】的 asset(就地 UPDATE DB 内容)。
+   * 仅种子版本(parent_id IS NULL)允许——种子是唯一与文件双向对应的版本。
+   */
+  async syncFilesToGeneration(
+    generationId: string,
+  ): Promise<{ updated: string[]; unchanged: string[] }> {
+    const genRes = await this.postgres.query<{
+      parent_id: string | null;
+      manifest: Record<string, number>;
+    }>(
+      "SELECT parent_id, manifest FROM eval_prompt_generations WHERE id = $1",
+      [generationId],
+    );
+    const gen = genRes.rows[0];
+    if (!gen) throw new Error(`未知的代: ${generationId}`);
+    if (gen.parent_id !== null) {
+      throw new Error("仅种子版本支持从本地文件同步");
+    }
+    const manifest = gen.manifest;
+
+    const updated: string[] = [];
+    const unchanged: string[] = [];
+    for (const key of EVAL_PROMPT_ASSET_KEYS) {
+      const version = manifest[key];
+      if (!version) continue;
+      const fileContent = this.readSourceAsset(key);
+      const dbContent = await this.readAssetContent(key, version);
+      if (dbContent === fileContent) {
+        unchanged.push(key);
+        continue;
+      }
+      await this.postgres.query(
+        "UPDATE eval_prompt_assets SET content=$1 WHERE asset_key=$2 AND version=$3",
+        [fileContent, key, version],
+      );
+      updated.push(key);
+    }
+    // 若同步的恰是 active 代,热重载内存缓存,让运行时立即生效。
+    if (generationId === this.getActiveGenerationId()) {
+      await this.loadActive();
+    }
+    this.logger.log(
+      `已从本地文件同步进种子代 ${generationId}:更新 ${updated.length} 个,无变化 ${unchanged.length} 个`,
+    );
+    return { updated, unchanged };
+  }
+
+  // ---------- 播种 ----------
+
   private async seedIfEmpty(): Promise<void> {
     const res = await this.postgres.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM eval_prompt_assets",

@@ -108,4 +108,23 @@ export class EvalPromptVersionController {
     if (this.gate()) return this.gate();
     return { ok: true, keys: EVAL_PROMPT_ASSET_KEYS };
   }
+
+  /**
+   * 把 eval/prompts/ 本地文件内容同步进种子版本(仅种子版本,就地 UPDATE DB)。
+   * 返回更新 / 未变化的 asset key。
+   */
+  @Post("generation/:id/sync-from-files")
+  async syncFromFiles(@Param("id") id: string) {
+    if (this.gate()) return this.gate();
+    try {
+      const { updated, unchanged } =
+        await this.registry.syncFilesToGeneration(id);
+      return { ok: true, generationId: id, updated, unchanged };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
 }

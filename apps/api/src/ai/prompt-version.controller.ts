@@ -148,4 +148,23 @@ export class PromptVersionController {
     if (this.gate()) return this.gate();
     return { ok: true, keys: ALL_ASSET_KEYS };
   }
+
+  /**
+   * 把 src/ai/prompts/ 本地源文件内容同步进种子版本(仅种子版本,就地 UPDATE DB)。
+   * personas 无对应文件,会出现在 skipped 里。
+   */
+  @Post("generation/:id/sync-from-files")
+  async syncFromFiles(@Param("id") id: string) {
+    if (this.gate()) return this.gate();
+    try {
+      const { updated, unchanged, skipped } =
+        await this.registry.syncFilesToGeneration(id);
+      return { ok: true, generationId: id, updated, unchanged, skipped };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
 }

@@ -454,6 +454,39 @@ export default function IterationPage() {
     await fetchGenerations();
   };
 
+  // 把本地源文件内容同步进种子版本(文件 → DB)。仅种子版本可用。
+  const handleSyncGenFromFiles = async (genId: string) => {
+    if (
+      !window.confirm(
+        `确认用本地源文件内容覆盖种子版本 ${genId} 在数据库中的内容?\n(就地更新该版本各文本 asset;personas 无文件会跳过)`,
+      )
+    ) {
+      return;
+    }
+    setPageError("");
+    try {
+      const res = await fetch(
+        `${API_URL}/debug/prompts/generation/${genId}/sync-from-files`,
+        { method: "POST" },
+      );
+      const json = await res.json();
+      if (!json?.ok) {
+        setPageError(json?.error ?? "同步失败");
+        return;
+      }
+      const upd = json.updated?.length ?? 0;
+      const same = json.unchanged?.length ?? 0;
+      const skip = json.skipped?.length ?? 0;
+      window.alert(
+        `已从本地文件同步进 ${genId}:更新 ${upd} 个,无变化 ${same} 个${skip ? `,跳过 ${skip} 个` : ""}。`,
+      );
+      await fetchGenerations();
+      if (genId === selectedGenId) await loadAsset(genId);
+    } catch {
+      setPageError("同步失败");
+    }
+  };
+
   const handleDelete = async (genId: string, isActive: boolean) => {
     const hint = isActive
       ? "\n该版本为当前激活版本,删除后将回退激活到其父代。"
@@ -522,6 +555,38 @@ export default function IterationPage() {
       body: JSON.stringify({ generationId: genId }),
     });
     await fetchEvalGenerations();
+  };
+
+  // 把本地源文件内容同步进种子版本(文件 → DB)。仅种子版本可用。
+  const handleSyncEvalGenFromFiles = async (genId: string) => {
+    if (
+      !window.confirm(
+        `确认用本地源文件内容覆盖种子版本 ${genId} 在数据库中的内容?\n(就地更新该版本各评估 asset)`,
+      )
+    ) {
+      return;
+    }
+    setPageError("");
+    try {
+      const res = await fetch(
+        `${API_URL}/debug/eval-prompts/generation/${genId}/sync-from-files`,
+        { method: "POST" },
+      );
+      const json = await res.json();
+      if (!json?.ok) {
+        setPageError(json?.error ?? "同步失败");
+        return;
+      }
+      const upd = json.updated?.length ?? 0;
+      const same = json.unchanged?.length ?? 0;
+      window.alert(
+        `已从本地文件同步进 ${genId}:更新 ${upd} 个,无变化 ${same} 个。`,
+      );
+      await fetchEvalGenerations();
+      if (genId === selectedEvalGenId) await loadEvalAsset(genId);
+    } catch {
+      setPageError("同步失败");
+    }
   };
 
   const handleDeleteEvalGen = async (genId: string, isActive: boolean) => {
@@ -1071,6 +1136,15 @@ export default function IterationPage() {
                     >
                       标记最佳
                     </button>
+                    {!g.parentId && (
+                      <button
+                        className="compact-button"
+                        title="用本地源文件内容覆盖此版本在数据库中的内容"
+                        onClick={() => handleSyncGenFromFiles(g.id)}
+                      >
+                        从本地同步
+                      </button>
+                    )}
                     <button
                       className="compact-button"
                       disabled={deleteBlocked}
@@ -1215,6 +1289,15 @@ export default function IterationPage() {
                         onClick={() => handleActivateEvalGen(g.id)}
                       >
                         激活
+                      </button>
+                    )}
+                    {!g.parentId && (
+                      <button
+                        className="compact-button"
+                        title="用本地源文件内容覆盖此版本在数据库中的内容"
+                        onClick={() => handleSyncEvalGenFromFiles(g.id)}
+                      >
+                        从本地同步
                       </button>
                     )}
                     <button

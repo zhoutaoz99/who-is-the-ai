@@ -1,5 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { PoolClient } from "pg";
 import { PostgresService } from "../data/postgres.service";
 import { AiPersonaContext } from "./ai.types";
@@ -356,6 +358,87 @@ export class PromptRegistry implements OnModuleInit {
     } else {
       this.logger.log(`已删除代 ${generationId}`);
     }
+  }
+
+  // ---------- 从本地文件同步到数据库 ----------
+
+  /**
+   * 把 src/ai/prompts/ 本地【源】文件内容同步进【种子版本】的文本 asset(就地 UPDATE DB)。
+   * 仅种子版本(parent_id IS NULL)允许。读的是源文件(用户编辑的 src,非 dist 拷贝)。
+   * personas 无对应文件(种子来自 ai.personas.ts 的 DEFAULT_AI_PERSONAS 代码常量),放入 skipped。
+   */
+  async syncFilesToGeneration(
+    generationId: string,
+  ): Promise<{
+    updated: string[];
+    unchanged: string[];
+    skipped: string[];
+  }> {
+    const genRes = await this.postgres.query<{
+      parent_id: string | null;
+      manifest: Record<string, number>;
+    }>(
+      "SELECT parent_id, manifest FROM ai_prompt_generations WHERE id = $1",
+      [generationId],
+    );
+    const gen = genRes.rows[0];
+    if (!gen) throw new Error(`未知的代: ${generationId}`);
+    if (gen.parent_id !== null) {
+      throw new Error("仅种子版本支持从本地文件同步");
+    }
+    const manifest = gen.manifest;
+    const dir = this.resolveSourcePromptsDir();
+
+    const updated: string[] = [];
+    const unchanged: string[] = [];
+    const skipped = [PERSONAS_ASSET_KEY];
+    for (const key of TEXT_ASSET_KEYS) {
+      const version = manifest[key];
+      if (!version) {
+        skipped.push(key);
+        continue;
+      }
+      const fileContent = readFileSync(join(dir, key), "utf-8");
+      const dbContent = await this.readAssetContent(key, version);
+      if (dbContent === fileContent) {
+        unchanged.push(key);
+        continue;
+      }
+      await this.postgres.query(
+        "UPDATE ai_prompt_assets SET content=$1 WHERE asset_key=$2 AND version=$3",
+        [fileContent, key, version],
+      );
+      updated.push(key);
+    }
+    // 若同步的恰是 active 代,热重载内存缓存 + 人格库,让运行时立即生效。
+    if (generationId === this.getActiveGenerationId()) {
+      await this.loadActive();
+    }
+    this.logger.log(
+      `已从本地文件同步进种子代 ${generationId}:更新 ${updated.length} 个,无变化 ${unchanged.length} 个,跳过 ${skipped.length} 个`,
+    );
+    return { updated, unchanged, skipped };
+  }
+
+  /**
+   * 定位 AI 提示词的【源】目录(用户编辑、纳入版本控制的 .txt)。
+   * 注意:prompt-loader 运行读的是 nest 拷到 dist/ai/prompts 的副本;这里要读源目录。
+   */
+  private resolveSourcePromptsDir(): string {
+    const candidates = [
+      join(__dirname, "..", "..", "src", "ai", "prompts"),
+      join(process.cwd(), "src", "ai", "prompts"),
+      join(process.cwd(), "apps", "api", "src", "ai", "prompts"),
+    ];
+    const dir = candidates.find((d) =>
+      existsSync(join(d, "ai-player", "system-vote.txt")),
+    );
+    if (!dir) {
+      throw new Error(
+        `找不到 AI 提示词源文件目录,已尝试: ${candidates.join(", ")}`,
+      );
+    }
+    return dir;
   }
 
   // ---------- 播种 ----------
