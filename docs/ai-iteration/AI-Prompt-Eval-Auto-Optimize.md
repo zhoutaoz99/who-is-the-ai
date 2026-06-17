@@ -33,7 +33,7 @@
 ### 2.1 打分链路
 
 1. **锁定本局使用的评估尺子代**: `runOneGame()` 在进入 `scoreReplay()` 前读取 `evalPrompts.getActiveGenerationId()` 得到 `scoreGenerationId`,并写入 `IterationGameResult.scoreGenerationId`。这一步保证“该局到底用哪套打分尺子打的分”可追溯。
-2. **构造 user 消息**(`buildScoreUserPrompt`):取该局的 `promptGenerationId`(盖戳于开局),按该 AI 代取**人格定义**(`getPersonasForGeneration` → `PromptRegistry.getGenerationAssets`,按 genId 缓存),只保留 `id / name / sampleLines / avoidPhrases`;再从该 `scoreGenerationId` 对应的评估尺子代读取 `replay-score/user-replay-score-template.txt`,把「复盘 JSON」和「人格定义」渲染成 user 消息。
+2. **构造复盘 JSON 与 user 消息**:先用 `buildReplayExportData` 生成 replay JSON,并固定复用复盘页默认开关配置 `includeSkips=true`、`includeUserPrompt=false`、`profile="audit"`;再取该局的 `promptGenerationId`(盖戳于开局),按该 AI 代取**人格定义**(`getPersonasForGeneration` → `PromptRegistry.getGenerationAssets`,按 genId 缓存),只保留 `id / name / sampleLines / avoidPhrases`;最后从该 `scoreGenerationId` 对应的评估尺子代读取 `replay-score/user-replay-score-template.txt`,把「复盘 JSON」和「人格定义」渲染成 user 消息。
 3. **加载 system 尺子**: `scoreReplay()` 从同一个 `scoreGenerationId` 读取 `replay-score/system-replay-score.txt`。因此 system / user 两段提示词始终来自**同一个评估 generation**,不会混用当前 active 与历史版本。
 4. **调用打分模型**(`aiService.callModel`,非流式,OpenAI 兼容):`callModel(systemPrompt, userPrompt, modelConfig, options)`。
 5. **解析**(`parseJsonObject`):容错剥 ```` ```json ```` 围栏 / 截首个 `{...}`,失败则该局记 `error`(不进聚合)。

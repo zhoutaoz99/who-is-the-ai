@@ -3,7 +3,8 @@ import type { AiCallLog } from "./replay.types";
 
 /**
  * 服务端版本的 replay 导出构建器,从 apps/web/app/replay/[roomId]/page.tsx 移植,
- * 产出与现有 replay-*.json 完全一致的结构(额外可带 promptGenerationId)。
+ * 默认 full profile 产出与现有 replay-*.json 完全一致的结构(额外可带 promptGenerationId);
+ * audit profile 用于单局审计,会去掉提示词、模型配置等高噪声字段。
  * 匹配方式与前端一致:按 round_no + 玩家 + 时间序做 index 匹配。
  */
 
@@ -19,6 +20,33 @@ type TimelineItem =
       aiCalls: AiCallLog[];
     }
   | { type: "skip"; call: AiCallLog };
+
+export type ReplayExportProfile = "full" | "audit";
+
+export const DEFAULT_REPLAY_MODEL_INPUT_OPTIONS = Object.freeze({
+  includeSkips: true,
+  includeUserPrompt: false,
+  profile: "audit" as ReplayExportProfile,
+});
+
+export interface ReplayExportBuildOptions {
+  includeSkips: boolean;
+  includeUserPrompt: boolean;
+  promptGenerationId?: string;
+  profile?: ReplayExportProfile;
+}
+
+function formatTimestampToSecond(value: unknown): string {
+  const normalized =
+    value instanceof Date
+      ? value.toISOString()
+      : typeof value === "string"
+        ? value
+        : typeof value === "number" && Number.isFinite(value)
+          ? new Date(value).toISOString()
+          : "";
+  return normalized.replace(/\.\d+(?=(Z|[+-]\d{2}:\d{2})?$)/, "");
+}
 
 function isSkipCall(call: AiCallLog): boolean {
   if (call.callType !== "speech-strategy" && call.callType !== "sim-human-speech")
@@ -195,13 +223,15 @@ function buildTimeline(
 export function buildReplayExportData(
   room: RoomSnapshot,
   aiCallLogs: AiCallLog[],
-  options: {
-    includeSkips: boolean;
-    includeUserPrompt: boolean;
-    promptGenerationId?: string;
-  },
+  options: ReplayExportBuildOptions,
 ): Record<string, unknown> {
-  const { includeSkips, includeUserPrompt, promptGenerationId } = options;
+  const {
+    includeSkips,
+    includeUserPrompt,
+    promptGenerationId,
+    profile = "full",
+  } = options;
+  const auditProfile = profile === "audit";
   const playerMap = new Map(room.players.map((p) => [p.id, p]));
   const seatMap = new Map(room.players.map((p) => [p.id, p.seatNo]));
 
@@ -234,30 +264,63 @@ export function buildReplayExportData(
   const rounds = [...roundMap.values()];
 
   const stripAiCall = (call: AiCallLog) => {
-    const base = {
-      callType: call.callType,
-      aiPlayerName: call.aiPlayerName,
-      aiPlayerSeatNo: call.aiPlayerSeatNo,
-      modelName: call.modelName,
-      rawResponse: call.rawResponse,
-      createdAt: call.createdAt,
-    };
-    if (includeUserPrompt) {
-      return { ...base, userPrompt: call.userPrompt };
+    if (!auditProfile) {
+      const base = {
+        callType: call.callType,
+        aiPlayerName: call.aiPlayerName,
+        aiPlayerSeatNo: call.aiPlayerSeatNo,
+        modelName: call.modelName,
+        rawResponse: call.rawResponse,
+        createdAt: call.createdAt,
+      };
+      return includeUserPrompt
+        ? { ...base, userPrompt: call.userPrompt }
+        : base;
     }
-    return base;
+    return {
+      callType: call.callType,
+      rawResponse: call.rawResponse,
+    };
   };
 
-  return {
-    roomId: room.id,
-    ...(promptGenerationId ? { promptGenerationId } : {}),
-    winner: room.winner,
-    currentRound: room.currentRound,
-    config: room.config,
-    players: room.players
-      .slice()
-      .sort((a, b) => a.seatNo - b.seatNo)
-      .map((p) => ({
+  const config = auditProfile
+    ? {
+        maxHumanPlayers: room.config.maxHumanPlayers,
+        aiPlayerCount: room.config.aiPlayerCount,
+        maxRounds: room.config.maxRounds,
+        speakCooldownMs: room.config.speakCooldownMs,
+      }
+    : room.config;
+
+  const buildMessage = (item: Extract<TimelineItem, { type: "message" }>) => {
+    const base: Record<string, unknown> = auditProfile
+      ? {
+          seatNo: seatMap.get(item.msg.playerId) ?? "?",
+          playerName: item.msg.playerName,
+          content: item.msg.content,
+          source: item.msg.source ?? null,
+          createdAt: formatTimestampToSecond(item.msg.createdAt),
+        }
+      : {
+          seatNo: seatMap.get(item.msg.playerId) ?? "?",
+          playerName: item.msg.playerName,
+          content: item.msg.content,
+          source: item.msg.source ?? null,
+          createdAt: item.msg.createdAt,
+        };
+    const calls = item.aiCalls.map(stripAiCall);
+    if (auditProfile) {
+      if (calls.length > 0) {
+        base.aiCalls = calls;
+      }
+      return base;
+    }
+    return { ...base, aiCalls: calls };
+  };
+
+  const buildPlayer = (p: PublicPlayer) => {
+    if (!auditProfile) {
+      return {
         seatNo: p.seatNo,
         name: p.name,
         revealedType: p.revealedType ?? null,
@@ -266,21 +329,36 @@ export function buildReplayExportData(
         aiPersonaName: p.aiPersonaName ?? null,
         status: p.status,
         eliminatedRound: p.eliminatedRound ?? null,
-      })),
+      };
+    }
+    return {
+      seatNo: p.seatNo,
+      name: p.name,
+      revealedType: p.revealedType ?? null,
+      simulated: p.simulated ?? false,
+      aiPersonaName: p.aiPersonaName ?? null,
+      status: p.status,
+      eliminatedRound: p.eliminatedRound ?? null,
+    };
+  };
+
+  return {
+    roomId: room.id,
+    ...(promptGenerationId ? { promptGenerationId } : {}),
+    winner: room.winner,
+    currentRound: room.currentRound,
+    config,
+    players: room.players
+      .slice()
+      .sort((a, b) => a.seatNo - b.seatNo)
+      .map(buildPlayer),
     rounds: rounds.map((r) => {
       const timeline = buildTimeline(r.messages, r.votes, r.aiCalls, playerMap);
       const messages: Record<string, unknown>[] = [];
       const voteRounds: { votes: Record<string, unknown>[] }[] = [];
       for (const item of timeline) {
         if (item.type === "message") {
-          messages.push({
-            seatNo: seatMap.get(item.msg.playerId) ?? "?",
-            playerName: item.msg.playerName,
-            content: item.msg.content,
-            source: item.msg.source ?? null,
-            createdAt: item.msg.createdAt,
-            aiCalls: item.aiCalls.map(stripAiCall),
-          });
+          messages.push(buildMessage(item));
         } else if (item.type === "skip" && includeSkips) {
           let reason = "";
           try {
@@ -289,13 +367,23 @@ export function buildReplayExportData(
           } catch {
             /* ignore */
           }
-          messages.push({
-            type: "skip",
-            seatNo: item.call.aiPlayerSeatNo,
-            playerName: item.call.aiPlayerName,
-            reason,
-            createdAt: item.call.createdAt,
-          });
+          messages.push(
+            auditProfile
+              ? {
+                  type: "skip",
+                  seatNo: item.call.aiPlayerSeatNo,
+                  playerName: item.call.aiPlayerName,
+                  reason,
+                  createdAt: formatTimestampToSecond(item.call.createdAt),
+                }
+              : {
+                  type: "skip",
+                  seatNo: item.call.aiPlayerSeatNo,
+                  playerName: item.call.aiPlayerName,
+                  reason,
+                  createdAt: item.call.createdAt,
+                },
+          );
         } else if (item.type === "voteRound") {
           const voteCallMap = new Map(
             item.aiCalls.map((c) => [c.aiPlayerId, c.id]),
@@ -306,11 +394,21 @@ export function buildReplayExportData(
               const voterCall = voterCallId
                 ? item.aiCalls.find((c) => c.id === voterCallId)
                 : undefined;
+              const base = auditProfile
+                ? {
+                    voterSeatNo: seatMap.get(v.voterPlayerId) ?? "?",
+                    voterName: playerMap.get(v.voterPlayerId)?.name ?? "?",
+                    targetSeatNo: seatMap.get(v.targetPlayerId) ?? "?",
+                    targetName: playerMap.get(v.targetPlayerId)?.name ?? "?",
+                  }
+                : {
+                    voterSeatNo: seatMap.get(v.voterPlayerId) ?? "?",
+                    voterName: playerMap.get(v.voterPlayerId)?.name ?? "?",
+                    targetSeatNo: seatMap.get(v.targetPlayerId) ?? "?",
+                    targetName: playerMap.get(v.targetPlayerId)?.name ?? "?",
+                  };
               return {
-                voterSeatNo: seatMap.get(v.voterPlayerId) ?? "?",
-                voterName: playerMap.get(v.voterPlayerId)?.name ?? "?",
-                targetSeatNo: seatMap.get(v.targetPlayerId) ?? "?",
-                targetName: playerMap.get(v.targetPlayerId)?.name ?? "?",
+                ...base,
                 ...(voterCall ? { aiCall: stripAiCall(voterCall) } : {}),
               };
             }),

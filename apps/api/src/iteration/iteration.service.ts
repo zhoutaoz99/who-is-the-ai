@@ -28,7 +28,10 @@ import {
 import { GameService } from "../game/game.service";
 import type { RoomSnapshot } from "../game/game.types";
 import { PostgresService } from "../data/postgres.service";
-import { buildReplayExportData } from "../replay/replay-export.builder";
+import {
+  buildReplayExportData,
+  DEFAULT_REPLAY_MODEL_INPUT_OPTIONS,
+} from "../replay/replay-export.builder";
 import { ReplayService } from "../replay/replay.service";
 import {
   aggregateAssessments,
@@ -473,11 +476,7 @@ export class IterationService implements OnModuleInit {
     const room = obs?.room;
     if (!room) return { ok: false, error: "房间不存在" };
     const aiCallLogs = await this.replayService.getAiCallLogs(roomId);
-    const replay = buildReplayExportData(room, aiCallLogs, {
-      includeSkips: true,
-      includeUserPrompt: false,
-      promptGenerationId: room.promptGenerationId,
-    });
+    const replay = this.buildScoringReplay(room, aiCallLogs);
     const scoreGenerationId =
       (await this.findScoreGenerationId(roomId)) ?? this.evalPrompts.getActiveGenerationId();
     const system = await this.evalPrompts.getPromptForGeneration(
@@ -1101,11 +1100,11 @@ export class IterationService implements OnModuleInit {
       onProgress?.({ ...base });
 
       const aiCallLogs = await this.replayService.getAiCallLogs(roomId);
-      const replay = buildReplayExportData(finished, aiCallLogs, {
-        includeSkips: true,
-        includeUserPrompt: false,
-        promptGenerationId: base.generationId ?? undefined,
-      });
+      const replay = this.buildScoringReplay(
+        finished,
+        aiCallLogs,
+        base.generationId ?? undefined,
+      );
 
       // scoreReplay 内部用 buildScoreUserPrompt 注入 user 模板 + 该局 AI 人格定义。
       const scoreGenerationId = this.evalPrompts.getActiveGenerationId();
@@ -1220,6 +1219,17 @@ export class IterationService implements OnModuleInit {
       options,
     );
     return parseAssessmentText(content);
+  }
+
+  private buildScoringReplay(
+    room: RoomSnapshot,
+    aiCallLogs: Awaited<ReturnType<ReplayService["getAiCallLogs"]>>,
+    promptGenerationId = room.promptGenerationId,
+  ): Record<string, unknown> {
+    return buildReplayExportData(room, aiCallLogs, {
+      ...DEFAULT_REPLAY_MODEL_INPUT_OPTIONS,
+      promptGenerationId,
+    });
   }
 
   /** 打分 user 消息:复盘 JSON + 本局 AI 人格定义(让模型能判 sampleLineCopy/templatePhrase 等 tell)。 */

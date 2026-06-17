@@ -176,7 +176,7 @@ flowchart TD
   STAMP --> RUN["游戏由服务端定时器自动推进<br/>讨论→投票→淘汰→下一轮→结束"]
   RUN --> POLL["轮询 observeRoom(roomId)<br/>每 2.5s,直到 status=finished"]
   POLL -.卡死检测.-> STUCK["phase=playing 且<br/>phaseEndsAt 过期 >90s<br/>→ 判该局失败(不阻塞 run)"]
-  POLL -->|finished| EXP["buildReplayExportData<br/>(snapshot + getAiCallLogs)<br/>→ replay JSON"]
+  POLL -->|finished| EXP["buildReplayExportData<br/>(snapshot + getAiCallLogs + 默认 replay 开关)<br/>→ replay JSON"]
   EXP --> EVAL["读取当前 active 评估尺子代<br/>→ scoreGenerationId"]
   EVAL --> SC["aiService.callModel<br/>(score system + user template, replay)<br/>→ JSON 分数"]
   SC --> RES["返回 {roomId, winner,<br/>generationId, scoreGenerationId,<br/>humanLikeScore, aiWin}"]
@@ -184,6 +184,7 @@ flowchart TD
 
 说明:
 - **双版本感知**:每局开局盖戳 `promptGenerationId`;进入打分前再记录 `scoreGenerationId`。前者回答“这局 AI 当时跑的是哪一代”,后者回答“这局后来是按哪套评估尺子打的分”。
+- **导出口径统一**:自动迭代打分复用复盘页默认导出配置 `includeSkips=true`、`includeUserPrompt=false`、`profile="audit"`;因此迭代打分看到的 replay JSON 与复盘页默认预览/单局审计输入保持同口径。
 - **卡死兜底**:服务端进程若在对局中途重启(如 `nest --watch` 重编译),内存定时器丢失会致对局卡住;单局判失败并记 `error`,不影响整轮。
 
 ---

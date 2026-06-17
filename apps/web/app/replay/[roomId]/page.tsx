@@ -378,117 +378,6 @@ function buildTimeline(
   return items;
 }
 
-function buildReplayExportData(
-  room: NonNullable<ReplayData["room"]>,
-  aiCallLogs: AiCallLog[],
-  includeSkips: boolean,
-  includeUserPrompt: boolean,
-) {
-  const playerMap = new Map(room.players.map((p) => [p.id, p]));
-  const seatMap = new Map(room.players.map((p) => [p.id, p.seatNo]));
-
-  const roundMap = new Map<number, { roundNo: number; messages: PublicMessage[]; votes: PublicVoteResult[]; aiCalls: AiCallLog[] }>();
-  const maxRound = Math.max(room.currentRound, ...aiCallLogs.map((l) => l.roundNo), 1);
-  for (let r = 1; r <= maxRound; r++) {
-    roundMap.set(r, { roundNo: r, messages: [], votes: [], aiCalls: [] });
-  }
-  for (const msg of room.messages) {
-    roundMap.get(msg.roundNo)?.messages.push(msg);
-  }
-  for (const vote of room.voteResults) {
-    roundMap.get(vote.roundNo)?.votes.push(vote);
-  }
-  for (const call of aiCallLogs) {
-    roundMap.get(call.roundNo)?.aiCalls.push(call);
-  }
-  const rounds = [...roundMap.values()];
-
-  const stripAiCall = (call: AiCallLog) => {
-    const base = {
-      callType: call.callType,
-      aiPlayerName: call.aiPlayerName,
-      aiPlayerSeatNo: call.aiPlayerSeatNo,
-      modelName: call.modelName,
-      rawResponse: call.rawResponse,
-      createdAt: call.createdAt,
-    };
-    if (includeUserPrompt) {
-      return { ...base, userPrompt: call.userPrompt };
-    }
-    return base;
-  };
-
-  return {
-    roomId: room.id,
-    winner: room.winner,
-    currentRound: room.currentRound,
-    config: room.config,
-    players: room.players
-      .slice()
-      .sort((a, b) => a.seatNo - b.seatNo)
-      .map((p) => ({
-        seatNo: p.seatNo,
-        name: p.name,
-        revealedType: p.revealedType ?? null,
-        simulated: p.simulated ?? false,
-        aiPersonaId: p.aiPersonaId ?? null,
-        aiPersonaName: p.aiPersonaName ?? null,
-        status: p.status,
-        eliminatedRound: p.eliminatedRound ?? null,
-      })),
-    rounds: rounds.map((r) => {
-      const timeline = buildTimeline(r.messages, r.votes, r.aiCalls, playerMap);
-      const messages: Record<string, unknown>[] = [];
-      const voteRounds: { votes: Record<string, unknown>[] }[] = [];
-      for (const item of timeline) {
-        if (item.type === "message") {
-          messages.push({
-            seatNo: seatMap.get(item.msg.playerId) ?? "?",
-            playerName: item.msg.playerName,
-            content: item.msg.content,
-            source: item.msg.source ?? null,
-            createdAt: item.msg.createdAt,
-            aiCalls: item.aiCalls.map(stripAiCall),
-          });
-        } else if (item.type === "skip" && includeSkips) {
-          let reason = "";
-          try {
-            const parsed = JSON.parse(item.call.rawResponse);
-            reason = parsed.reason ?? "";
-          } catch { /* ignore */ }
-          messages.push({
-            type: "skip",
-            seatNo: item.call.aiPlayerSeatNo,
-            playerName: item.call.aiPlayerName,
-            reason,
-            createdAt: item.call.createdAt,
-          });
-        } else if (item.type === "voteRound") {
-          const voteCallMap = new Map(item.aiCalls.map((c) => [c.aiPlayerId, c.id]));
-          voteRounds.push({
-            votes: item.votes.map((v) => {
-              const voterCallId = voteCallMap.get(v.voterPlayerId);
-              const voterCall = voterCallId ? item.aiCalls.find((c) => c.id === voterCallId) : undefined;
-              return {
-                voterSeatNo: seatMap.get(v.voterPlayerId) ?? "?",
-                voterName: playerMap.get(v.voterPlayerId)?.name ?? "?",
-                targetSeatNo: seatMap.get(v.targetPlayerId) ?? "?",
-                targetName: playerMap.get(v.targetPlayerId)?.name ?? "?",
-                ...(voterCall ? { aiCall: stripAiCall(voterCall) } : {}),
-              };
-            }),
-          });
-        }
-      }
-      return {
-        roundNo: r.roundNo,
-        messages,
-        votes: voteRounds[0] ?? { votes: [] },
-      };
-    }),
-  };
-}
-
 function downloadJson(data: unknown, filename: string) {
   const blob = new Blob([JSON.stringify(data, null, 2)], {
     type: "application/json",
@@ -699,8 +588,9 @@ export default function ReplayPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [localPrompts, setLocalPrompts] = useState<Record<string, string>>({});
-  const [showSkips, setShowSkips] = useState(false);
-  const [includeUserPrompt, setIncludeUserPrompt] = useState(true);
+  const [showSkips, setShowSkips] = useState(true);
+  const [includeUserPrompt, setIncludeUserPrompt] = useState(false);
+  const [compactReplayData, setCompactReplayData] = useState(true);
   const [analysisText, setAnalysisText] = useState<string | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -709,7 +599,7 @@ export default function ReplayPage() {
 
   const [showPreview, setShowPreview] = useState(false);
   const [previewData, setPreviewData] = useState<unknown | null>(null);
-  const [previewSource, setPreviewSource] = useState<"db" | "local" | null>(null);
+  const [previewSource, setPreviewSource] = useState<"db" | "server" | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewSaving, setPreviewSaving] = useState(false);
   const [previewMessage, setPreviewMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -743,43 +633,27 @@ export default function ReplayPage() {
 
   useEffect(() => {
     if (!showPreview) return;
-    const activeRoom = data?.room;
-    const activeLogs = data?.aiCallLogs ?? [];
-    if (!activeRoom) return;
+    const activeRoomId = data?.room?.id;
+    if (!activeRoomId) return;
 
     let cancelled = false;
     setPreviewLoading(true);
     setPreviewMessage(null);
 
-    fetch(`${API_URL}/replay/export/${activeRoom.id}`)
-      .then((res) => res.json())
-      .then(
-        (json: {
-          ok: boolean;
-          exists?: boolean;
-          data?: unknown;
-          includeSkips?: boolean;
-          includeUserPrompt?: boolean;
-        }) => {
-          if (cancelled) return;
-          if (json.exists) {
-            setPreviewData(json.data ?? null);
-            setPreviewSource("db");
-          } else {
-            setPreviewData(
-              buildReplayExportData(activeRoom, activeLogs, showSkips, includeUserPrompt),
-            );
-            setPreviewSource("local");
-          }
-        },
-      )
+    fetchReplayExport(activeRoomId)
+      .then((replay) => {
+        if (cancelled) return;
+        setPreviewData(replay);
+        setPreviewSource("server");
+      })
       .catch((err) => {
-        if (!cancelled) {
-          setPreviewMessage({
-            type: "error",
-            text: err instanceof Error ? err.message : "查询数据库失败",
-          });
-        }
+        if (cancelled) return;
+        setPreviewData(null);
+        setPreviewSource(null);
+        setPreviewMessage({
+          type: "error",
+          text: err instanceof Error ? err.message : "生成预览失败",
+        });
       })
       .finally(() => {
         if (!cancelled) setPreviewLoading(false);
@@ -788,9 +662,7 @@ export default function ReplayPage() {
     return () => {
       cancelled = true;
     };
-    // 仅在展开预览时重新查询数据库；其余输入在展开时已是最新，避免开关变化触发重复查询
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPreview]);
+  }, [showPreview, data?.room?.id, showSkips, includeUserPrompt, compactReplayData]);
 
   if (loading) {
     return (
@@ -833,10 +705,32 @@ export default function ReplayPage() {
   }
   const rounds = [...roundMap.values()];
 
-  function refreshPreviewFromToggles(skips: boolean, userPrompt: boolean) {
-    setPreviewData(buildReplayExportData(room, aiCallLogs, skips, userPrompt));
-    setPreviewSource("local");
-    setPreviewMessage(null);
+  function buildReplayExportUrl(targetRoomId: string) {
+    const params = new URLSearchParams({
+      includeSkips: String(showSkips),
+      includeUserPrompt: String(includeUserPrompt),
+      profile: compactReplayData ? "audit" : "full",
+    });
+    return `${API_URL}/replay/${targetRoomId}/export?${params.toString()}`;
+  }
+
+  async function fetchReplayExport(
+    targetRoomId: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    const res = await fetch(buildReplayExportUrl(targetRoomId), { signal });
+    const json = (await res.json()) as {
+      ok: boolean;
+      data?: unknown;
+      error?: string;
+    };
+    if (!res.ok || !json.ok) {
+      throw new Error(json.error ?? "生成 replay JSON 失败");
+    }
+    if (json.data === undefined || json.data === null) {
+      throw new Error("后端 replay JSON 为空");
+    }
+    return json.data;
   }
 
   function handleExportPreview() {
@@ -889,9 +783,8 @@ export default function ReplayPage() {
     setAnalysisText(null);
     setAnalysisInterrupted(false);
 
-    const replay = buildReplayExportData(room, aiCallLogs, true, true);
-
     try {
+      const replay = await fetchReplayExport(room.id, abortController.signal);
       const res = await fetch(`${API_URL}/replay/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -976,7 +869,6 @@ export default function ReplayPage() {
               onChange={(e) => {
                 const v = e.target.checked;
                 setShowSkips(v);
-                if (showPreview) refreshPreviewFromToggles(v, includeUserPrompt);
               }}
             />
             <span className="replay-toggle-slider" />
@@ -989,11 +881,22 @@ export default function ReplayPage() {
               onChange={(e) => {
                 const v = e.target.checked;
                 setIncludeUserPrompt(v);
-                if (showPreview) refreshPreviewFromToggles(showSkips, v);
               }}
             />
             <span className="replay-toggle-slider" />
             <span className="replay-toggle-label">导出用户提示词</span>
+          </label>
+          <label className="replay-toggle-switch">
+            <input
+              type="checkbox"
+              checked={compactReplayData}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setCompactReplayData(v);
+              }}
+            />
+            <span className="replay-toggle-slider" />
+            <span className="replay-toggle-label">精简数据</span>
           </label>
           <button
             className="replay-analyze-btn"
@@ -1040,12 +943,13 @@ export default function ReplayPage() {
             <h2>预览</h2>
             {previewSource && (
               <span className={`replay-preview-source-badge ${previewSource}`}>
-                {previewSource === "db" ? "来自数据库" : "本地生成"}
+                {previewSource === "db" ? "来自数据库" : "后端生成"}
               </span>
             )}
             <span className="replay-preview-toggles-summary">
               Skip 记录：{showSkips ? "显示" : "隐藏"} · 用户提示词：
-              {includeUserPrompt ? "导出" : "不导出"}
+              {includeUserPrompt ? "导出" : "不导出"} · 数据：
+              {compactReplayData ? "精简" : "完整"}
             </span>
             <label className="replay-toggle-switch">
               <input
@@ -1082,7 +986,7 @@ export default function ReplayPage() {
           </div>
 
           {previewLoading && (
-            <div className="replay-analysis-status">查询数据库中...</div>
+            <div className="replay-analysis-status">后端生成预览中...</div>
           )}
           {previewMessage && (
             <div className={`replay-preview-message ${previewMessage.type}`}>

@@ -77,7 +77,7 @@ export class ReplayController {
     } catch (error) {
       if (!abortController.signal.aborted && !res.writableEnded) {
         const message = error instanceof Error ? error.message : String(error);
-        res.write(`\n\n复盘分析失败：${message}`);
+        res.write(`\n\n单局审计失败：${message}`);
       }
     } finally {
       completed = true;
@@ -113,6 +113,7 @@ export class ReplayController {
     @Param("roomId") roomId: string,
     @Query("includeSkips") includeSkips?: string,
     @Query("includeUserPrompt") includeUserPrompt?: string,
+    @Query("profile") profile?: string,
   ) {
     const normalized = normalizeRoomId(roomId);
     const result = await this.postgres.query<RoomRow>(
@@ -129,6 +130,7 @@ export class ReplayController {
       includeSkips: includeSkips !== "false",
       includeUserPrompt: includeUserPrompt === "true",
       promptGenerationId: room.promptGenerationId,
+      profile: profile === "audit" ? "audit" : "full",
     });
     return { ok: true, data };
   }

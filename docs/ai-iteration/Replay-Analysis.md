@@ -53,35 +53,53 @@
 
 ## 3. 数据来源
 
-单局审计以“复盘导出 JSON”为输入。该 JSON 有两个等价的构造来源：
+单局审计以“复盘导出 JSON”为输入。该 JSON 只有一个构造来源：后端 `apps/api/src/replay/replay-export.builder.ts`。前端不再维护导出 JSON 构造逻辑，只负责按当前开关向后端请求 JSON 并展示/导出/提交。
 
-**前端构造**(复盘页“导出 JSON”与单局审计共用)：
+**前端页面展示用 timeline**(不作为导出/模型输入来源)：
 
 - `apps/web/app/replay/[roomId]/page.tsx`
-- `buildReplayExportData(room, aiCallLogs, includeSkips, includeUserPrompt)`
-- `buildTimeline(...)`：按 `round_no` + 玩家 + 时间序做 index 匹配，把 `speech-strategy` / `speech-expression` / `sim-human-speech` 调用挂到对应消息，并交织 skip 记录。
+- `buildTimeline(...)`：仅用于页面逐轮回放展示，按 `round_no` + 玩家 + 时间序做 index 匹配，把 `speech-strategy` / `speech-expression` / `sim-human-speech` 调用挂到对应消息，并交织 skip 记录。
 
-**服务端构造**(供无头评估闭环与外部脚本拉取，逻辑与前端一致)：
+**后端构造**(预览、导出、保存、单局审计、无头评估闭环与外部脚本共用)：
 
-- `apps/api/src/replay/replay-export.builder.ts`：`buildReplayExportData(snapshot, aiCallLogs, { includeSkips, includeUserPrompt, promptGenerationId })`
-- 数据源：`GET /replay/:roomId` 返回的 `{ room: snapshot, aiCallLogs }`(`replay.service.getAiCallLogs` 取 `ai_call_logs`)。
+- `apps/api/src/replay/replay-export.builder.ts`：`buildReplayExportData(snapshot, aiCallLogs, { includeSkips, includeUserPrompt, promptGenerationId, profile })`
+- 数据源：`game_rooms.room_data` 经 `toRoomSnapshot(room)` 生成 snapshot，`ReplayService.getAiCallLogs(roomId)` 读取 `ai_call_logs`。
 
-单局审计固定使用：
+复盘页的预览、导出、保存到数据库和单局审计请求都使用同一套当前开关构造 replay JSON。默认值为：
 
 - `includeSkips: true`
-- `includeUserPrompt: true`
+- `includeUserPrompt: false`
+- `profile: "audit"`
 
-这样模型可以看到 skip 记录和 AI 用户提示词，便于定位阶段错乱、执行异常、明显异常输出与直接成因。
+自动对局评估自迭代中的单局打分也复用这套默认导出配置,保证复盘页默认预览、单局审计输入和自动迭代打分看到的 replay JSON 口径一致。
+
+这样默认情况下，预览/导出的 JSON 与发给大模型的 replay JSON 保持一致：模型可以看到 skip 记录、消息、投票和模型原始响应，但不会把每次 AI 调用的用户提示词、模型名、debug 模型列表、人格全集等高噪声字段塞进 replay JSON。该局实际运行的 AI 提示词与人格库仍由 `ReplayService.buildReplayAnalysisPrompt` 单独按版本注入，避免在 replay JSON 里重复出现。
+
+审计用 `profile: "audit"` 会保留：
+
+- `roomId` / `promptGenerationId` / `winner` / `currentRound`。
+- 必要规则配置：人数、AI 数、最大轮次、发言冷却。
+- 玩家姓名、座位、阵营揭示、模拟真人标记、AI 人格名、存活/淘汰信息。
+- 每轮消息的玩家名、座位号、内容、来源、时间。
+- skip 记录的玩家名、座位号、原因、时间。
+- 投票记录的投票玩家名/座位号、目标玩家名/座位号。
+- 与消息或投票直接相关的 AI 调用 `callType` 与 `rawResponse`。
+- 所有导出时间统一裁剪到秒级，去掉毫秒噪声。
+
+审计用 `profile: "audit"` 会去掉：
+
+- `userPrompt` / `templatePrompt`。
+- `modelName` / `temperature` / `reasoningEffort`。
+- `config.aiPersonas` / `config.availableModels` / `config.rewardPool` / `discussionDurationMs` / `voteDurationMs`。
+- AI 调用里的玩家名与座位冗余字段。
+- `players[].aiPersonaId`。
+- 空的 `messages[].aiCalls`。
+
+如果关闭“精简数据”，预览/导出/保存/单局审计都会使用 full profile；如果再打开“导出用户提示词”，模型输入也会包含单次 AI 调用的 `userPrompt`。这保证页面看到的 replay JSON 与模型收到的 replay JSON 一致，不再做后端隐式字段删减。
 
 服务端导出的 JSON 顶层额外带 `promptGenerationId`(本局开局时生效的 AI 提示词版本代号，见下方“版本感知审计”)。
 
-注意三方来源的字段差异：
-
-- **前端构造**(`apps/web` 的 `buildReplayExportData`)**不含** `promptGenerationId`。
-- 前端“保存到数据库”走 `POST /replay/export/:roomId`，存的是前端本地构造的 data，因此**数据库里这条导出也不含** `promptGenerationId`。
-- 只有**服务端导出** `GET /replay/:roomId/export` 构造的 JSON 才带 `promptGenerationId`。
-
-单局审计(`/replay/analyze`)对此做了兜底：即使提交的 replay JSON 没带 `promptGenerationId`(前端单局审计正是如此)，也会按 `roomId` 回查 `game_rooms.room_data` 补全，再退到当前 active 代(见“版本感知审计”的回退链)。
+因为复盘页也统一使用后端导出，所以预览、导出和单局审计请求里的 replay JSON 都会带 `promptGenerationId`。`/replay/analyze` 仍保留兜底：如果外部调用方提交的 replay JSON 缺少 `promptGenerationId`，会按 `roomId` 回查 `game_rooms.room_data` 补全，再退到当前 active 代(见“版本感知审计”的回退链)。
 
 ## 4. 后端接口
 
@@ -120,6 +138,12 @@ GET /replay/:roomId/export?includeSkips=true&includeUserPrompt=true
 
 返回 `{ ok, data }`，`data` 即上述服务端构造的导出 JSON(含 `promptGenerationId`)。
 
+如需直接拉取单局审计用瘦身 JSON，可加 `profile=audit`：
+
+```http
+GET /replay/:roomId/export?includeSkips=true&includeUserPrompt=false&profile=audit
+```
+
 ## 5. 流式输出
 
 后端 `ReplayController.streamAnalyzeReplay` 会：
@@ -132,8 +156,8 @@ GET /replay/:roomId/export?includeSkips=true&includeUserPrompt=true
 
 前端 `handleAnalyzeReplay` 会：
 
-1. 构造复盘导出 JSON：`buildReplayExportData(room, aiCallLogs, true, true)`(两个开关固定 `true`，不受头部开关影响)。
-2. 使用 `fetch` 请求 `POST /replay/analyze`。
+1. 按当前页面开关调用 `GET /replay/:roomId/export?includeSkips=...&includeUserPrompt=...&profile=...` 取得后端构造的 replay JSON。
+2. 使用该 JSON 请求 `POST /replay/analyze`。
 3. 通过 `response.body.getReader()` 读取流。
 4. 持续追加文本到 `analysisText`。
 5. 使用 `AbortController` 支持中断。
@@ -232,21 +256,22 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 
 复盘页(`apps/web/app/replay/[roomId]/page.tsx`)头部操作区有三组控件：导出开关、单局审计、预览/导航。
 
-### 9.1 头部开关(控制预览/导出，不影响单局审计)
+### 9.1 头部开关(控制预览/导出/单局审计)
 
-两个 toggle 开关：
+三个 toggle 开关：
 
-- **显示 Skip 记录** → `showSkips`(默认 `false`)
-- **导出用户提示词** → `includeUserPrompt`(默认 `true`)
+- **显示 Skip 记录** → `showSkips`(默认 `true`)
+- **导出用户提示词** → `includeUserPrompt`(默认 `false`)
+- **精简数据** → `compactReplayData`(默认 `true`，即 `profile="audit"`)
 
-这两个开关**只影响预览面板和导出 JSON**；单局审计固定用 `includeSkips=true / includeUserPrompt=true`(见下)，与开关状态无关。开关变化时若预览已展开，会调 `refreshPreviewFromToggles` 本地重建预览。
+这三个开关同时影响预览面板、导出 JSON、保存到数据库和单局审计请求。开关变化时若预览已展开，前端会重新请求后端导出接口刷新预览。
 
 ### 9.2 单局审计
 
 `handleAnalyzeReplay` 流程：
 
 1. 若正在分析，点按钮即 `abort` 中断。
-2. 本地构造 `replay = buildReplayExportData(room, aiCallLogs, true, true)`(硬编码两个 `true`，不受头部开关影响)。
+2. `fetchReplayExport(room.id)` 调后端导出接口，取得与当前预览/导出开关一致的 replay JSON。
 3. `fetch` 请求 `POST /replay/analyze`，带 `AbortController`。
 4. `response.body.getReader()` 读取流，逐 chunk 追加到 `analysisText`。
 5. 中断时 `analysisInterrupted=true`；失败写 `analysisError`。
@@ -263,38 +288,37 @@ REPLAY_ANALYSIS_TIMEOUT_MS=300000
 
 ### 9.3 预览 + 保存到数据库
 
-预览面板(`replay-preview-section`)由“预览”按钮切换，用于在导出/保存前检查 JSON。展开时(`showPreview=true`)的 `useEffect`：
+预览面板(`replay-preview-section`)由“预览”按钮切换，用于在导出/保存/单局审计前检查 JSON。展开时(`showPreview=true`)的 `useEffect`：
 
-1. `GET /replay/export/:roomId` 查数据库是否已存导出。
-2. `exists` → 用数据库 data，`previewSource = "db"`(徽标“来自数据库”)。
-3. 否则 → 本地 `buildReplayExportData(room, aiCallLogs, showSkips, includeUserPrompt)`，`previewSource = "local"`(徽标“本地生成”)。
-4. 查询失败 → `previewMessage`(error)。
+1. 调 `GET /replay/:roomId/export?includeSkips=...&includeUserPrompt=...&profile=...`。
+2. `previewSource = "server"`(徽标“后端生成”)。
+3. 任何开关变化都会重新请求后端导出，保证预览、导出、保存和单局审计输入一致。
 
-头部开关变化时 `refreshPreviewFromToggles` 用本地重建覆盖预览，`previewSource` 重置为 `"local"`。
+头部开关变化时预览会重新请求后端导出接口。
 
 工具栏(`replay-preview-toolbar`)两个动作：
 
 - **导出 JSON** → `handleExportPreview` → `downloadJson(previewData, replay-<roomId>.json)`。
-- **保存到数据库** → `handleSavePreviewToDatabase` → `POST /replay/export/:roomId`，body `{ data: previewData, includeSkips, includeUserPrompt }`；成功后 `previewSource` 置 `"db"` 并提示“已保存到数据库”。
+- **保存到数据库** → `handleSavePreviewToDatabase` → `POST /replay/export/:roomId`，body `{ data: previewData, includeSkips, includeUserPrompt }`；保存的是当前后端导出的数据。成功后 `previewSource` 置 `"db"` 并提示“已保存到数据库”。
 
-> 前端保存进数据库的 data 是本地构造的，**不含 `promptGenerationId`**(见“数据来源”的字段差异)。需要带版本代号的导出请用服务端 `GET /replay/:roomId/export`。
+> 由于预览数据来自后端导出，保存进数据库的 data 也会带 `promptGenerationId`。
 
 预览头部还显示当前开关摘要(`replay-preview-toggles-summary`)与“自动换行”开关(`previewWrap`)。
 
-相关状态：`showPreview`、`previewData`、`previewSource`(`"db" | "local" | null`)、`previewLoading`、`previewSaving`、`previewMessage`、`previewWrap`。
+相关状态：`showPreview`、`previewData`、`previewSource`(`"db" | "server" | null`)、`previewLoading`、`previewSaving`、`previewMessage`、`previewWrap`。
 
 ### 9.4 相关样式
 
 `apps/web/app/styles/replay.css`（由 `globals.css` 统一 `@import`，前台样式已按页面拆分）：
 
 - 单局审计：`.replay-analyze-btn`、`.replay-analysis-section`、`.replay-analysis-status`、`.replay-analysis-content`
-- 预览：`.replay-preview-section`、`.replay-preview-head`、`.replay-preview-source-badge`(含 `.db`/`.local`)、`.replay-preview-toggles-summary`、`.replay-preview-toolbar`、`.replay-preview-message`(含 `.success`/`.error`)、`.replay-preview-active`、`.replay-preview-close-btn`
+- 预览：`.replay-preview-section`、`.replay-preview-head`、`.replay-preview-source-badge`(含 `.db`/`.server`)、`.replay-preview-toggles-summary`、`.replay-preview-toolbar`、`.replay-preview-message`(含 `.success`/`.error`)、`.replay-preview-active`、`.replay-preview-close-btn`
 - 通用开关：`.replay-toggle-switch`、`.replay-toggle-slider`、`.replay-toggle-label`
 - 错误：`.replay-debug-error`
 
 ## 10. 请求体大小
 
-因为复盘 JSON 默认包含 AI 用户提示词，体积可能较大。
+预览/导出的完整 replay JSON 可选择包含 AI 用户提示词，体积可能较大。单局审计请求使用 audit profile，不包含单次 AI 调用的 `userPrompt`，请求体通常明显更小。
 
 API 在 `apps/api/src/main.ts` 中将 JSON body limit 调整为 `5mb`：
 
