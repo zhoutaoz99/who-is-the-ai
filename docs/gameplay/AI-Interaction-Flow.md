@@ -7,9 +7,9 @@
 | 适用范围 | 普通对局中的 AI 玩家交互流程，以及同一实现中的模拟真人分支设计 |
 | 目标读者 | 后端开发、评审者 |
 | 责任人 | AI / Gameplay 维护者 |
-| 最近核对日期 | 2026-06-15 |
+| 最近核对日期 | 2026-06-19 |
 | 关联代码 | `apps/api/src/game/game.service.ts`、`apps/api/src/ai/ai.service.ts`、`apps/api/src/ai/ai.types.ts`、`apps/api/src/ai/ai.personas.ts`、`apps/api/src/ai/prompts/` |
-| 关联文档 | [游戏玩法](./Gameplay.md)、[AI 发言调度](./AI-Scheduling.md)、[AI 提示词缓存优化](./AI-Prompt-Cache-Optimization.md)、[AI 自动对抗调试房](../ai-iteration/AI-Auto-Adversarial-Match.md)、[AI 提示词自动对局评估自迭代：详细逻辑](../ai-iteration/AI-Prompt-Eval-Details.md) |
+| 关联文档 | [游戏玩法](./Gameplay.md)、[AI 拟人化设计](./AI-Human-Likeness-Design.md)、[AI 发言调度](./AI-Scheduling.md)、[AI 提示词缓存优化](./AI-Prompt-Cache-Optimization.md)、[AI 自动对抗调试房](../ai-iteration/AI-Auto-Adversarial-Match.md)、[AI 提示词自动对局评估自迭代：详细逻辑](../ai-iteration/AI-Prompt-Eval-Details.md) |
 
 ## 1. 背景
 
@@ -264,6 +264,8 @@ castAiVote(roomId, aiPlayerId)
 - `shortMemory` 仅给自己看，不进入公开快照。
 
 ### 6.6 人格系统
+
+更完整的人格、短期记忆与 prompt 版本化拆解见 [AI 拟人化设计](./AI-Human-Likeness-Design.md)。
 
 当前默认人格库定义在 `apps/api/src/ai/ai.personas.ts`，包含 8 个默认人格：
 

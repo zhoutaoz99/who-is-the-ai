@@ -7,7 +7,7 @@
 | 适用范围 | `docs/` 下的正式文档，不包括 `docs/ImplementationPlan/` |
 | 目标读者 | 项目维护者、开发、测试、评审者 |
 | 责任人 | 项目维护者 |
-| 最近核对日期 | 2026-06-16 |
+| 最近核对日期 | 2026-06-19 |
 | 关联代码 | `docs/`、`apps/api`、`apps/web` |
 | 关联文档 | [Doc-Style-Guide.md](./Doc-Style-Guide.md)、[Roadmap.md](./Roadmap.md) |
 
@@ -33,10 +33,11 @@ docs/
 1. [gameplay/Player-Guide.md](./gameplay/Player-Guide.md) — 给玩家看的简明玩法说明，可直接用于 UI 展示。
 2. [gameplay/Gameplay.md](./gameplay/Gameplay.md) — 普通对局的完整规则说明。
 3. [gameplay/AI-Interaction-Flow.md](./gameplay/AI-Interaction-Flow.md) — AI 玩家在普通对局里如何发言、投票、调模型。
-4. [gameplay/AI-Scheduling.md](./gameplay/AI-Scheduling.md) — 发言调度的设计动机(为什么不像机器人)。
-5. [ai-iteration/AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) — 拟人化迭代的完整记录。
-6. [ai-iteration/AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) — 自动评估闭环入口，先看这个再进 Flow / Auto-Optimize / Details。
-7. 再按需进入「自动对抗调试房」「复盘」「缓存优化」等专题。
+4. [gameplay/AI-Human-Likeness-Design.md](./gameplay/AI-Human-Likeness-Design.md) — 当前 AI 拟人化设计主文档：策略层、表达层、短期记忆与人格库。
+5. [gameplay/AI-Scheduling.md](./gameplay/AI-Scheduling.md) — 发言调度的设计动机(为什么不像机器人)。
+6. [ai-iteration/AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) — 拟人化迭代的中间过程、问题拆解与阶段性结论。
+7. [ai-iteration/AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) — 自动评估闭环入口，先看这个再进 Flow / Auto-Optimize / Details。
+8. 再按需进入「自动对抗调试房」「复盘」「缓存优化」等专题。
 
 ---
 
@@ -51,6 +52,7 @@ docs/
 | [Player-Guide.md](./gameplay/Player-Guide.md) | 面向玩家的简明玩法说明，可直接用于 UI 展示。 |
 | [Gameplay.md](./gameplay/Gameplay.md) | 游戏简介、基础配置、流程、胜负与投票/奖励规则。 |
 | [AI-Interaction-Flow.md](./gameplay/AI-Interaction-Flow.md) | AI 发言/投票交互流程、GameContext 字段、人格、Prompt 结构、模型调用与常量。**普通对局的 AI 交互主文档。** |
+| [AI-Human-Likeness-Design.md](./gameplay/AI-Human-Likeness-Design.md) | 当前 AI 拟人化设计主文档：策略层、表达层、短期记忆与人格库。 |
 | [AI-Scheduling.md](./gameplay/AI-Scheduling.md) | 发言调度的设计动机与第一版方案(为何不用固定概率、策略层输出什么)。 |
 | [AI-Prompt-Cache-Optimization.md](./gameplay/AI-Prompt-Cache-Optimization.md) | OpenAI 自动前缀缓存 + Claude 显式多层 `cache_control` 的优化方案与模板字段顺序。 |
 
@@ -60,7 +62,7 @@ docs/
 
 | 文档 | 内容 |
 | --- | --- |
-| [AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) | AI 拟人化优化的根因分析、已落地项、可实施方案与 4 轮迭代记录。 |
+| [AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) | AI 拟人化优化的中间迭代过程、问题拆解与阶段性结论。 |
 | [AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) | 自动对局评估自迭代的入口索引,说明 Flow / Auto-Optimize / Details 的分工与阅读路径。 |
 | [AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) | 自动对局评估自迭代的**整体流程**(「步骤之间怎么连」),含组件图、主循环、实时事件、数据模型。 |
 | [AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) | 单局打分、scorecard 聚合和自动优化器的单独维护点。 |
@@ -88,11 +90,12 @@ gameplay/
     └─ Gameplay.md
   Gameplay.md
     └─ AI-Interaction-Flow.md ─┬─ AI-Scheduling.md
+                               ├─ AI-Human-Likeness-Design.md
                                ├─ AI-Prompt-Cache-Optimization.md
                                └─ (跨目录)→ ai-iteration/*
 
 ai-iteration/
-  AI-Human-Likeness.md ── AI-Prompt-Eval-Details.md
+  AI-Human-Likeness.md ── AI-Human-Likeness-Design.md、AI-Prompt-Eval-Details.md
   AI-Prompt-Eval.md ──┬─ AI-Prompt-Eval-Flow.md
                       ├─ AI-Prompt-Eval-Auto-Optimize.md
                       └─ AI-Prompt-Eval-Details.md

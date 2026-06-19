@@ -5,7 +5,7 @@
 | 适用范围 | `docs/` 下所有正式文档；**不包括** `docs/ImplementationPlan/` 历史归档 |
 | 文档状态 | Active |
 | 目标读者 | 项目维护者、开发、测试、评审者 |
-| 最近核对日期 | 2026-06-15 |
+| 最近核对日期 | 2026-06-19 |
 | 目的 | 将当前文档统一到软件开发通用的、可审查、可追溯、可维护的标准格式 |
 
 ## 1. 现状诊断
@@ -89,7 +89,7 @@
 | `Overview` | 导航、索引、阅读路径 | 所有读者 | `README.md` |
 | `Player Guide` | 面向玩家的玩法说明、教程、UI 帮助 | 玩家 | `gameplay/Player-Guide.md` |
 | `Spec` | 规则、约束、功能定义 | 产品、开发、测试 | `gameplay/Gameplay.md` |
-| `Design` | 架构、流程、数据、实现取舍 | 开发、评审者 | `gameplay/AI-Interaction-Flow.md`、`AI-Scheduling.md`、`AI-Prompt-Cache-Optimization.md`、`ai-iteration/Replay-Analysis.md`、`AI-Prompt-Eval-*.md`、`AI-Auto-Adversarial-Match.md` |
+| `Design` | 架构、流程、数据、实现取舍 | 开发、评审者 | `gameplay/AI-Interaction-Flow.md`、`gameplay/AI-Human-Likeness-Design.md`、`AI-Scheduling.md`、`AI-Prompt-Cache-Optimization.md`、`ai-iteration/Replay-Analysis.md`、`AI-Prompt-Eval-*.md`、`AI-Auto-Adversarial-Match.md` |
 | `Iteration Report` | 迭代记录、实验结论、经验沉淀 | 开发、评审者 | `ai-iteration/AI-Human-Likeness.md` |
 | `Roadmap` | 分阶段目标、状态、依赖、优先级 | 维护者、协作者 | `Roadmap.md` |
 | `Reference` | 接口、字段、配置、常量的查阅型资料 | 开发、测试、运维 | 当前暂无独立标准文档 |
@@ -436,6 +436,7 @@ Replay-Analysis.md
 | `Roadmap.md` | `Roadmap` | 增加依赖、风险、里程碑表达 |
 | `gameplay/Gameplay.md` | `Spec` | 增加术语、边界条件、验收标准 |
 | `gameplay/AI-Interaction-Flow.md` | `Design` | 增加非目标、风险、验证方式、取舍 |
+| `gameplay/AI-Human-Likeness-Design.md` | `Design` | 聚焦策略层、表达层、记忆、人格与版本化 |
 | `gameplay/AI-Scheduling.md` | `Design` | 明确已实现/设想边界与验证方式 |
 | `gameplay/AI-Prompt-Cache-Optimization.md` | `Design` | 增加约束、风险、度量方法 |
 | `ai-iteration/Replay-Analysis.md` | `Design` | 强化接口/流程/失败模式边界 |
