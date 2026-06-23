@@ -59,7 +59,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
               ? player.simulated === true
               : undefined,
           aiPersonaId: persona?.id,
-          aiPersonaName: persona?.name,
+          aiPersonaName: persona?.nickname,
           aiModelId: (revealTypes || exposeDebugType) ? player.aiModelId : undefined,
         };
       }),
@@ -78,7 +78,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
       aiPersonas: DEBUG
         ? getActivePersonas().map((persona) => ({
             id: persona.id,
-            name: persona.name,
+            name: persona.nickname,
           }))
         : undefined,
       availableModels: (DEBUG && availableModels?.length) ? availableModels : undefined,

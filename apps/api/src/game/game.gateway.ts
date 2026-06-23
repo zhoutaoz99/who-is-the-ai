@@ -26,7 +26,6 @@ import {
   ReconnectPayload,
   SendChatPayload,
   StartGamePayload,
-  StartIterationPayload,
   StopGamePayload,
   UpdateDiscussionDurationPayload,
   UpdateDebugAutoAiSequentialSpeechPayload,
@@ -34,7 +33,6 @@ import {
 import { PostgresService } from "../data/postgres.service";
 import { DEBUG } from "./game.config";
 import { GameService } from "./game.service";
-import { IterationService } from "../iteration/iteration.service";
 
 @WebSocketGateway({
   cors: {
@@ -51,23 +49,11 @@ export class GameGateway
     private readonly gameService: GameService,
     private readonly authService: AuthService,
     private readonly postgres: PostgresService,
-    private readonly iterationService: IterationService,
   ) {}
 
   afterInit(server: Server) {
     this.gameService.bindServer(server);
     void this.postgres.ready.then(() => this.gameService.recoverStuckRooms());
-    this.bridgeIterationEvents();
-  }
-
-  /** 把 IterationService 的本地事件桥接成全局 socket 广播。 */
-  private bridgeIterationEvents() {
-    const emit = (event: string) => (payload: unknown) =>
-      this.server?.emit(`iteration.${event}`, payload);
-    this.iterationService.events.on("status", emit("status"));
-    this.iterationService.events.on("game", emit("game"));
-    this.iterationService.events.on("round", emit("round"));
-    this.iterationService.events.on("done", emit("done"));
   }
 
   async handleConnection(client: Socket) {
@@ -221,27 +207,6 @@ export class GameGateway
   @SubscribeMessage("game.stop")
   async handleStopGame(@MessageBody() payload: StopGamePayload) {
     return this.gameService.stopGame(payload ?? {});
-  }
-
-  @SubscribeMessage("iteration.start")
-  async handleIterationStart(@MessageBody() payload: StartIterationPayload) {
-    if (!DEBUG) return { ok: false, error: "调试模式未开启" };
-    return this.iterationService.start(payload ?? {});
-  }
-
-  @SubscribeMessage("iteration.continue")
-  async handleIterationContinue() {
-    return this.iterationService.continueToNextRound();
-  }
-
-  @SubscribeMessage("iteration.retryAutoOptimize")
-  async handleIterationRetryAutoOptimize() {
-    return this.iterationService.retryAutoOptimize();
-  }
-
-  @SubscribeMessage("iteration.stop")
-  async handleIterationStop() {
-    return this.iterationService.stop();
   }
 
   @SubscribeMessage("debug.ai.add")

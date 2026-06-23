@@ -9,28 +9,19 @@ import {
   AiModelEntry,
   AiModelFormat,
   AiSpeechAction,
-  AiSpeechStrategy,
-  AiSpeechStrategyAction,
   AiVoteAction,
   ChatMessageInput,
   GameContext,
+  PersonaCard,
+  RoundVoteSummary,
 } from "./ai.types";
 import { loadPrompt, renderTemplate } from "./prompt-loader";
-import { PromptRegistry } from "./prompt-registry";
-import {
-  getSimulatedHumanIntensity,
-  getSimulatedHumanSpeechPromptFilename,
-  getSimulatedHumanVotePromptFilename,
-  SIMULATED_HUMAN_INTENSITY_ENV,
-} from "./sim-human-intensity";
+import { formatPersonaCard } from "./ai.personas";
 
 const DEFAULT_AI_NEXT_CHECK_MS = 10_000;
-const MAX_MODEL_SPEECH_CONTENT_LENGTH = 240;
+// 单行气泡上限，与真人发言（normalizeContent）保持一致。
+const MAX_SPEECH_LENGTH = 120;
 const DEFAULT_CLAUDE_MAX_TOKENS = 1024;
-
-type ParsedSpeechContent =
-  | { type: "speak"; content: string }
-  | { type: "skip" };
 
 type ModelUsage = {
   prompt_tokens?: number;
@@ -53,7 +44,6 @@ export class AiService {
   private readonly config: AiConfig;
   private readonly models = new Map<string, AiModelEntry>();
   private readonly configPath = process.env.AI_MODELS_PATH || join(__dirname, "..", "..", "..", "..", "ai-models.json");
-  private readonly simulatedHumanIntensity = getSimulatedHumanIntensity();
   private recorder?: AiCallRecorder;
 
   setRecorder(recorder: AiCallRecorder) {
@@ -66,7 +56,7 @@ export class AiService {
     }
   }
 
-  constructor(private readonly prompts: PromptRegistry) {
+  constructor() {
     this.loadModels();
 
     const defaultModel = this.getDefaultModel();
@@ -81,30 +71,9 @@ export class AiService {
         format: defaultModel.format,
         maxTokens: defaultModel.maxTokens,
         timeoutMs: defaultModel.timeoutMs ?? 15000,
-        speechStrategy: {
-          model: defaultModel.model,
-          temperature: defaultModel.temperature,
-          reasoningEffort: defaultModel.reasoningEffort,
-          thinking: defaultModel.thinking,
-          format: defaultModel.format,
-          maxTokens: defaultModel.maxTokens,
-        },
-        speechExpression: {
-          model: defaultModel.expression?.model ?? defaultModel.model,
-          temperature: defaultModel.expression?.temperature ?? defaultModel.temperature,
-          reasoningEffort: defaultModel.expression?.reasoningEffort ?? defaultModel.reasoningEffort,
-          thinking: defaultModel.expression?.thinking ?? defaultModel.thinking,
-          format: defaultModel.format,
-          maxTokens: defaultModel.expression?.maxTokens ?? defaultModel.maxTokens,
-        },
       };
       this.logger.log(
-        [
-          `AI service configured: ${this.config.baseURL}`,
-          `default=${this.describeModelConfig(this.config)}`,
-          `strategy=${this.describeModelConfig(this.config.speechStrategy)}`,
-          `expression=${this.describeModelConfig(this.config.speechExpression)}`,
-        ].join(" "),
+        `AI service configured: ${this.config.baseURL} default=${this.describeModelConfig(this.config)}`,
       );
     } else {
       this.config = {
@@ -115,16 +84,9 @@ export class AiService {
         reasoningEffort: "high",
         format: "openai",
         timeoutMs: 15000,
-        speechStrategy: { model: "", temperature: 0.7, reasoningEffort: "high", format: "openai" },
-        speechExpression: { model: "", temperature: 0.7, reasoningEffort: "high", format: "openai" },
       };
       this.logger.warn("No default model found in ai-models.json, AI will skip speaking");
     }
-
-    this.logger.log(
-      `Simulated human intensity: ${this.simulatedHumanIntensity} ` +
-        `(${SIMULATED_HUMAN_INTENSITY_ENV})`,
-    );
   }
 
   private loadModels() {
@@ -162,7 +124,6 @@ export class AiService {
           timeoutMs: entry.timeoutMs,
           thinking: entry.thinking,
           maxTokens: entry.maxTokens,
-          expression: entry.expression,
         };
         this.models.set(resolved.id, resolved);
         this.logger.log(
@@ -226,163 +187,76 @@ export class AiService {
       maxTokens: entry.maxTokens,
     };
 
-    const expressionConfig: AiModelCallConfig = {
-      model: entry.expression?.model ?? entry.model,
-      temperature: entry.expression?.temperature ?? entry.temperature,
-      reasoningEffort: entry.expression?.reasoningEffort ?? entry.reasoningEffort,
-      thinking: entry.expression?.thinking ?? entry.thinking,
-      format: entry.format,
-      maxTokens: entry.expression?.maxTokens ?? entry.maxTokens,
-    };
-
     const connection = {
       baseURL: entry.baseURL,
       apiKey: entry.apiKey,
       timeoutMs: entry.timeoutMs ?? this.config.timeoutMs,
     };
 
-    return { mainConfig, expressionConfig, connection };
+    return { mainConfig, connection };
   }
 
+  /**
+   * 单层发言（v4.0）：讨论一次调用直接产出聊天发言，不再走“策略层 JSON → 表达层造句”。
+   * 模型可选择“这轮先看着”（输出沉默标记），由 isSilenceResponse 判定为不发言。
+   */
   async generateSpeech(context: GameContext): Promise<AiSpeechAction> {
     if (!this.config.apiKey) {
       return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords: [] };
     }
 
-    if (this.isSimulatedHumanContext(context)) {
-      return this.generateSimulatedHumanSpeech(context);
+    const persona = context.myPersona;
+    if (!persona) {
+      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords: [] };
     }
 
     const override = this.resolveModelOverride(context.myModelId);
-    const strategyConfig = override?.mainConfig ?? this.config.speechStrategy;
-    const expressionConfig = override?.expressionConfig ?? this.config.speechExpression;
+    const modelConfig = override?.mainConfig ?? this.config;
     const callOptions = override?.connection;
 
     try {
-      const callRecords: AiCallRecord[] = [];
-      const strategySystemPrompt = this.prompts.getPrompt("ai-player/system-speech-strategy.txt");
-      const strategyUserPrompt = this.buildSpeechStrategyPrompt(context);
-      this.logger.log(
-        this.formatAiLog(
-          context.myName,
-          "Speech Strategy Prompt",
-          strategyUserPrompt,
-          context.roundNo,
-          context.mySeatNo,
-          undefined,
-        ),
-      );
-      const strategyStartedAt = new Date().toISOString();
-      const claudeCacheCtx = { recentMessages: context.recentMessages };
-      const { content: strategyResult, usage: strategyUsage } = await this.callModel(
-        strategySystemPrompt,
-        strategyUserPrompt,
-        strategyConfig,
+      const systemPrompt = this.buildDiscussionSystemPrompt(persona, context.mySeatNo);
+      const userPrompt = this.buildDiscussionUserPrompt(context);
+      this.logModelRequest("DISCUSSION", context, modelConfig, systemPrompt, userPrompt);
+      const startedAt = new Date().toISOString();
+      const { content: raw, usage, reasoning } = await this.callModel(
+        systemPrompt,
+        userPrompt,
+        modelConfig,
         callOptions,
-        claudeCacheCtx,
       );
-      this.logger.log(
-        this.formatAiLog(
-          context.myName,
-          "Raw Speech Strategy Response",
-          strategyResult.slice(0, 500),
-          context.roundNo,
-          context.mySeatNo,
-          undefined,
-        ),
-      );
-      this.logUsage(strategyConfig.model, strategyUsage);
-      callRecords.push({
+      this.logModelResponse("DISCUSSION", context, modelConfig, raw, reasoning);
+      this.logUsage(modelConfig.model, usage);
+
+      const callRecords: AiCallRecord[] = [{
         roomId: context.roomId,
         roundNo: context.roundNo,
-        callType: "speech-strategy",
+        callType: "discussion",
         aiPlayerId: context.myPlayerId,
         aiPlayerName: context.myName,
         aiPlayerSeatNo: context.mySeatNo,
-        userPrompt: strategyUserPrompt,
-        rawResponse: strategyResult,
-        modelName: strategyConfig.model,
-        temperature: strategyConfig.temperature,
-        reasoningEffort: strategyConfig.reasoningEffort,
-        createdAt: strategyStartedAt,
-      });
+        userPrompt,
+        rawResponse: raw,
+        modelName: modelConfig.model,
+        temperature: modelConfig.temperature,
+        reasoningEffort: modelConfig.reasoningEffort,
+        createdAt: startedAt,
+      }];
 
-      const strategyAction = this.parseSpeechStrategyResult(strategyResult);
-      if (strategyAction.type === "skip") {
-        return {
-          type: "skip",
-          nextCheckAfterMs: strategyAction.nextCheckAfterMs,
-          callRecords,
-        };
+      if (isSilenceResponse(raw)) {
+        return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords };
       }
 
-      const expressionSystemPrompt = this.prompts.getPrompt("ai-player/system-speech-expression.txt");
-      const expressionUserPrompt = this.buildSpeechExpressionPrompt(
-        context,
-        strategyAction.strategy,
-      );
-      this.logger.log(
-        this.formatAiLog(
-          context.myName,
-          "Speech Expression Prompt",
-          expressionUserPrompt,
-          context.roundNo,
-          context.mySeatNo,
-          undefined,
-        ),
-      );
-      const expressionStartedAt = new Date().toISOString();
-      const { content: expressionResult, usage: expressionUsage } = await this.callModel(
-        expressionSystemPrompt,
-        expressionUserPrompt,
-        expressionConfig,
-        callOptions,
-        claudeCacheCtx,
-      );
-      this.logger.log(
-        this.formatAiLog(
-          context.myName,
-          "Raw Speech Expression Response",
-          expressionResult.slice(0, 500),
-          context.roundNo,
-          context.mySeatNo,
-          undefined,
-        ),
-      );
-      this.logUsage(expressionConfig.model, expressionUsage);
-      const expressionTemplatePrompt = this.buildSpeechExpressionPrompt(
-        context,
-        null,
-      );
-      callRecords.push({
-        roomId: context.roomId,
-        roundNo: context.roundNo,
-        callType: "speech-expression",
-        aiPlayerId: context.myPlayerId,
-        aiPlayerName: context.myName,
-        aiPlayerSeatNo: context.mySeatNo,
-        userPrompt: expressionUserPrompt,
-        rawResponse: expressionResult,
-        modelName: expressionConfig.model,
-        temperature: expressionConfig.temperature,
-        reasoningEffort: expressionConfig.reasoningEffort,
-        templatePrompt: expressionTemplatePrompt,
-        createdAt: expressionStartedAt,
-      });
-
-      const speechAction = this.parseSpeechResult(expressionResult, context);
-      if (speechAction.type === "speak") {
-        return {
-          ...speechAction,
-          targetResponseDelayMs: strategyAction.targetResponseDelayMs,
-          nextCheckAfterMs: strategyAction.nextCheckAfterMs,
-          callRecords,
-        };
+      const content = cleanSpeech(raw, context.mySeatNo);
+      if (!content) {
+        return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords };
       }
 
       return {
-        type: "skip",
-        nextCheckAfterMs: strategyAction.nextCheckAfterMs,
+        type: "speak",
+        content,
+        targetResponseDelayMs: typingDelayForContent(content),
+        nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS,
         callRecords,
       };
     } catch (error) {
@@ -393,84 +267,10 @@ export class AiService {
     }
   }
 
-  private async generateSimulatedHumanSpeech(
-    context: GameContext,
-  ): Promise<AiSpeechAction> {
-    const override = this.resolveModelOverride(context.myModelId);
-    const modelConfig = override?.mainConfig ?? this.config.speechStrategy;
-    const callOptions = override?.connection;
-
-    try {
-      const systemPrompt = loadPrompt(
-        getSimulatedHumanSpeechPromptFilename(this.simulatedHumanIntensity),
-      );
-      const userPrompt = this.buildSimulatedHumanSpeechPrompt(context);
-      this.logger.log(
-        this.formatAiLog(
-          context.myName,
-          "Simulated Human Speech Prompt",
-          userPrompt,
-          context.roundNo,
-          context.mySeatNo,
-          true,
-        ),
-      );
-      const startedAt = new Date().toISOString();
-      const { content: result, usage } = await this.callModel(
-        systemPrompt,
-        userPrompt,
-        modelConfig,
-        callOptions,
-        { recentMessages: context.recentMessages },
-      );
-      this.logger.log(
-        this.formatAiLog(
-          context.myName,
-          "Raw Simulated Human Speech Response",
-          result.slice(0, 500),
-          context.roundNo,
-          context.mySeatNo,
-          true,
-        ),
-      );
-      this.logUsage(modelConfig.model, usage);
-
-      const callRecords: AiCallRecord[] = [{
-        roomId: context.roomId,
-        roundNo: context.roundNo,
-        callType: "sim-human-speech",
-        aiPlayerId: context.myPlayerId,
-        aiPlayerName: context.myName,
-        aiPlayerSeatNo: context.mySeatNo,
-        userPrompt,
-        rawResponse: result,
-        modelName: modelConfig.model,
-        temperature: modelConfig.temperature,
-        reasoningEffort: modelConfig.reasoningEffort,
-        createdAt: startedAt,
-      }];
-
-      const action = this.parseSimulatedHumanSpeechResult(result);
-      if (action.type === "speak") {
-        return {
-          ...action,
-          callRecords,
-        };
-      }
-
-      return {
-        type: "skip",
-        nextCheckAfterMs: action.nextCheckAfterMs,
-        callRecords,
-      };
-    } catch (error) {
-      this.logger.warn(
-        `Simulated human speech generation failed: ${error instanceof Error ? error.message : error}`,
-      );
-      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords: [] };
-    }
-  }
-
+  /**
+   * 投票（v4.0 第五节）：和讨论独立的一次调用，模型输出一行 JSON {"vote":"代号","reason":"..."}；
+   * 只做合法性校验（存活、非自己），不做阵营修正。解析失败返回 null，由对局层兜底弃票/随机投。
+   */
   async generateVote(
     context: GameContext,
     aiPlayerId: string,
@@ -479,49 +279,38 @@ export class AiService {
       return null;
     }
 
+    const persona = context.myPersona;
+    if (!persona) {
+      return null;
+    }
+
     const override = this.resolveModelOverride(context.myModelId);
     const modelConfig = override?.mainConfig ?? this.config;
     const callOptions = override?.connection;
 
     try {
-      const isSimulatedHuman = this.isSimulatedHumanContext(context);
-      const systemPrompt = isSimulatedHuman
-        ? loadPrompt(getSimulatedHumanVotePromptFilename(this.simulatedHumanIntensity))
-        : this.prompts.getPrompt("ai-player/system-vote.txt");
-      const userPrompt = isSimulatedHuman
-        ? this.buildSimulatedHumanVotePrompt(context, aiPlayerId)
-        : this.buildVotePrompt(context, aiPlayerId);
-      this.logger.log(
-        this.formatAiLog(context.myName, "Vote Prompt", userPrompt, context.roundNo, context.mySeatNo, isSimulatedHuman),
-      );
+      const systemPrompt = this.buildVoteSystemPrompt(persona, context.mySeatNo);
+      const userPrompt = this.buildVoteUserPrompt(context);
+      this.logModelRequest("VOTE", context, modelConfig, systemPrompt, userPrompt);
       const voteStartedAt = new Date().toISOString();
-      const { content: result, usage } = await this.callModel(systemPrompt, userPrompt, modelConfig, callOptions, { recentMessages: context.recentMessages });
-      this.logger.log(
-        this.formatAiLog(
-          context.myName,
-          "Raw Vote Response",
-          result.slice(0, 300),
-          context.roundNo,
-          context.mySeatNo,
-          isSimulatedHuman,
-        ),
-      );
+      const { content: raw, usage, reasoning } = await this.callModel(systemPrompt, userPrompt, modelConfig, callOptions);
+      this.logModelResponse("VOTE", context, modelConfig, raw, reasoning);
       this.logUsage(modelConfig.model, usage);
       this.recorder?.record({
         roomId: context.roomId,
         roundNo: context.roundNo,
-        callType: isSimulatedHuman ? "sim-human-vote" : "vote",
+        callType: "vote",
         aiPlayerId: context.myPlayerId,
         aiPlayerName: context.myName,
         aiPlayerSeatNo: context.mySeatNo,
         userPrompt,
-        rawResponse: result,
+        rawResponse: raw,
         modelName: modelConfig.model,
         temperature: modelConfig.temperature,
         reasoningEffort: modelConfig.reasoningEffort,
         createdAt: voteStartedAt,
       });
-      return this.parseVoteResult(result, context);
+      return this.parseVoteResult(raw, context, aiPlayerId);
     } catch (error) {
       this.logger.warn(
         `Vote generation failed: ${error instanceof Error ? error.message : error}`,
@@ -530,18 +319,64 @@ export class AiService {
     }
   }
 
-  private buildSpeechStrategyPrompt(context: GameContext): string {
-    return this.prompts.render(
-      "ai-player/user-speech-strategy-template.txt",
-      this.buildSpeechVars(context),
+  private buildDiscussionSystemPrompt(persona: PersonaCard, seatNo: number): string {
+    return loadPrompt("ai-player/system-discussion.txt").replaceAll(
+      "{{persona}}",
+      formatPersonaCard(persona, seatNo),
     );
   }
 
-  private buildSimulatedHumanSpeechPrompt(context: GameContext): string {
-    return renderTemplate(
-      "sim-human/user-sim-human-speech-template.txt",
-      this.buildSpeechVars(context),
+  private buildVoteSystemPrompt(persona: PersonaCard, seatNo: number): string {
+    return loadPrompt("ai-player/system-vote.txt").replaceAll(
+      "{{persona}}",
+      formatPersonaCard(persona, seatNo),
     );
+  }
+
+  private buildDiscussionUserPrompt(context: GameContext): string {
+    return renderTemplate("ai-player/user-discussion-template.txt", {
+      selfCode: `${context.mySeatNo}号`,
+      roundNo: String(context.roundNo),
+      alivePlayers: context.alivePlayers.map((p) => `${p.seatNo}号`).join(" "),
+      aliveCount: String(context.alivePlayers.length),
+      currentRoundCount: String(context.recentMessages.length),
+      voteHistory: formatVoteHistory(context.voteHistory),
+      conversation: formatConversation(context),
+    });
+  }
+
+  private buildVoteUserPrompt(context: GameContext): string {
+    return renderTemplate("ai-player/user-vote-template.txt", {
+      selfCode: `${context.mySeatNo}号`,
+      roundNo: String(context.roundNo),
+      alivePlayers: context.alivePlayers.map((p) => `${p.seatNo}号`).join(" "),
+      voteHistory: formatVoteHistory(context.voteHistory),
+      conversation: formatConversation(context),
+    });
+  }
+
+  private parseVoteResult(
+    raw: string,
+    context: GameContext,
+    aiPlayerId: string,
+  ): AiVoteAction | null {
+    const { targetSeatNo, reason } = parseVote(raw);
+    if (targetSeatNo == null) {
+      return null;
+    }
+
+    const target = context.alivePlayers.find(
+      (p) => p.seatNo === targetSeatNo && p.id !== aiPlayerId,
+    );
+    if (!target) {
+      return null;
+    }
+
+    return {
+      type: "vote",
+      targetPlayerId: target.id,
+      reason: reason || undefined,
+    };
   }
 
   private logUsage(model: string, usage?: ModelUsage): void {
@@ -572,299 +407,70 @@ export class AiService {
     this.logger.log(`\n${sep}\n[Cache Hit] ${parts.join(", ")}\n${sep}\n`);
   }
 
-  private formatAiLog(
-    playerName: string,
-    title: string,
-    content: string,
-    roundNo?: number,
-    seatNo?: number,
-    simulated?: boolean,
+  /** 请求/响应的统一头部：模型、采样参数与对局上下文等“请求参数”元信息，不含提示词正文。 */
+  private modelLogHeader(
+    stage: string,
+    context: GameContext,
+    modelConfig: AiModelCallConfig,
   ): string {
-    const cleanContent = content.split(AiService.CACHE_SPLIT).join("");
-    const playerTypeTag = simulated ? "模拟真人" : "AI";
-    const prefix = roundNo != null && seatNo != null ? `[第${roundNo}轮 #${seatNo} ${playerTypeTag}] ` : "";
-    const separator = "=".repeat(72);
-    const subSeparator = "-".repeat(72);
     return [
-      "",
-      separator,
-      `${prefix}[${playerName}] ${title}`,
-      subSeparator,
-      cleanContent,
-      separator,
-      "",
-      "",
-    ].join("\n");
+      `stage=${stage}`,
+      `room=${context.roomId}`,
+      `round=${context.roundNo}`,
+      `player=${context.mySeatNo}号(${context.myName})`,
+      `model=${modelConfig.model}`,
+      `temp=${modelConfig.temperature}`,
+      `reasoning=${modelConfig.reasoningEffort}`,
+      `thinking=${formatThinking(modelConfig.thinking)}`,
+      ...(modelConfig.maxTokens != null ? [`maxTokens=${modelConfig.maxTokens}`] : []),
+    ].join(" ");
   }
 
-  private formatRawRequestLog(
-    url: string,
-    headers: Record<string, string>,
-    body: unknown,
-  ): string {
-    const separator = "=".repeat(72);
-    const subSeparator = "-".repeat(72);
-    const maskedHeaders: Record<string, string> = { ...headers };
-    if (maskedHeaders["x-api-key"]) {
-      maskedHeaders["x-api-key"] = `${maskedHeaders["x-api-key"].slice(0, 4)}****`;
-    }
-    if (maskedHeaders["Authorization"]) {
-      maskedHeaders["Authorization"] = `${maskedHeaders["Authorization"].slice(0, 11)}****`;
-    }
-    const bodyStr = JSON.stringify(body, null, 2);
-    return [
-      "",
-      separator,
-      "[Raw Model Request]",
-      subSeparator,
-      `URL: ${url}`,
-      `Headers: ${JSON.stringify(maskedHeaders)}`,
-      subSeparator,
-      `Body:`,
-      bodyStr,
-      separator,
-      "",
-    ].join("\n");
-  }
-
-  private buildSpeechExpressionPrompt(
+  /**
+   * 把请求日志拆成两块分开打印（参考原 match 实现）：
+   * - 普通 log 级：`MODEL <STAGE> REQUEST` —— 只打请求参数（模型/采样/上下文元信息），不含提示词正文。
+   * - debug 级：`MODEL <STAGE> PROMPT` —— 完整 system / user 提示词正文。
+   */
+  private logModelRequest(
+    stage: string,
     context: GameContext,
-    strategy: AiSpeechStrategy | null,
-  ): string {
-    return this.prompts.render("ai-player/user-speech-expression-template.txt", {
-      ...this.buildSpeechVars(context),
-      speechStrategy: strategy ? JSON.stringify(strategy, null, 2) : "{{speechStrategy}}",
-    });
+    modelConfig: AiModelCallConfig,
+    systemPrompt: string,
+    userPrompt: string,
+  ): void {
+    const header = this.modelLogHeader(stage, context, modelConfig);
+    this.logger.log(this.formatLogBlock(`MODEL ${stage} REQUEST`, [header]));
+    this.logger.debug(
+      this.formatLogBlock(`MODEL ${stage} PROMPT`, [
+        header,
+        "[system]",
+        systemPrompt,
+        "[user]",
+        userPrompt,
+      ]),
+    );
   }
 
-  private buildSpeechVars(context: GameContext): Record<string, string> {
-    const vars: Record<string, string> = {
-      mySeatNo: String(context.mySeatNo),
-      myName: context.myName,
-      roundNo: String(context.roundNo),
-      remainingSeconds: String(Math.ceil(context.remainingTimeMs / 1000)),
-      myLastSpeech: context.myLastSpeech || "无",
-      myPersonaInfo: this.formatPersonaInfo(context),
-      recentMessages: "无",
-      historicalMessages: "无",
-      voteHistory: "无",
-      currentVoteInfo: "无",
-      shortMemory: this.formatShortMemory(context),
-      alivePlayersList: context.alivePlayers
-        .map((p) => `${p.seatNo}号位(ID:${p.id})`)
-        .join("、"),
-    };
-
-    if (context.recentMessages.length > 0) {
-      vars.recentMessages = this.formatRecentMessages(context.recentMessages, "  ");
-    }
-
-    if (context.historicalMessages.length > 0) {
-      vars.historicalMessages = this.formatHistoricalMessages(
-        context.historicalMessages,
-      );
-    }
-
-    if (context.voteHistory.length > 0) {
-      vars.voteHistory = context.voteHistory
-        .map((round) => {
-          const voteDesc = round.votes
-            .map((v) => `${v.voterSeatNo}号→${v.targetSeatNo}号`)
-            .join("、");
-          const eliminated =
-            round.eliminatedSeatNo != null
-              ? ` → ${round.eliminatedSeatNo}号被淘汰`
-              : ` → 平票，无人淘汰`;
-          return `  第${round.roundNo}轮：${voteDesc}${eliminated}`;
-        })
-        .join("\n");
-    }
-
-    if (Object.keys(context.currentVoteCounts).length > 0) {
-      vars.currentVoteInfo = Object.entries(context.currentVoteCounts)
-        .map(([id, count]) => {
-          const player = context.alivePlayers.find((p) => p.id === id);
-          return `${player?.seatNo ?? id}号位:${count}票`;
-        })
-        .join("、");
-    }
-
-    return vars;
-  }
-
-  private buildVotePrompt(
+  /** 普通 log 级打印大模型返回值；模型若给了思考过程，紧跟在正文前一并打印。 */
+  private logModelResponse(
+    stage: string,
     context: GameContext,
-    aiPlayerId: string,
-  ): string {
-    const targets = context.alivePlayers.filter((p) => p.id !== aiPlayerId);
-
-    const vars: Record<string, string> = {
-      mySeatNo: String(context.mySeatNo),
-      myName: context.myName,
-      roundNo: String(context.roundNo),
-      myPersonaInfo: this.formatPersonaInfo(context),
-      recentMessages: "无",
-      historicalMessages: "无",
-      voteHistory: "无",
-      currentVoteInfo: "同时盲投，当前票数不可见",
-      shortMemory: this.formatShortMemory(context),
-      alivePlayersList: context.alivePlayers
-        .map((p) => `${p.seatNo}号位(ID:${p.id})`)
-        .join("、"),
-      voteTargets: targets
-        .map((p) => `${p.seatNo}号位 - ID: ${p.id}`)
-        .join("\n"),
-    };
-
-    if (context.recentMessages.length > 0) {
-      vars.recentMessages = this.formatRecentMessages(context.recentMessages, "  ");
+    modelConfig: AiModelCallConfig,
+    raw: string,
+    reasoning?: string,
+  ): void {
+    const lines = [this.modelLogHeader(stage, context, modelConfig)];
+    if (reasoning) {
+      lines.push("[reasoning]", reasoning);
     }
-
-    if (context.historicalMessages.length > 0) {
-      vars.historicalMessages = this.formatHistoricalMessages(
-        context.historicalMessages,
-      );
-    }
-
-    if (context.voteHistory.length > 0) {
-      vars.voteHistory = context.voteHistory
-        .map((round) => {
-          const voteDesc = round.votes
-            .map((v) => `${v.voterSeatNo}号→${v.targetSeatNo}号`)
-            .join("、");
-          const eliminated =
-            round.eliminatedSeatNo != null
-              ? ` → ${round.eliminatedSeatNo}号被淘汰`
-              : ` → 平票，无人淘汰`;
-          return `  第${round.roundNo}轮：${voteDesc}${eliminated}`;
-        })
-        .join("\n");
-    }
-
-    return this.prompts.render("ai-player/user-vote-template.txt", vars);
+    lines.push("[content]", raw);
+    this.logger.log(this.formatLogBlock(`MODEL ${stage} RESPONSE`, lines));
   }
 
-  private buildSimulatedHumanVotePrompt(
-    context: GameContext,
-    playerId: string,
-  ): string {
-    const targets = context.alivePlayers.filter((p) => p.id !== playerId);
-
-    const vars: Record<string, string> = {
-      mySeatNo: String(context.mySeatNo),
-      myName: context.myName,
-      roundNo: String(context.roundNo),
-      recentMessages: "无",
-      historicalMessages: "无",
-      voteHistory: "无",
-      currentVoteInfo: "同时盲投，当前票数不可见",
-      shortMemory: this.formatShortMemory(context),
-      alivePlayersList: context.alivePlayers
-        .map((p) => `${p.seatNo}号位(ID:${p.id})`)
-        .join("、"),
-      voteTargets: targets
-        .map((p) => `${p.seatNo}号位 - ID: ${p.id}`)
-        .join("\n"),
-    };
-
-    if (context.recentMessages.length > 0) {
-      vars.recentMessages = this.formatRecentMessages(context.recentMessages, "  ");
-    }
-
-    if (context.historicalMessages.length > 0) {
-      vars.historicalMessages = this.formatHistoricalMessages(
-        context.historicalMessages,
-      );
-    }
-
-    if (context.voteHistory.length > 0) {
-      vars.voteHistory = context.voteHistory
-        .map((round) => {
-          const voteDesc = round.votes
-            .map((v) => `${v.voterSeatNo}号→${v.targetSeatNo}号`)
-            .join("、");
-          const eliminated =
-            round.eliminatedSeatNo != null
-              ? ` → ${round.eliminatedSeatNo}号被淘汰`
-              : ` → 平票，无人淘汰`;
-          return `  第${round.roundNo}轮：${voteDesc}${eliminated}`;
-        })
-        .join("\n");
-    }
-
-    return renderTemplate("sim-human/user-sim-human-vote-template.txt", vars);
-  }
-
-  private formatShortMemory(context: GameContext): string {
-    const memory = context.shortMemory;
-    if (!memory || memory.votes.length === 0) {
-      return "无";
-    }
-
-    return memory.votes
-      .map((vote) => {
-        const reason = vote.publicReason
-          ? `，公开理由：${vote.publicReason}`
-          : vote.source === "fallback"
-            ? "，当时没有可靠的公开理由记录"
-            : "";
-        return `- 第${vote.roundNo}轮你投给${vote.targetSeatNo}号${reason}`;
-      })
-      .join("\n");
-  }
-
-  private formatPersonaInfo(context: GameContext): string {
-    const persona = context.myPersona;
-    if (!persona) {
-      return "无固定人格，保持自然、短句、不要模板化。";
-    }
-
-    const lines = [
-      `人格：${persona.name}`,
-      `说话风格：${persona.speechStyle}`,
-      `句式偏好：${persona.sentenceStyle}`,
-      `回应倾向：${persona.responseBias}`,
-      `语气规则：${persona.toneRules.join("；")}`,
-      `额外避免：${persona.avoidPhrases.join("、")}`,
-    ];
-
-    if (persona.typingHabit) {
-      lines.push(`打字习惯：${persona.typingHabit}`);
-    }
-    if (persona.sampleLines && persona.sampleLines.length > 0) {
-      lines.push(`口吻示例：${persona.sampleLines.join(" / ")}`);
-    }
-
-    return lines.join("\n");
-  }
-
-  private formatHistoricalMessages(
-    messages: Array<ChatMessageInput & { roundNo: number }>,
-  ): string {
-    const lines: string[] = [];
-    let currentRoundNo: number | null = null;
-
-    for (const msg of messages) {
-      if (msg.roundNo !== currentRoundNo) {
-        currentRoundNo = msg.roundNo;
-        lines.push(`  第${msg.roundNo}轮：`);
-      }
-
-      lines.push(`    ${msg.playerName}：${msg.content}`);
-    }
-
-    return lines.join("\n");
-  }
-
-  private formatRecentMessages(
-    messages: ChatMessageInput[],
-    indent: string,
-  ): string {
-    return messages
-      .map((msg) => {
-        return `${indent}${msg.playerName}：${msg.content}`;
-      })
-      .join("\n");
+  private formatLogBlock(title: string, lines: string[]): string {
+    const start = `==================== ${title} START ====================`;
+    const end = `==================== ${title} END ======================`;
+    return ["", start, ...lines, end, ""].join("\n");
   }
 
   async callModel(
@@ -872,24 +478,19 @@ export class AiService {
     userPrompt: string,
     modelConfig: AiModelCallConfig,
     options?: ModelConnectionOptions,
-    cacheContext?: { recentMessages: ChatMessageInput[] },
-  ): Promise<{ content: string; usage?: ModelUsage }> {
+  ): Promise<{ content: string; usage?: ModelUsage; reasoning?: string }> {
     const baseURL = options?.baseURL ?? this.config.baseURL;
     const apiKey = options?.apiKey ?? this.config.apiKey;
     const timeoutMs = options?.timeoutMs ?? this.config.timeoutMs;
     const format = modelConfig.format ?? "openai";
     const request = format === "claude"
-      ? this.buildClaudeRequest(baseURL, apiKey, systemPrompt, userPrompt, modelConfig, cacheContext)
+      ? this.buildClaudeRequest(baseURL, apiKey, systemPrompt, userPrompt, modelConfig)
       : this.buildOpenAiRequest(baseURL, apiKey, systemPrompt, userPrompt, modelConfig);
 
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
       timeoutMs,
-    );
-
-    this.logger.debug(
-      this.formatRawRequestLog(request.url, request.headers, request.body),
     );
 
     try {
@@ -923,7 +524,6 @@ export class AiService {
     userPrompt: string,
     modelConfig: AiModelCallConfig,
   ) {
-    const cleanUserPrompt = userPrompt.split(AiService.CACHE_SPLIT).join("");
     return {
       url: `${baseURL}/chat/completions`,
       headers: {
@@ -935,18 +535,12 @@ export class AiService {
         temperature: modelConfig.temperature,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: cleanUserPrompt },
+          { role: "user", content: userPrompt },
         ],
         ...(modelConfig.thinking !== false ? { thinking: { type: "enabled" } } : {}),
         reasoning_effort: modelConfig.reasoningEffort,
       },
     };
-  }
-
-  private static readonly CACHE_SPLIT = "<<CACHE_SPLIT>>";
-
-  static stripCacheMarker(prompt: string): string {
-    return prompt.split(AiService.CACHE_SPLIT).join("");
   }
 
   private buildClaudeRequest(
@@ -955,64 +549,7 @@ export class AiService {
     systemPrompt: string,
     userPrompt: string,
     modelConfig: AiModelCallConfig,
-    cacheContext?: { recentMessages: ChatMessageInput[] },
   ) {
-    const blocks: Array<Record<string, unknown>> = [];
-    const marker = AiService.CACHE_SPLIT;
-
-    if (userPrompt.includes(marker)) {
-      const parts = userPrompt.split(marker);
-
-      // Layer 0: static instructions (globally unchanging)
-      if (parts[0] && parts[0].trim()) {
-        blocks.push({
-          type: "text",
-          text: parts[0],
-          cache_control: { type: "ephemeral" },
-        });
-      }
-
-      // Layer 1: player-fixed info
-      if (parts[1] && parts[1].trim()) {
-        blocks.push({
-          type: "text",
-          text: parts[1],
-          cache_control: { type: "ephemeral" },
-        });
-      }
-
-      // Layer 2: round-stable
-      if (parts[2] && parts[2].trim()) {
-        blocks.push({
-          type: "text",
-          text: parts[2],
-          cache_control: { type: "ephemeral" },
-        });
-      }
-
-      // Layer 3: recentMessages per-message (sliding cache)
-      if (cacheContext?.recentMessages && cacheContext.recentMessages.length > 0) {
-        for (let i = 0; i < cacheContext.recentMessages.length; i++) {
-          const msg = cacheContext.recentMessages[i];
-          const isLast = i === cacheContext.recentMessages.length - 1;
-          blocks.push({
-            type: "text",
-            text: `  ${msg.playerName}：${msg.content}`,
-            ...(isLast ? { cache_control: { type: "ephemeral" } } : {}),
-          });
-        }
-      } else if (parts[3] && parts[3].trim()) {
-        blocks.push({ type: "text", text: parts[3] });
-      }
-
-      // Uncached suffix
-      if (parts[4] && parts[4].trim()) {
-        blocks.push({ type: "text", text: parts[4] });
-      }
-    } else {
-      blocks.push({ type: "text", text: userPrompt });
-    }
-
     return {
       url: `${this.normalizeBaseURL(baseURL, "claude")}/v1/messages`,
       headers: {
@@ -1028,28 +565,32 @@ export class AiService {
         messages: [
           {
             role: "user",
-            content: blocks,
+            content: userPrompt,
           },
         ],
       },
     };
   }
 
-  private parseOpenAiResponse(data: unknown): { content: string; usage?: ModelUsage } {
+  private parseOpenAiResponse(data: unknown): { content: string; usage?: ModelUsage; reasoning?: string } {
     const parsed = data as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string; reasoning_content?: string; reasoning?: string } }>;
       usage?: ModelUsage;
     };
+    const message = parsed.choices?.[0]?.message;
+    // OpenAI 兼容的推理模型把思考过程放在 reasoning_content（部分实现叫 reasoning）。
+    const reasoning = (message?.reasoning_content ?? message?.reasoning ?? "").trim();
 
     return {
-      content: parsed.choices?.[0]?.message?.content ?? "",
+      content: message?.content ?? "",
       usage: parsed.usage,
+      reasoning: reasoning || undefined,
     };
   }
 
-  private parseClaudeResponse(data: unknown): { content: string; usage?: ModelUsage } {
+  private parseClaudeResponse(data: unknown): { content: string; usage?: ModelUsage; reasoning?: string } {
     const parsed = data as {
-      content?: Array<{ type?: string; text?: string }>;
+      content?: Array<{ type?: string; text?: string; thinking?: string }>;
       usage?: {
         input_tokens?: number;
         output_tokens?: number;
@@ -1058,12 +599,20 @@ export class AiService {
       };
     };
     const content = (parsed.content ?? [])
+      .filter((block) => block.type === "text")
       .map((block) => block.text ?? "")
       .join("");
+    // Claude 思考块以 type=thinking 返回，思考过程在该块的 thinking 字段。
+    const reasoning = (parsed.content ?? [])
+      .filter((block) => block.type === "thinking")
+      .map((block) => block.thinking ?? "")
+      .join("\n")
+      .trim();
 
     return {
       content,
       usage: this.mapClaudeUsage(parsed.usage),
+      reasoning: reasoning || undefined,
     };
   }
 
@@ -1090,413 +639,189 @@ export class AiService {
     };
   }
 
-  async streamModel(
-    systemPrompt: string,
-    userPrompt: string,
-    modelConfig: AiModelCallConfig,
-    onChunk: (chunk: string) => void,
-    options?: {
-      baseURL?: string;
-      apiKey?: string;
-      timeoutMs?: number;
-      signal?: AbortSignal;
-    },
-  ): Promise<void> {
-    const baseURL = options?.baseURL ?? this.config.baseURL;
-    const apiKey = options?.apiKey ?? this.config.apiKey;
-    const timeoutMs = options?.timeoutMs ?? this.config.timeoutMs;
-    const url = `${baseURL}/chat/completions`;
-
-    const controller = new AbortController();
-    let timedOut = false;
-    const timeout = setTimeout(
-      () => {
-        timedOut = true;
-        controller.abort();
-      },
-      timeoutMs,
-    );
-    const abortFromParent = () => controller.abort();
-    options?.signal?.addEventListener("abort", abortFromParent);
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: modelConfig.model,
-          temperature: modelConfig.temperature,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt.split(AiService.CACHE_SPLIT).join("") },
-          ],
-          ...(modelConfig.thinking !== false ? { thinking: { type: "enabled" } } : {}),
-          reasoning_effort: modelConfig.reasoningEffort,
-          stream: true,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(
-          `API returned ${response.status}: ${body.slice(0, 200)}`,
-        );
-      }
-
-      if (!response.body) {
-        throw new Error("API returned empty stream");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const chunk = this.parseStreamLine(line);
-          if (chunk === null) {
-            continue;
-          }
-
-          if (chunk === "[DONE]") {
-            return;
-          }
-
-          if (chunk.length > 0) {
-            onChunk(chunk);
-          }
-        }
-      }
-
-      buffer += decoder.decode();
-      const finalChunk = this.parseStreamLine(buffer);
-      if (finalChunk && finalChunk !== "[DONE]") {
-        onChunk(finalChunk);
-      }
-    } catch (error) {
-      if (timedOut) {
-        throw new Error(`模型调用超时（${timeoutMs}ms）`);
-      }
-
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-      options?.signal?.removeEventListener("abort", abortFromParent);
-    }
-  }
-
-  private parseStreamLine(line: string): string | null {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      return null;
-    }
-
-    const payload = trimmed.startsWith("data:")
-      ? trimmed.slice("data:".length).trim()
-      : trimmed;
-    if (!payload) {
-      return null;
-    }
-
-    if (payload === "[DONE]") {
-      return "[DONE]";
-    }
-
-    try {
-      const parsed = JSON.parse(payload) as {
-        choices?: Array<{
-          delta?: { content?: string };
-          message?: { content?: string };
-          text?: string;
-        }>;
-      };
-      return parsed.choices?.[0]?.delta?.content ??
-        parsed.choices?.[0]?.message?.content ??
-        parsed.choices?.[0]?.text ??
-        "";
-    } catch {
-      return null;
-    }
-  }
-
   private describeModelConfig(config: AiModelCallConfig): string {
     const format = config.format ?? "openai";
     const maxTokens = config.maxTokens != null ? `/maxTokens=${config.maxTokens}` : "";
     return `${config.model}/format=${format}/temp=${config.temperature}/reasoning=${config.reasoningEffort}${maxTokens}`;
   }
+}
 
-  private parseSpeechResult(
-    raw: string,
-    context: GameContext,
-  ): ParsedSpeechContent {
-    const parsed = this.extractJson(raw);
-    if (!parsed) {
-      return { type: "skip" };
-    }
-
-    if (parsed.type === "skip") {
-      return { type: "skip" };
-    }
-
-    if (parsed.type === "speak" && typeof parsed.content === "string") {
-      const content = this.trimSpeechContent(parsed.content);
-      if (content.length > 0) {
-        return { type: "speak", content };
-      }
-    }
-
-    return { type: "skip" };
+function formatThinking(value: boolean | undefined): string {
+  if (value === true) {
+    return "on";
   }
-
-  private parseSimulatedHumanSpeechResult(raw: string):
-    | {
-        type: "speak";
-        content: string;
-        targetResponseDelayMs: number;
-        nextCheckAfterMs: number;
-      }
-    | { type: "skip"; nextCheckAfterMs: number } {
-    const parsed = this.extractJson(raw);
-    if (!parsed) {
-      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
-    }
-
-    if (parsed.type === "skip") {
-      return {
-        type: "skip",
-        nextCheckAfterMs:
-          this.readPositiveInteger(parsed.nextCheckAfterMs) ??
-          DEFAULT_AI_NEXT_CHECK_MS,
-      };
-    }
-
-    if (parsed.type === "speak" && typeof parsed.content === "string") {
-      const content = this.trimSpeechContent(parsed.content);
-      if (content.length > 0) {
-        return {
-          type: "speak",
-          content,
-          targetResponseDelayMs:
-            this.readPositiveInteger(parsed.targetResponseDelayMs) ?? 4_000,
-          nextCheckAfterMs:
-            this.readPositiveInteger(parsed.nextCheckAfterMs) ??
-            DEFAULT_AI_NEXT_CHECK_MS,
-        };
-      }
-    }
-
-    return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
+  if (value === false) {
+    return "off";
   }
+  return "unset";
+}
 
-  private trimSpeechContent(content: string): string {
-    return content.trim().slice(0, MAX_MODEL_SPEECH_CONTENT_LENGTH);
+/** 模型选择“这轮先看着”：整条回复只是沉默标记时按不发言处理。 */
+function isSilenceResponse(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return true;
   }
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[[\]【】()（）「」<>《》\s]/g, "");
+  return normalized === "skip" || normalized === "沉默" || normalized === "pass";
+}
 
-  private parseSpeechStrategyResult(raw: string): AiSpeechStrategyAction {
-    const parsed = this.extractJson(raw);
-    if (!parsed) {
-      this.logger.warn(
-        `Speech strategy parse failed: invalid JSON. raw="${raw.slice(0, 500)}"`,
-      );
-      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
-    }
+/** 清掉模型偶尔带上的包裹引号、自报编号前缀和多余换行，落到一行聊天发言。 */
+function cleanSpeech(raw: string, seatNo: number): string {
+  let text = raw.trim();
+  text = text.replace(/^["'“”‘’「」『』]+/, "").replace(/["'“”‘’「」『』]+$/, "").trim();
+  text = text
+    .replace(new RegExp(`^\\s*(?:P?\\s*${seatNo}\\s*号?|P${seatNo})\\s*[:：]\\s*`, "i"), "")
+    .trim();
+  return text.replace(/\s+/g, " ").trim().slice(0, MAX_SPEECH_LENGTH);
+}
 
-    if (parsed.type === "skip") {
-      const nextCheckAfterMs = this.readPositiveInteger(
-        parsed.nextCheckAfterMs,
-      );
-      if (!nextCheckAfterMs) {
-        this.logger.warn(
-          `Speech strategy parse failed: skip missing nextCheckAfterMs. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
-        );
-      }
-
-      return {
-        type: "skip",
-        reason: this.readString(parsed.reason) ?? undefined,
-        nextCheckAfterMs: nextCheckAfterMs ?? DEFAULT_AI_NEXT_CHECK_MS,
-      };
-    }
-
-    if (parsed.type !== "speak") {
-      this.logger.warn(
-        `Speech strategy parse failed: unexpected type="${String(parsed.type)}"`,
-      );
-      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
-    }
-
-    if (!this.isRecord(parsed.strategy)) {
-      this.logger.warn(
-        `Speech strategy parse failed: missing strategy object. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
-      );
-      return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
-    }
-
-    const targetResponseDelayMs = this.readPositiveInteger(
-      parsed.targetResponseDelayMs,
-    );
-    const nextCheckAfterMs = this.readPositiveInteger(
-      parsed.nextCheckAfterMs,
-    );
-    const replyTo = this.readString(parsed.strategy.replyTo);
-    const speechAct = this.readString(parsed.strategy.speechAct);
-    const publicPoint = this.readString(parsed.strategy.publicPoint);
-    const tone = this.readString(parsed.strategy.tone);
-    const maxSentences = this.readPositiveInteger(
-      parsed.strategy.maxSentences,
-    );
-    const constraints = this.readRequiredStringArray(parsed.strategy.constraints);
-    const avoidPhrases = this.readRequiredStringArray(
-      parsed.strategy.avoidPhrases,
-    );
-    if (
-      replyTo &&
-      speechAct &&
-      publicPoint &&
-      tone &&
-      maxSentences &&
-      targetResponseDelayMs &&
-      nextCheckAfterMs &&
-      constraints &&
-      avoidPhrases
-    ) {
-      return {
-        type: "speak",
-        strategy: {
-          replyTo,
-          speechAct,
-          publicPoint,
-          tone,
-          maxSentences,
-          constraints,
-          avoidPhrases,
-        },
-        targetResponseDelayMs,
-        nextCheckAfterMs,
-      };
-    }
-
-    this.logger.warn(
-      `Speech strategy parse failed: invalid strategy fields. parsed=${JSON.stringify(parsed).slice(0, 500)}`,
-    );
-    return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS };
-  }
-
-  private readPositiveInteger(value: unknown): number | null {
-    if (typeof value === "number" && Number.isInteger(value) && value > 0) {
-      return value;
-    }
-
-    if (typeof value === "string") {
-      const match = value.match(/\d+/);
-      if (match) {
-        const parsed = Number(match[0]);
-        if (Number.isInteger(parsed) && parsed > 0) {
-          return parsed;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  private parseVoteResult(
-    raw: string,
-    context: GameContext,
-  ): AiVoteAction | null {
-    const parsed = this.extractJson(raw);
-    if (!parsed) {
-      return null;
-    }
-
-    if (
-      parsed.type === "vote" &&
-      typeof parsed.targetPlayerId === "string"
-    ) {
-      const isValidTarget = context.alivePlayers.some(
-        (p) => p.id === parsed.targetPlayerId,
-      );
-      if (isValidTarget) {
-        return {
-          type: "vote",
-          targetPlayerId: parsed.targetPlayerId,
-          reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
-        };
-      }
-    }
-
-    return null;
-  }
-
-  private extractJson(text: string): Record<string, unknown> | null {
-    // Try direct parse first
+/**
+ * 解析 v4.0 投票输出：优先按一行 JSON `{"vote":"代号","reason":"..."}` 取票；
+ * 模型偶尔没按 JSON 走时，兜底直接从整段里抠一个编号。reason 仅用于日志。
+ */
+function parseVote(raw: string): { targetSeatNo: number | null; reason: string } {
+  const jsonText = raw.match(/\{[\s\S]*\}/)?.[0];
+  if (jsonText) {
     try {
-      return JSON.parse(text.trim());
+      const parsed = JSON.parse(jsonText) as { vote?: unknown; reason?: unknown };
+      const targetSeatNo = parseSeatNo(
+        typeof parsed.vote === "string" ? parsed.vote : null,
+      );
+      const reason =
+        typeof parsed.reason === "string" ? parsed.reason.trim().slice(0, 40) : "";
+      if (targetSeatNo != null) {
+        return { targetSeatNo, reason };
+      }
     } catch {
-      // Try extracting JSON from markdown code block
+      // 落到下面的宽松解析。
     }
+  }
+  return { targetSeatNo: parseSeatNo(raw), reason: "" };
+}
 
-    const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) {
-      try {
-        return JSON.parse(codeBlockMatch[1].trim());
-      } catch {
-        // continue
-      }
-    }
-
-    // Try finding JSON object in text
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]);
-      } catch {
-        // give up
-      }
-    }
-
+/** 把模型给的票面（"3号" / "P3" / "3" / 句中夹带的编号）归一成座位号。 */
+function parseSeatNo(value: string | null | undefined): number | null {
+  const raw = (value ?? "").trim();
+  if (!raw) {
     return null;
   }
+  const match =
+    raw.match(/^P\s*(\d+)$/i) ??
+    raw.match(/^(\d+)\s*号/) ??
+    raw.match(/^(\d+)$/) ??
+    raw.match(/(\d+)\s*号/) ??
+    raw.match(/\bP\s*(\d+)\b/i);
+  return match ? Number(match[1]) : null;
+}
 
-  private isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
+/** 单层发言不再由模型给反应时间，按发言长度估一个“打字耗时”，模拟真人不秒回。 */
+function typingDelayForContent(content: string): number {
+  return Math.min(8_000, 1_500 + content.length * 120);
+}
+
+/**
+ * 把聊天记录按轮分组，分成「历史轮次」与「当前轮次」两段，每条渲染成 `N号: 内容`。
+ * 对齐 v4.0 设计稿“注入完整聊天记录”的要求。
+ */
+function formatConversation(context: GameContext): string {
+  const currentRoundNo = context.roundNo;
+  const grouped = new Map<number, Array<{ label: string; content: string }>>();
+  for (const message of context.historicalMessages) {
+    const list = grouped.get(message.roundNo) ?? [];
+    list.push({ label: message.playerName, content: message.content });
+    grouped.set(message.roundNo, list);
+  }
+  const currentList = context.recentMessages.map((message) => ({
+    label: message.playerName,
+    content: message.content,
+  }));
+
+  const historicalRoundNos = Array.from(grouped.keys())
+    .filter((roundNo) => roundNo < currentRoundNo)
+    .sort((left, right) => left - right);
+
+  const historicalSection =
+    historicalRoundNos.length === 0
+      ? "历史轮次：\n（暂无历史聊天记录）"
+      : [
+          "历史轮次：",
+          historicalRoundNos
+            .map((roundNo) => formatRoundConversation(roundNo, grouped.get(roundNo) ?? []))
+            .join("\n"),
+        ].join("\n");
+
+  const currentSection = [
+    `当前轮次（第 ${currentRoundNo} 轮）：`,
+    indentBlock(
+      currentList.length === 0
+        ? "（本轮暂无聊天记录）"
+        : currentList.map((m) => `${m.label}: ${m.content}`).join("\n"),
+    ),
+  ].join("\n");
+
+  return `${historicalSection}\n${currentSection}`;
+}
+
+function formatRoundConversation(
+  roundNo: number,
+  messages: Array<{ label: string; content: string }>,
+): string {
+  const content =
+    messages.length === 0
+      ? "（本轮暂无聊天记录）"
+      : messages.map((m) => `${m.label}: ${m.content}`).join("\n");
+  return `第 ${roundNo} 轮：\n${indentBlock(content)}`;
+}
+
+/** 历史轮次的投票去向 / 票型 / 出局结果（公开信息）。 */
+function formatVoteHistory(voteHistory: RoundVoteSummary[]): string {
+  if (voteHistory.length === 0) {
+    return "（暂无历史投票记录）";
   }
 
-  private readString(value: unknown): string | null {
-    if (typeof value !== "string") {
-      return null;
-    }
+  return voteHistory
+    .slice()
+    .sort((left, right) => left.roundNo - right.roundNo)
+    .map((round) => formatRoundVoteHistory(round))
+    .join("\n");
+}
 
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
+function formatRoundVoteHistory(round: RoundVoteSummary): string {
+  const votes =
+    round.votes.length === 0
+      ? "（无人投票）"
+      : round.votes
+          .map((v) => `${v.voterSeatNo}号 -> ${v.targetSeatNo}号`)
+          .join("，");
+
+  const tally = new Map<number, number>();
+  for (const vote of round.votes) {
+    tally.set(vote.targetSeatNo, (tally.get(vote.targetSeatNo) ?? 0) + 1);
   }
+  const tallies =
+    tally.size === 0
+      ? "（无票型统计）"
+      : Array.from(tally.entries())
+          .sort((left, right) => right[1] - left[1])
+          .map(([seatNo, count]) => `${seatNo}号 ${count}票`)
+          .join("，");
 
-  private readRequiredStringArray(value: unknown): string[] | null {
-    if (!Array.isArray(value)) {
-      return null;
-    }
+  const resultText =
+    round.eliminatedSeatNo != null
+      ? `${round.eliminatedSeatNo}号 出局`
+      : round.votes.length > 0
+        ? "平票，无人出局"
+        : "无人出局";
 
-    const items = value
-      .filter((item): item is string => typeof item === "string")
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-    return items.length === value.length ? items : null;
-  }
+  return `第 ${round.roundNo} 轮投票：\n${indentBlock(`投票去向：${votes}\n票型统计：${tallies}\n结果：${resultText}`)}`;
+}
 
-  private isSimulatedHumanContext(context: GameContext): boolean {
-    return context.myPlayerType === "human" && context.mySimulated;
-  }
+function indentBlock(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => `  ${line}`)
+    .join("\n");
 }

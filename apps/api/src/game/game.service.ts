@@ -2,7 +2,6 @@ import { Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 import { AiService } from "../ai/ai.service";
-import { PromptRegistry } from "../ai/prompt-registry";
 import { getActivePersonas, getAiPersonaById } from "../ai/ai.personas";
 import { GameContext, RoundVoteSummary, VoteRecord } from "../ai/ai.types";
 import { AuthService } from "../auth/auth.service";
@@ -117,7 +116,6 @@ export class GameService {
     private readonly aiService: AiService,
     private readonly authService: AuthService,
     private readonly roomRepository: GameRoomRepository,
-    private readonly prompts: PromptRegistry,
   ) {}
 
   private snapshot(room: Room): RoomSnapshot {
@@ -522,7 +520,6 @@ export class GameService {
       }
 
       latest.status = "playing";
-      latest.promptGenerationId = this.prompts.getActiveGenerationId();
       latest.winner = null;
       latest.currentRound = 1;
       latest.phase = "discussion";
@@ -2182,7 +2179,7 @@ export class GameService {
     const recentMessages = room.messages
       .filter((m) => m.roundNo === room.currentRound)
       .map((m) => ({
-        playerName: `${seatMap.get(m.playerId) ?? "?"}号位`,
+        playerName: `${seatMap.get(m.playerId) ?? "?"}号`,
         content: m.content,
       }));
 
@@ -2190,7 +2187,7 @@ export class GameService {
       .filter((m) => m.roundNo < room.currentRound)
       .map((m) => ({
         roundNo: m.roundNo,
-        playerName: `${seatMap.get(m.playerId) ?? "?"}号位`,
+        playerName: `${seatMap.get(m.playerId) ?? "?"}号`,
         content: m.content,
       }));
 

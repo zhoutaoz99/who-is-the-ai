@@ -36,8 +36,6 @@ export interface AiConfig extends AiModelCallConfig {
   baseURL: string;
   apiKey: string;
   timeoutMs: number;
-  speechStrategy: AiModelCallConfig;
-  speechExpression: AiModelCallConfig;
 }
 
 export type AiSpeechAction =
@@ -50,36 +48,28 @@ export type AiSpeechAction =
     }
   | { type: "skip"; nextCheckAfterMs: number; callRecords: AiCallRecord[] };
 
-export interface AiSpeechStrategy {
-  replyTo: string;
-  speechAct: string;
-  publicPoint: string;
-  tone: string;
-  maxSentences: number;
-  constraints: string[];
-  avoidPhrases: string[];
-}
-
-export interface AiPersonaContext {
+// v4.0 单层方案的人设卡：整张卡直接拼进讨论/投票 system 末尾的 {{persona}}。
+export interface PersonaCard {
   id: string;
-  name: string;
-  speechStyle: string;
-  sentenceStyle: string;
-  responseBias: string;
-  toneRules: string[];
-  avoidPhrases: string[];
-  typingHabit?: string;
-  sampleLines?: string[];
+  // 类型标签，如「摆烂躺平型」；用于抽卡时的多样性与前端展示。
+  group: string;
+  // 角色名，如「阿条」。
+  nickname: string;
+  // v4.0 人设卡字段：直接拼进 system 模板末尾的 {{persona}}。
+  basicSetting: string;
+  personality: string;
+  speakingStyle: string;
+  catchphrases: string;
+  blindSpots: string;
+  howToPlay: string;
+  examples: string[];
 }
 
-export type AiSpeechStrategyAction =
-  | {
-      type: "speak";
-      strategy: AiSpeechStrategy;
-      targetResponseDelayMs: number;
-      nextCheckAfterMs: number;
-    }
-  | { type: "skip"; reason?: string; nextCheckAfterMs: number };
+export interface PersonaOption {
+  id: string;
+  label: string;
+  group: string;
+}
 
 export type AiVoteAction = {
   type: "vote";
@@ -114,7 +104,7 @@ export interface GameContext {
   mySimulated: boolean;
   myModelId?: string;
   mySeatNo: number;
-  myPersona: AiPersonaContext | null;
+  myPersona: PersonaCard | null;
   alivePlayers: Array<{ id: string; seatNo: number }>;
   recentMessages: ChatMessageInput[];
   historicalMessages: Array<ChatMessageInput & { roundNo: number }>;
@@ -125,11 +115,8 @@ export interface GameContext {
 }
 
 export type AiCallType =
-  | "speech-strategy"
-  | "speech-expression"
-  | "vote"
-  | "sim-human-speech"
-  | "sim-human-vote";
+  | "discussion"
+  | "vote";
 
 export interface AiCallRecord {
   roomId: string;
