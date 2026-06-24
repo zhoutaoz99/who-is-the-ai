@@ -112,6 +112,13 @@ export interface GameContext {
   currentVoteCounts: Record<string, number>;
   voteHistory: RoundVoteSummary[];
   shortMemory: AiShortMemory | null;
+  // ===== 离线沙盒(仅 sandbox 房间使用,产品对局留空,缺省按被测 AI 处理) =====
+  /** 角色:决定选哪套提示词;缺省/ai_under_test 走现有 AI 玩家提示词。 */
+  myRole?: "ai_under_test" | "detective" | "filler";
+  /** 侦探静态立场补充(roster.base_intent)。 */
+  myBaseIntent?: string;
+  /** 本轮注入意图(intent_schedule 命中当前轮+本槽位时)。 */
+  myInjectedIntent?: string;
 }
 
 export type AiCallType =

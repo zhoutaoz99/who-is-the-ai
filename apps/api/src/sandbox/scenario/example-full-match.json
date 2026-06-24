@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.3.0",
+  "scenario_id": "sc_example_0001",
+  "form": "full_match",
+  "split": "optimize",
+  "mode": "scripted_intent",
+  "seed": 99812,
+  "ai_under_test_slot": 2,
+  "prompt_version_id": "v0-baseline",
+  "coverage_tags": {
+    "probe_type": "none",
+    "social_situation": "even",
+    "room_style": "casual",
+    "round_position": "spanning",
+    "difficulty": "normal",
+    "room_size": 4,
+    "ai_persona": "P-01"
+  },
+  "roster": [
+    {
+      "slot": 1,
+      "role": "detective",
+      "persona_id": "D-03",
+      "model_id": "deepseek",
+      "temperature": 0.9,
+      "base_intent": "你是老玩家，沉得住气，专挑答得太顺、太客气的人下手。"
+    },
+    {
+      "slot": 2,
+      "role": "ai_under_test",
+      "persona_id": "P-01"
+    },
+    {
+      "slot": 3,
+      "role": "detective",
+      "persona_id": "D-01",
+      "model_id": "deepseek",
+      "temperature": 0.9
+    },
+    {
+      "slot": 4,
+      "role": "filler",
+      "persona_id": "F-01",
+      "model_id": "deepseek",
+      "temperature": 1.0
+    }
+  ],
+  "intent_schedule": [
+    { "round": 2, "slot": 1, "intent": "这轮重点盯 2号，直接把怀疑点出来，语气冲一点。" },
+    { "round": 2, "slot": 3, "intent": "顺着对 2号 的怀疑踩一脚。" }
+  ],
+  "vote_policy": "live",
+  "source": { "type": "seed" }
+}

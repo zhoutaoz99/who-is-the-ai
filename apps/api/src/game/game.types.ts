@@ -9,6 +9,9 @@ export type GamePhase =
   | "game_over";
 export type Winner = "human" | "ai" | null;
 
+/** 离线沙盒角色:被测 AI / 侦探 / 填充;产品对局留空。 */
+export type SandboxRole = "ai_under_test" | "detective" | "filler";
+
 export interface Player {
   id: string;
   accountId?: string;
@@ -26,6 +29,11 @@ export interface Player {
   aiLastConsideredRound?: number;
   aiLastConsideredAt?: number;
   aiSkipBackoffUntil?: number;
+  // ===== 离线沙盒(仅 sandbox 房间使用,产品对局留空) =====
+  /** 该槽位在场景 roster 中的角色,决定用哪套提示词。 */
+  sandboxRole?: SandboxRole;
+  /** 静态立场/性格补充,注入侦探提示词的 base_intent 槽。 */
+  baseIntent?: string;
 }
 
 export interface ChatMessage {
@@ -106,6 +114,13 @@ export interface Room {
   };
   pointAwards: PointAward[];
   rewardSettledAt: string | null;
+  // ===== 离线沙盒(仅 sandbox 房间使用) =====
+  /** 标记该房来自某场景,置位时跳过开局随机洗座、并按 roster 顺序保留座位。 */
+  sandboxScenarioId?: string;
+  /** 逐轮给对手注入的"本轮意图"(scripted_intent 固定剧本);slot=玩家编号。 */
+  sandboxIntentSchedule?: Array<{ round: number; slot: number; intent: string }>;
+  /** 建房时冻结的场景 JSON(opaque:运行时不读,仅沙盒 prepare/start/config 用)。 */
+  sandboxScenario?: unknown;
   createdAt: string;
   updatedAt: string;
 }

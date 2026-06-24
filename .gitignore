@@ -8,3 +8,4 @@ ai-models.json
 next-env.d.ts
 *.tsbuildinfo
 replay*.json
+sandbox-out

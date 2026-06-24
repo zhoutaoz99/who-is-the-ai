@@ -6,6 +6,12 @@ import { useAuth } from "./lib/auth-client";
 import { useGameClient } from "./lib/game-client";
 import { humanCount, statusLabel, winnerLabel } from "./lib/game-utils";
 
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:3001`
+    : "http://localhost:3001");
+
 function IconPlus(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -270,6 +276,7 @@ export default function Home() {
   const ROOMS_PER_PAGE = 5;
   const [roomPage, setRoomPage] = useState(1);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [sandboxPending, setSandboxPending] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const refreshRoomsRef = useRef(refreshRooms);
@@ -352,6 +359,29 @@ export default function Home() {
     const result = await createDebugAutoAiRoom();
     if (result.ok && result.room) {
       router.push(`/room/${result.room.id}`);
+    }
+  }
+
+  // 离线沙盒:建一个等待中的沙盒房,跳到配置页(可改模型/时长后再开局)。
+  async function handleRunSandbox() {
+    setError("");
+    setSandboxPending(true);
+    try {
+      const res = await fetch(`${API_URL}/sandbox/prepare`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const data: { ok: boolean; roomId?: string; error?: string } = await res.json();
+      if (data.ok && data.roomId) {
+        router.push(`/sandbox/${data.roomId}`);
+      } else {
+        setError(data.error ?? "沙盒房创建失败");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "沙盒请求失败");
+    } finally {
+      setSandboxPending(false);
     }
   }
 
@@ -548,6 +578,30 @@ export default function Home() {
                 onClick={() => router.push("/iteration")}
               >
                 进入自动迭代
+              </button>
+            </div>
+          )}
+
+          {debug && (
+            <div className="debug-auto-ai-entry">
+              <div className="lobby-card-header">
+                <div className="lobby-icon debug-ai-icon" aria-hidden="true">
+                  <IconBot width="20" height="20" />
+                </div>
+                <div>
+                  <p className="eyebrow">Offline Sandbox</p>
+                  <h2>离线沙盒对局</h2>
+                </div>
+              </div>
+              <p className="muted-text">
+                按场景(被测 AI + 侦探 + 填充)配置一局,改完参数后开局并实时观战。
+              </p>
+              <button
+                className="secondary"
+                disabled={sandboxPending}
+                onClick={handleRunSandbox}
+              >
+                {sandboxPending ? "创建中…" : "配置沙盒对局"}
               </button>
             </div>
           )}

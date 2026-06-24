@@ -13,5 +13,6 @@ import { DataModule } from "../data/data.module";
   imports: [AiModule, AuthModule, DataModule],
   controllers: [GameController],
   providers: [GameGateway, GameService, GameRoomRepository],
+  exports: [GameService],
 })
 export class GameModule {}

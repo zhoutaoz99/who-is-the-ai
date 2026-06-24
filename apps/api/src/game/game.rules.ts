@@ -19,6 +19,7 @@ import {
   Player,
   PlayerType,
   Room,
+  SandboxRole,
   Winner,
 } from "./game.types";
 
@@ -295,6 +296,57 @@ export function createDebugAutoAiPlayers(
   }
 
   return players;
+}
+
+// ===== 离线沙盒:按场景 roster 建玩家 =====
+
+export interface SandboxPlayerSpec {
+  /** 玩家编号(座位号),1..N;直接作为 Player.seatNo。 */
+  slot: number;
+  role: SandboxRole;
+  personaId: string;
+  modelId?: string;
+  baseIntent?: string;
+}
+
+/**
+ * 按场景 roster 逐槽位建玩家:ai_under_test→type:"ai";detective/filler→
+ * type:"human",simulated:true(均 model-driven,复用现有调度)。slot 即座位号,
+ * 直接落到 seatNo;role/baseIntent 落到 Player 上供提示词分支与意图注入。
+ */
+export function createSandboxPlayers(
+  specs: SandboxPlayerSpec[],
+  aiUnderTestModelId?: string,
+): Player[] {
+  const usedAiNames: string[] = [];
+  const usedHumanNames: string[] = [];
+  return specs.map((spec, index) => {
+    const isAiUnderTest = spec.role === "ai_under_test";
+    const name = isAiUnderTest
+      ? pickUniqueName(AI_NAMES, usedAiNames, index)
+      : pickUniqueName(SIMULATED_HUMAN_NAMES, usedHumanNames, index);
+    return {
+      id: randomUUID(),
+      name,
+      type: (isAiUnderTest ? "ai" : "human") as PlayerType,
+      simulated: isAiUnderTest ? undefined : true,
+      status: "alive" as const,
+      seatNo: spec.slot,
+      lastSpokeAt: 0,
+      connected: true,
+      aiPersonaId: spec.personaId,
+      aiModelId: isAiUnderTest ? aiUnderTestModelId : spec.modelId,
+      sandboxRole: spec.role,
+      baseIntent: spec.baseIntent,
+    };
+  });
+}
+
+function pickUniqueName(pool: string[], used: string[], index: number): string {
+  const available = pool.filter((name) => !used.includes(name));
+  const chosen = available[0] ?? pool[index % pool.length] ?? `玩家${index + 1}`;
+  used.push(chosen);
+  return chosen;
 }
 
 export function createRoomId() {

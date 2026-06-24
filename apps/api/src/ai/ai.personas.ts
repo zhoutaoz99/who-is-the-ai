@@ -101,11 +101,26 @@ export function getPersonaOptions(): PersonaOption[] {
   }));
 }
 
+// 离线沙盒注册的额外人格(侦探/填充卡)。不进 PERSONA_POOL,故不污染产品抽卡与
+// debug 人格列表;只在按 id 查找时作为兜底来源,供 sandbox 房间的对手槽位解析人格。
+const extraPersonas = new Map<string, PersonaCard>();
+
+/** 注册额外人格卡(幂等)。由 SandboxModule 初始化时调用。 */
+export function registerExtraPersonas(cards: PersonaCard[]): void {
+  for (const card of cards) {
+    extraPersonas.set(card.id, card);
+  }
+}
+
 export function findPersonaById(personaId: string | null | undefined): PersonaCard | null {
   if (!personaId) {
     return null;
   }
-  return PERSONA_POOL.find((card) => card.id === personaId) ?? null;
+  return (
+    PERSONA_POOL.find((card) => card.id === personaId) ??
+    extraPersonas.get(personaId) ??
+    null
+  );
 }
 
 /** 当前可用的人格库。单层方案下人格库是固定的 4 张卡，直接返回 PERSONA_POOL。 */

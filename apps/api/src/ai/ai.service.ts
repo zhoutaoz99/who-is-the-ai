@@ -18,6 +18,8 @@ import {
 import { loadPrompt, renderTemplate } from "./prompt-loader";
 import { formatPersonaCard } from "./ai.personas";
 
+type SpeechRole = "ai_under_test" | "detective" | "filler";
+
 const DEFAULT_AI_NEXT_CHECK_MS = 10_000;
 // 单行气泡上限，与真人发言（normalizeContent）保持一致。
 const MAX_SPEECH_LENGTH = 120;
@@ -215,7 +217,7 @@ export class AiService {
     const callOptions = override?.connection;
 
     try {
-      const systemPrompt = this.buildDiscussionSystemPrompt(persona, context.mySeatNo);
+      const systemPrompt = this.buildSpeechSystemPrompt(persona, context);
       const userPrompt = this.buildDiscussionUserPrompt(context);
       this.logModelRequest("DISCUSSION", context, modelConfig, systemPrompt, userPrompt);
       const startedAt = new Date().toISOString();
@@ -289,7 +291,7 @@ export class AiService {
     const callOptions = override?.connection;
 
     try {
-      const systemPrompt = this.buildVoteSystemPrompt(persona, context.mySeatNo);
+      const systemPrompt = this.buildVoteSystemPromptForRole(persona, context);
       const userPrompt = this.buildVoteUserPrompt(context);
       this.logModelRequest("VOTE", context, modelConfig, systemPrompt, userPrompt);
       const voteStartedAt = new Date().toISOString();
@@ -331,6 +333,41 @@ export class AiService {
       "{{persona}}",
       formatPersonaCard(persona, seatNo),
     );
+  }
+
+  /**
+   * 离线沙盒按 role 选发言系统提示词:detective/filler 用各自模板并拼 base_intent /
+   * 本轮 intent;缺省/ai_under_test 走现有 AI 玩家提示词,对产品对局完全无影响。
+   */
+  private buildSpeechSystemPrompt(persona: PersonaCard, context: GameContext): string {
+    const role: SpeechRole = context.myRole ?? "ai_under_test";
+    const card = formatPersonaCard(persona, context.mySeatNo);
+    if (role === "detective") {
+      return renderTemplate("sandbox/detective-discussion.txt", {
+        persona: card,
+        base_intent: context.myBaseIntent ?? "",
+        round_intent: context.myInjectedIntent ?? "",
+      });
+    }
+    if (role === "filler") {
+      return renderTemplate("sandbox/filler-discussion.txt", {
+        persona: card,
+        base_intent: context.myBaseIntent ?? "",
+      });
+    }
+    return this.buildDiscussionSystemPrompt(persona, context.mySeatNo);
+  }
+
+  /** 离线沙盒按 role 选投票系统提示词:detective/filler 用侦探投票模板,其余走 AI 投票提示词。 */
+  private buildVoteSystemPromptForRole(persona: PersonaCard, context: GameContext): string {
+    const role: SpeechRole = context.myRole ?? "ai_under_test";
+    if (role === "detective" || role === "filler") {
+      return renderTemplate("sandbox/detective-vote.txt", {
+        persona: formatPersonaCard(persona, context.mySeatNo),
+        round_intent: context.myInjectedIntent ?? "",
+      });
+    }
+    return this.buildVoteSystemPrompt(persona, context.mySeatNo);
   }
 
   private buildDiscussionUserPrompt(context: GameContext): string {

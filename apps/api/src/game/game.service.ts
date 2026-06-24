@@ -42,6 +42,8 @@ import {
   createAiPlayers,
   createDebugAutoAiPlayers,
   createHumanPlayer,
+  createSandboxPlayers,
+  type SandboxPlayerSpec,
   createSimulatedHumanPlayer,
   createRoomId,
   futureIso,
@@ -218,6 +220,64 @@ export class GameService {
       room: this.snapshot(room),
       playerId: room.ownerPlayerId,
     };
+  }
+
+  /**
+   * 离线沙盒:按场景 roster 建一个 debugAutoAi 房间(全 model-driven),写入意图调度,
+   * 复用产品运行时的对局循环与 gateway 实时可视化(观战模式)。
+   */
+  async createSandboxRoom(params: {
+    scenarioId: string;
+    /** 冻结的场景 JSON(opaque,仅沙盒后续读取)。 */
+    scenarioJson?: unknown;
+    specs: SandboxPlayerSpec[];
+    aiUnderTestModelId?: string;
+    intentSchedule?: Array<{ round: number; slot: number; intent: string }>;
+    discussionSeconds?: number;
+  }): Promise<ActionResult> {
+    if (!DEBUG) {
+      return this.fail("调试模式未开启(沙盒需 DEBUG=true)");
+    }
+
+    const now = new Date().toISOString();
+    const aiUnderTestModelId = params.aiUnderTestModelId ?? this.aiService.getDefaultModelId();
+    const players = createSandboxPlayers(params.specs, aiUnderTestModelId);
+    const room: Room = {
+      id: createRoomId(),
+      status: "waiting",
+      ownerPlayerId: players[0].id,
+      debugAutoAi: true,
+      debugAutoAiSequentialSpeech: true,
+      sandboxScenarioId: params.scenarioId,
+      sandboxScenario: params.scenarioJson,
+      sandboxIntentSchedule: params.intentSchedule,
+      players,
+      discussionDurationMs: normalizeDiscussionDuration({
+        discussionDurationSeconds: params.discussionSeconds,
+      }),
+      currentRound: 0,
+      phase: "waiting",
+      phaseEndsAt: null,
+      winner: null,
+      messages: [],
+      votes: [],
+      pointAwards: [],
+      rewardSettledAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await this.roomRepository.save(room);
+    return {
+      ok: true,
+      room: this.snapshot(room),
+      playerId: room.ownerPlayerId,
+    };
+  }
+
+  /** 离线沙盒:取内部完整 Room(含 messages/votes/aiMemories/players)以构建 MatchRecord。 */
+  async getRoomInternal(roomId: string | undefined): Promise<Room | null> {
+    return this.getRoom(roomId);
   }
 
   async joinRoom(
@@ -562,10 +622,13 @@ export class GameService {
         }
       }
 
-      latest.players.sort(() => Math.random() - 0.5);
-      latest.players.forEach((player, index) => {
-        player.seatNo = index + 1;
-      });
+      // 沙盒房按 roster 顺序保留座位(slot↔seat 稳定);其余房随机洗座。
+      if (!latest.sandboxScenarioId) {
+        latest.players.sort(() => Math.random() - 0.5);
+        latest.players.forEach((player, index) => {
+          player.seatNo = index + 1;
+        });
+      }
 
       touch(latest);
       return true;
@@ -2241,7 +2304,9 @@ export class GameService {
       mySimulated: isSimulatedHuman(aiPlayer),
       myModelId: aiPlayer.aiModelId,
       mySeatNo: aiPlayer.seatNo,
-      myPersona: aiPlayer.type === "ai" ? getAiPersonaById(aiPlayer.aiPersonaId) : null,
+      // 任何带 personaId 的 model-driven 玩家(含沙盒侦探/填充)都解析人格;
+      // 普通 debug 模拟真人无 personaId,解析为 null,行为不变。
+      myPersona: getAiPersonaById(aiPlayer.aiPersonaId),
       alivePlayers,
       recentMessages,
       historicalMessages,
@@ -2249,7 +2314,22 @@ export class GameService {
       currentVoteCounts,
       voteHistory,
       shortMemory: room.aiMemories?.[aiPlayer.id] ?? null,
+      myRole: aiPlayer.sandboxRole,
+      myBaseIntent: aiPlayer.baseIntent,
+      myInjectedIntent: this.resolveInjectedIntent(room, aiPlayer),
     };
+  }
+
+  /** 沙盒:命中当前轮 + 本玩家编号(seatNo)的 intent_schedule 时,返回本轮注入意图。 */
+  private resolveInjectedIntent(room: Room, player: Player): string | undefined {
+    if (!room.sandboxIntentSchedule) {
+      return undefined;
+    }
+    return room.sandboxIntentSchedule.find(
+      (directive) =>
+        directive.round === room.currentRound &&
+        directive.slot === player.seatNo,
+    )?.intent;
   }
 
   private rememberAiVote(
