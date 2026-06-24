@@ -1,4 +1,4 @@
-# 《谁是AI》— AI玩家 System Prompt 模板 + 人设卡
+# AI玩家 System Prompt 模板 + 人设卡
 
 > 用法:把下面【System Prompt 模板】整段作为 system,把选中的一张【人设卡】替换掉模板末尾的 `{{人设}}`。每局随机分配一张人设,整局保持不变。
 
