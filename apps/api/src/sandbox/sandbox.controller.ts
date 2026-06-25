@@ -5,25 +5,34 @@ import type { RunConfig, Scenario } from "./scenario/types";
 
 /**
  * 离线沙盒 REST 接口:
- * - POST /sandbox/prepare  建等待房(可带 scenario,缺省用示例),返回 roomId
+ * - GET  /sandbox/examples      内置示例场景清单
+ * - POST /sandbox/prepare       建等待房(可带 scenario_id 或完整 scenario,缺省用默认示例)
  * - GET  /sandbox/:roomId/config  取场景静态配置(前台配置页用)
- * - POST /sandbox/start     开局(后台跑到终局并落盘 MatchRecord)
+ * - POST /sandbox/start         开局(后台跑到终局并落盘 MatchRecord)
  */
 @Controller("sandbox")
 export class SandboxController {
   constructor(private readonly sandbox: SandboxService) {}
 
+  @Get("examples")
+  examples(): { ok: boolean; examples: Array<{ id: string; label: string; form: string }> } {
+    return { ok: true, examples: this.sandbox.getExampleList() };
+  }
+
   @Post("prepare")
   async prepare(
-    @Body() body?: Partial<Scenario> & { run_config?: RunConfig },
+    @Body()
+    body?: Partial<Scenario> & { run_config?: RunConfig; scenario_id?: string },
   ): Promise<{ ok: boolean; roomId?: string; error?: string }> {
     try {
-      const { run_config, ...rest } = body ?? {};
-      const hasScenario = Array.isArray(rest.roster) && rest.roster.length > 0;
-      const result = await this.sandbox.prepare(
-        hasScenario ? (rest as Scenario) : undefined,
-        run_config ?? {},
-      );
+      const { run_config, scenario_id, ...rest } = body ?? {};
+      let scenario: Scenario | undefined;
+      if (Array.isArray(rest.roster) && rest.roster.length > 0) {
+        scenario = rest as Scenario;
+      } else if (scenario_id) {
+        scenario = this.sandbox.loadExampleScenario(scenario_id) ?? undefined;
+      }
+      const result = await this.sandbox.prepare(scenario, run_config ?? {});
       return { ok: true, roomId: result.roomId };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };

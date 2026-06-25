@@ -30,9 +30,6 @@ export function buildMatchRecord(
 
   const transcript: Turn[] = room.messages.map((message, index) => {
     const slot = seatNoOf(message.playerId);
-    const intent = (scenario.intent_schedule ?? []).find(
-      (d) => d.round === message.roundNo && d.slot === slot,
-    )?.intent;
     return {
       idx: index,
       round: message.roundNo,
@@ -40,23 +37,21 @@ export function buildMatchRecord(
       slot,
       role: roleOf(message.playerId),
       text: message.content,
-      is_probe: false,
-      probe_ref: null,
-      injected_intent: intent ?? null,
-      from_seed_history: false,
+      is_probe: message.sandboxIsProbe === true,
+      probe_ref: message.sandboxProbeRef ?? null,
+      from_seed_history: message.sandboxFromSeedHistory === true,
     };
   });
 
   const votes: MatchVote[] = room.votes.map((vote) => {
     const memory = room.aiMemories?.[vote.voterPlayerId];
-    const reason =
-      memory?.votes.find((v) => v.roundNo === vote.roundNo)?.publicReason ?? null;
+    const entry = memory?.votes.find((v) => v.roundNo === vote.roundNo);
     return {
       round: vote.roundNo,
       voter_slot: seatNoOf(vote.voterPlayerId),
       target_slot: seatNoOf(vote.targetPlayerId),
-      reason,
-      policy_applied: "live",
+      reason: entry?.publicReason ?? null,
+      policy_applied: entry?.policyApplied ?? "live",
     };
   });
 
@@ -82,8 +77,10 @@ export function buildMatchRecord(
     });
   }
 
+  const startRound =
+    scenario.form === "spotlight" ? (scenario.seed_history?.start_round ?? 1) : 1;
   const aiPlayer = room.players.find((p) => p.seatNo === scenario.ai_under_test_slot);
-  const outcome = buildOutcome(aiPlayer, room, lastRound);
+  const outcome = buildOutcome(aiPlayer, room, lastRound, startRound);
 
   const models: Record<number, string> = {};
   const personas: Record<number, string> = {};
@@ -104,13 +101,13 @@ export function buildMatchRecord(
     mode: scenario.mode,
     vote_policy: scenario.vote_policy,
     ai_under_test_slot: scenario.ai_under_test_slot,
-    start_round: 1,
+    start_round: startRound,
     models,
     personas,
     transcript,
     votes,
     eliminations,
-    probe_events: [],
+    probe_events: (room.sandboxProbeEvents ?? []) as MatchRecord["probe_events"],
     outcome,
     config: {
       discussion_duration_ms: room.discussionDurationMs,
@@ -128,8 +125,8 @@ function buildOutcome(
   aiPlayer: Player | undefined,
   room: Room,
   lastRound: number,
+  startRound: number,
 ): Outcome {
-  const startRound = 1;
   const eliminatedRound = aiPlayer?.eliminatedRound ?? null;
   const aiWon = room.winner === "ai";
   const survived =

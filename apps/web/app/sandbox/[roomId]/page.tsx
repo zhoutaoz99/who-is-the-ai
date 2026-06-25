@@ -18,7 +18,6 @@ interface RosterEntry {
   role: Role;
   persona_id: string;
   temperature?: number;
-  base_intent?: string;
 }
 
 interface SandboxConfig {
@@ -30,7 +29,26 @@ interface SandboxConfig {
   ai_under_test_slot: number;
   prompt_version_id: string;
   roster: RosterEntry[];
-  intent_schedule: Array<{ round: number; slot: number; intent: string }>;
+  vote_policy_overrides?: Record<number, string>;
+  probe_schedule?: Array<{
+    probe_ref: string;
+    round: number;
+    timing: Record<string, unknown>;
+    from_slot: number;
+  }>;
+  seed_history?: {
+    start_round: number;
+    prior_turns_count: number;
+    max_rounds_forward: number;
+  } | null;
+}
+
+function timingLabel(timing: Record<string, unknown>): string {
+  if (timing.first_turn === true) return "首轮";
+  if (timing.last_turn === true) return "末轮(投票前)";
+  if (typeof timing.after_turn === "number") return `第${timing.after_turn}条后`;
+  if (timing.after_ai_speaks === true) return "被测AI发言后";
+  return JSON.stringify(timing);
 }
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -327,6 +345,11 @@ export default function SandboxConfigPage() {
                         <span className="identity-tag" style={ROLE_STYLE[entry.role]}>
                           {ROLE_LABEL[entry.role]}
                         </span>
+                        {config.vote_policy_overrides?.[entry.slot] && (
+                          <span className="waiting-persona-tag model-tag">
+                            投票:{config.vote_policy_overrides[entry.slot]}
+                          </span>
+                        )}
                         {player?.aiPersonaName && (
                           <span className="waiting-persona-tag">{player.aiPersonaName}</span>
                         )}
@@ -355,44 +378,56 @@ export default function SandboxConfigPage() {
                           <span className="waiting-persona-tag model-tag">{liveModel || "默认"}</span>
                         )}
                       </div>
-                      {entry.base_intent && (
-                        <div className="player-row-status">
-                          <span className="muted-text" style={{ fontSize: 13 }}>
-                            立场：{entry.base_intent}
-                          </span>
-                        </div>
-                      )}
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            {config.intent_schedule.length > 0 && (
+            {config.seed_history && (
+              <div className="section-heading-row" style={{ marginTop: 16 }}>
+                <div className="lobby-card-header">
+                  <div>
+                    <p className="eyebrow">Seed History · spotlight</p>
+                    <h2>预置历史（中盘起跑）</h2>
+                  </div>
+                </div>
+                <div className="player-count-badge">起跑 第{config.seed_history.start_round}轮</div>
+              </div>
+            )}
+            {config.seed_history && (
+              <p className="muted-text" style={{ marginTop: 4 }}>
+                预灌 {config.seed_history.prior_turns_count} 条历史发言；从第 {config.seed_history.start_round} 轮起跑，
+                往后最多跑 {config.seed_history.max_rounds_forward} 轮。
+              </p>
+            )}
+
+            {(config.probe_schedule?.length ?? 0) > 0 && (
               <>
                 <div className="section-heading-row" style={{ marginTop: 16 }}>
                   <div className="lobby-card-header">
                     <div>
-                      <p className="eyebrow">Intent Schedule</p>
-                      <h2>逐轮意图（剧本）</h2>
+                      <p className="eyebrow">Probe Schedule</p>
+                      <h2>探测调度（触发器）</h2>
                     </div>
                   </div>
                 </div>
                 <div className="waiting-player-list">
-                  {config.intent_schedule
+                  {config.probe_schedule!
                     .slice()
-                    .sort((a, b) => a.round - b.round || a.slot - b.slot)
-                    .map((d, i) => (
+                    .sort((a, b) => a.round - b.round)
+                    .map((p, i) => (
                       <div className="player-row waiting-player-row" key={i}>
-                        <div className="player-avatar" style={{ backgroundColor: SEAT_BG[(d.slot - 1) % SEAT_BG.length] }}>
-                          {d.slot}
+                        <div className="player-avatar" style={{ backgroundColor: SEAT_BG[(p.from_slot - 1) % SEAT_BG.length] }}>
+                          {p.from_slot}
                         </div>
                         <div className="player-row-body">
                           <div className="player-row-name">
-                            <strong>第 {d.round} 轮 · {d.slot}号</strong>
+                            <strong>第 {p.round} 轮 · {p.from_slot}号投放</strong>
+                            <span className="waiting-persona-tag">{timingLabel(p.timing)}</span>
                           </div>
                           <div className="player-row-status">
-                            <span className="muted-text" style={{ fontSize: 13 }}>{d.intent}</span>
+                            <span className="muted-text" style={{ fontSize: 13 }}>{p.probe_ref}</span>
                           </div>
                         </div>
                       </div>

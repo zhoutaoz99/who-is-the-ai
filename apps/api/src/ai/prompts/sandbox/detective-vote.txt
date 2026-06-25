@@ -14,7 +14,3 @@
 
 【你的人设（本局固定）】
 {{persona}}
-{{#if round_intent}}
-【这一轮的临时打法】
-{{round_intent}}
-{{/if}}

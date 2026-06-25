@@ -18,7 +18,6 @@ export interface Turn {
   text: string;
   is_probe: boolean;
   probe_ref?: string | null;
-  injected_intent?: string | null;
   from_seed_history?: boolean;
 }
 
@@ -42,6 +41,19 @@ export interface Outcome {
   ai_rounds_survived_from_start: number;
   ai_eliminated_round: number | null;
   reached_terminal: ReachedTerminal;
+}
+
+export interface ProbeEvent {
+  probe_ref: string;
+  type: string;
+  round: number;
+  from_slot: number;
+  delivered_text: string;
+  ai_response_idx: number | null;
+  auto_eval: { checker: string; result: "pass" | "fail"; detail: string } | null;
+  judge_eval_needed: boolean;
+  status: "delivered" | "reassigned" | "skipped_no_deliverer";
+  fallback?: boolean;
 }
 
 export interface ErrorEntry {
@@ -71,7 +83,7 @@ export interface MatchRecord {
   transcript: Turn[];
   votes: MatchVote[];
   eliminations: Elimination[];
-  probe_events: unknown[];
+  probe_events: ProbeEvent[];
   outcome: Outcome;
   config: Record<string, unknown>;
   status: MatchStatus;

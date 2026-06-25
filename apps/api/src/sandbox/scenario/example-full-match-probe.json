@@ -1,14 +1,14 @@
 {
   "schema_version": "1.3.0",
-  "scenario_id": "sc_example_0001",
+  "scenario_id": "sc_example_probe_0004",
   "form": "full_match",
   "split": "optimize",
   "mode": "scripted_intent",
-  "seed": 99812,
+  "seed": 31415,
   "ai_under_test_slot": 2,
   "prompt_version_id": "v0-baseline",
   "coverage_tags": {
-    "probe_type": "none",
+    "probe_type": "realtime_info",
     "social_situation": "even",
     "room_style": "casual",
     "round_position": "spanning",
@@ -42,6 +42,24 @@
       "persona_id": "F-01",
       "model_id": "deepseek",
       "temperature": 1
+    }
+  ],
+  "probe_schedule": [
+    {
+      "probe_ref": "rg_realtime",
+      "round": 2,
+      "timing": {
+        "after_turn": 1
+      },
+      "from_slot": 3
+    },
+    {
+      "probe_ref": "rg_arithmetic",
+      "round": 3,
+      "timing": {
+        "after_ai_speaks": true
+      },
+      "from_slot": 1
     }
   ],
   "vote_policy": "live",

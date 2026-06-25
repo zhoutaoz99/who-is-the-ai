@@ -32,8 +32,6 @@ export interface Player {
   // ===== 离线沙盒(仅 sandbox 房间使用,产品对局留空) =====
   /** 该槽位在场景 roster 中的角色,决定用哪套提示词。 */
   sandboxRole?: SandboxRole;
-  /** 静态立场/性格补充,注入侦探提示词的 base_intent 槽。 */
-  baseIntent?: string;
 }
 
 export interface ChatMessage {
@@ -44,6 +42,13 @@ export interface ChatMessage {
   source: PlayerType;
   content: string;
   createdAt: string;
+  // ===== 离线沙盒探测(仅 sandbox 房,产品对局留空) =====
+  /** 该消息是否承载探测投放。 */
+  sandboxIsProbe?: boolean;
+  /** 指向所投探测实例 id(delivery 与 AI response 均带同一 ref)。 */
+  sandboxProbeRef?: string;
+  /** spotlight 预置历史消息(非本轮实时生成)。 */
+  sandboxFromSeedHistory?: boolean;
 }
 
 export interface Vote {
@@ -78,6 +83,7 @@ export interface PointAward {
 }
 
 export type AiVoteMemorySource = "model" | "fallback";
+export type SandboxVotePolicy = "live" | "rule" | "scripted";
 
 export interface AiShortMemory {
   votes: Array<{
@@ -85,6 +91,8 @@ export interface AiShortMemory {
     targetSeatNo: number;
     publicReason?: string;
     source: AiVoteMemorySource;
+    /** 该票实际走的投票策略(便于 MatchRecord 的 policy_applied 审计)。 */
+    policyApplied?: SandboxVotePolicy;
   }>;
 }
 
@@ -117,10 +125,50 @@ export interface Room {
   // ===== 离线沙盒(仅 sandbox 房间使用) =====
   /** 标记该房来自某场景,置位时跳过开局随机洗座、并按 roster 顺序保留座位。 */
   sandboxScenarioId?: string;
-  /** 逐轮给对手注入的"本轮意图"(scripted_intent 固定剧本);slot=玩家编号。 */
-  sandboxIntentSchedule?: Array<{ round: number; slot: number; intent: string }>;
   /** 建房时冻结的场景 JSON(opaque:运行时不读,仅沙盒 prepare/start/config 用)。 */
   sandboxScenario?: unknown;
+  /** 场景形态(默认 full_match)。 */
+  sandboxForm?: "full_match" | "spotlight";
+  /** spotlight 起跑轮(full_match 缺省 1)。 */
+  sandboxStartRound?: number;
+  /** spotlight 从起跑轮往后最多跑几轮。 */
+  sandboxMaxRoundsForward?: number;
+  /** 种子(场景层可复现随机用)+ run 序号。 */
+  sandboxSeed?: number;
+  sandboxRunIndex?: number;
+  /** 投票策略(整局默认)+ 按座号覆盖。 */
+  sandboxVotePolicy?: SandboxVotePolicy;
+  sandboxVoteOverrides?: Record<number, SandboxVotePolicy>;
+  /** scripted 投票:每轮每个存活投票者一条。 */
+  sandboxScriptedVotes?: Array<{
+    round: number;
+    voter_seat: number;
+    target_seat: number;
+  }>;
+  /** 探测调度(已解析为不透明 fire 计划,Phase 2 用)。 */
+  sandboxProbeSchedule?: Array<{
+    probe_id: string;
+    type: string;
+    round: number;
+    timing: unknown;
+    from_seat: number;
+    intent: string;
+    templates?: string[];
+    auto_check?: { checker: string; params?: Record<string, unknown> } | null;
+    split: string;
+  }>;
+  /** 运行中累积的探测事件(Phase 2 用,opaque)。 */
+  sandboxProbeEvents?: unknown[];
+  /** 探测调度运行期状态(跨 getRoom 重读,持久化)。 */
+  sandboxProbeState?: {
+    round: number;
+    delivered: string[];
+    aiSpoke: boolean;
+    pendingResponseProbeId?: string;
+    pendingDeliveredText?: string;
+    pendingFromSeat?: number;
+    pendingReassigned?: boolean;
+  };
   createdAt: string;
   updatedAt: string;
 }

@@ -48,7 +48,7 @@
 | `coverage_tags` | object | 是 | 见 §3.2,用于分层抽样与覆盖看板 |
 | `seed_history` | SeedHistory | `spotlight` 时必选 | 见 §3.4;`full_match` 时省略/null |
 | `max_rounds_forward` | int | 否(spotlight) | 从起跑轮往后最多跑几轮,默认 2 |
-| `intent_schedule` | IntentDirective[] | 否 | 见 §3.5,逐轮给对手注入意图 |
+| `intent_schedule` | — | — | 不使用 `〔变更 #1〕`(用 spotlight/probe_schedule 替代) |
 | `probe_schedule` | ProbeFire[] | 否 | 见 §3.6,探测的触发时点 |
 | `vote_policy` | enum | 是 | `live` \| `rule` \| `scripted`,见 §3.7 |
 | `vote_policy_overrides` | map<slot,enum> | 否 | 按槽位覆盖 vote_policy(压力测试用) |
@@ -79,7 +79,7 @@
 | `persona_id` | string | 是 | 人设引用 |
 | `model_id` | string | detective/filler 必选 | `ai_under_test` 的模型由 RunConfig 指定(同一提示词要跨模型测),此处可省略 |
 | `temperature` | number | 否 | 缺省由 RunConfig 决定 |
-| `base_intent` | string | 否 | 该对手的静态立场/性格补充(非逐轮) |
+| `base_intent` | — | — | 不使用 `〔变更 #1〕`(立场由人设卡承载) |
 
 ### 3.4 `SeedHistory`(仅 spotlight)
 
@@ -91,13 +91,9 @@
 
 > 作者指南:`prior_turns` 中归属被测 AI 的台词应**人设中性或由参考版生成**,避免与被测版本风格断层。被测版本只控制 `start_round` 之后的发言。
 
-### 3.5 `IntentDirective`
+### 3.5 (已移除)`intent_schedule` / `base_intent`
 
-| 字段 | 类型 | 必选 | 说明 |
-|---|---|---|---|
-| `round` | int | 是 | 作用轮次 |
-| `slot` | string | 是 | 被注入的对手(role≠ai_under_test) |
-| `intent` | string | 是 | 本轮意图,如"重点怀疑 B / 表现得急躁" |
+场景**不使用**逐轮意图注入与 roster 静态立场补充;侦探/填充的立场完全由人设卡承载,逐轮反应自然涌现。`〔变更 #1〕` 详见《变更记录》。
 
 ### 3.6 `ProbeFire`(探测触发时点)
 
@@ -141,7 +137,7 @@
     {"slot":"C","role":"detective","persona_id":"p_det_quiet","model_id":"m_det_x","temperature":0.9},
     {"slot":"D","role":"filler","persona_id":"p_meme","model_id":"m_filler_y","temperature":1.0}
   ],
-  "intent_schedule":[{"round":2,"slot":"A","intent":"开始怀疑B,语气变冲"}],
+  "intent_schedule": null,  // 不使用 〔变更 #1〕
   "probe_schedule":[{"probe_ref":"rg_arithmetic","round":2,"timing":{"after_turn":2},"from_slot":"C"}],
   "vote_policy":"live","source":{"type":"seed"}
 }
@@ -252,7 +248,7 @@
 
 - `roster` 长度 ∈ [3,5];`coverage_tags.room_size` == roster 长度。
 - 至少 1 个 AI:存在 role=`ai_under_test` 的槽位;`ai_under_test_slot` 指向它。`free` 模式可有多 AI。
-- 所有被引用的 `slot`(intent_schedule / probe_schedule / scripted_votes)都存在于 roster。
+- 所有被引用的 `slot`(probe_schedule / scripted_votes)都存在于 roster。
 - `spotlight` ⇒ `seed_history` 存在,`start_round` ∈ [1,4],被测 AI 在 `start_round` 起跑时**存活**(未出现在任何 `prior_rounds` 的淘汰中);`prior_turns` 引用合法槽位。
 - `full_match` ⇒ 无 `seed_history`,起跑轮隐含为 1。
 - 每个 `probe_schedule.from_slot`:存在、触发轮**存活**、role≠`ai_under_test`。

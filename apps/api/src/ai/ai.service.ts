@@ -58,6 +58,34 @@ export class AiService {
     }
   }
 
+  // ===== 离线沙盒:LLM 失败留痕(供 MatchRecord errors[]/status=degraded) =====
+  private readonly sandboxErrors = new Map<
+    string,
+    Array<{ round: number; phase: string; seat: number; kind: string; detail: string }>
+  >();
+
+  recordSandboxError(
+    roomId: string,
+    round: number,
+    phase: string,
+    seat: number,
+    kind: string,
+    detail: string,
+  ) {
+    if (!roomId) return;
+    const list = this.sandboxErrors.get(roomId) ?? [];
+    list.push({ round, phase, seat, kind, detail });
+    this.sandboxErrors.set(roomId, list);
+  }
+
+  consumeSandboxErrors(
+    roomId: string,
+  ): Array<{ round: number; phase: string; seat: number; kind: string; detail: string }> {
+    const list = this.sandboxErrors.get(roomId) ?? [];
+    this.sandboxErrors.delete(roomId);
+    return list;
+  }
+
   constructor() {
     this.loadModels();
 
@@ -262,8 +290,15 @@ export class AiService {
         callRecords,
       };
     } catch (error) {
-      this.logger.warn(
-        `Speech generation failed: ${error instanceof Error ? error.message : error}`,
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Speech generation failed: ${detail}`);
+      this.recordSandboxError(
+        context.roomId,
+        context.roundNo,
+        context.phase,
+        context.mySeatNo,
+        "speech_error",
+        detail,
       );
       return { type: "skip", nextCheckAfterMs: DEFAULT_AI_NEXT_CHECK_MS, callRecords: [] };
     }
@@ -314,8 +349,15 @@ export class AiService {
       });
       return this.parseVoteResult(raw, context, aiPlayerId);
     } catch (error) {
-      this.logger.warn(
-        `Vote generation failed: ${error instanceof Error ? error.message : error}`,
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Vote generation failed: ${detail}`);
+      this.recordSandboxError(
+        context.roomId,
+        context.roundNo,
+        "voting",
+        context.mySeatNo,
+        "vote_error",
+        detail,
       );
       return null;
     }
@@ -336,8 +378,8 @@ export class AiService {
   }
 
   /**
-   * 离线沙盒按 role 选发言系统提示词:detective/filler 用各自模板并拼 base_intent /
-   * 本轮 intent;缺省/ai_under_test 走现有 AI 玩家提示词,对产品对局完全无影响。
+   * 离线沙盒按 role 选发言系统提示词:detective/filler 用各自模板(立场由人设卡承载,
+   * 仅探测时拼 probe_task);缺省/ai_under_test 走现有 AI 玩家提示词,对产品对局无影响。
    */
   private buildSpeechSystemPrompt(persona: PersonaCard, context: GameContext): string {
     const role: SpeechRole = context.myRole ?? "ai_under_test";
@@ -345,14 +387,12 @@ export class AiService {
     if (role === "detective") {
       return renderTemplate("sandbox/detective-discussion.txt", {
         persona: card,
-        base_intent: context.myBaseIntent ?? "",
-        round_intent: context.myInjectedIntent ?? "",
+        probe_task: context.myProbeTask ?? "",
       });
     }
     if (role === "filler") {
       return renderTemplate("sandbox/filler-discussion.txt", {
         persona: card,
-        base_intent: context.myBaseIntent ?? "",
       });
     }
     return this.buildDiscussionSystemPrompt(persona, context.mySeatNo);
@@ -364,7 +404,6 @@ export class AiService {
     if (role === "detective" || role === "filler") {
       return renderTemplate("sandbox/detective-vote.txt", {
         persona: formatPersonaCard(persona, context.mySeatNo),
-        round_intent: context.myInjectedIntent ?? "",
       });
     }
     return this.buildVoteSystemPrompt(persona, context.mySeatNo);

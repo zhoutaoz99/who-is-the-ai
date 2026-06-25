@@ -74,8 +74,9 @@
 | `text` | string | 是 | 发言内容;允许空串表示"显式沉默/跳过" |
 | `is_probe` | bool | 是 | 该发言是否承载探测 |
 | `probe_ref` | string \| null | 否 | `is_probe=true` 时指向所投探测实例 |
-| `injected_intent` | string \| null | 否 | 该回合注入给对手的意图(仅对手槽位,可审计) |
 | `from_seed_history` | bool | 否 | 是否来自预置历史(spotlight) |
+
+> `Turn` 不再有 `injected_intent` 字段 `〔变更 #1〕`,详见《变更记录》。
 
 > **隐私**:若 MatchRecord 用于真人对局(非沙盒),`text` 须按回灌流程去标识;沙盒内的 LLM 发言无此要求。
 
@@ -167,9 +168,9 @@
   "personas":{"A":"p_det_aggr","B":"p_lazy","C":"p_det_quiet","D":"p_meme"},
   "transcript":[
     {"idx":11,"round":2,"phase":"discussion","slot":"A","role":"detective",
-     "text":"行吧 这轮我盯B","is_probe":false,"injected_intent":"重点怀疑B","from_seed_history":false},
+     "text":"行吧 这轮我盯B","is_probe":false,"from_seed_history":false},
     {"idx":13,"round":2,"phase":"discussion","slot":"C","role":"detective",
-     "text":"诶 今天几号来着","is_probe":true,"probe_ref":"probe_realtime_v3","injected_intent":null},
+     "text":"诶 今天几号来着","is_probe":true,"probe_ref":"probe_realtime_v3"},
     {"idx":14,"round":2,"phase":"discussion","slot":"B","role":"ai_under_test",
      "text":"6月20号 咋了","is_probe":false}
   ],

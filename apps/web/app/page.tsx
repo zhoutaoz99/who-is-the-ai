@@ -277,6 +277,23 @@ export default function Home() {
   const [roomPage, setRoomPage] = useState(1);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [sandboxPending, setSandboxPending] = useState(false);
+  const [sandboxExamples, setSandboxExamples] = useState<
+    Array<{ id: string; label: string; form: string }>
+  >([]);
+  const [selectedScenarioId, setSelectedScenarioId] = useState("");
+
+  useEffect(() => {
+    if (!debug) return;
+    fetch(`${API_URL}/sandbox/examples`)
+      .then((r) => r.json())
+      .then((d: { ok: boolean; examples?: Array<{ id: string; label: string; form: string }> }) => {
+        if (d.ok && d.examples) {
+          setSandboxExamples(d.examples);
+          setSelectedScenarioId(d.examples[0]?.id ?? "");
+        }
+      })
+      .catch(() => {});
+  }, [debug]);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const refreshRoomsRef = useRef(refreshRooms);
@@ -362,7 +379,7 @@ export default function Home() {
     }
   }
 
-  // 离线沙盒:建一个等待中的沙盒房,跳到配置页(可改模型/时长后再开局)。
+  // 离线沙盒:按所选示例场景建一个等待中的沙盒房,跳到配置页(可改模型/时长后再开局)。
   async function handleRunSandbox() {
     setError("");
     setSandboxPending(true);
@@ -370,7 +387,7 @@ export default function Home() {
       const res = await fetch(`${API_URL}/sandbox/prepare`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: "{}",
+        body: JSON.stringify(selectedScenarioId ? { scenario_id: selectedScenarioId } : {}),
       });
       const data: { ok: boolean; roomId?: string; error?: string } = await res.json();
       if (data.ok && data.roomId) {
@@ -596,6 +613,20 @@ export default function Home() {
               <p className="muted-text">
                 按场景(被测 AI + 侦探 + 填充)配置一局,改完参数后开局并实时观战。
               </p>
+              {sandboxExamples.length > 0 && (
+                <select
+                  className="debug-ai-select"
+                  value={selectedScenarioId}
+                  disabled={sandboxPending}
+                  onChange={(e) => setSelectedScenarioId(e.target.value)}
+                >
+                  {sandboxExamples.map((ex) => (
+                    <option key={ex.id} value={ex.id}>
+                      {ex.label}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button
                 className="secondary"
                 disabled={sandboxPending}

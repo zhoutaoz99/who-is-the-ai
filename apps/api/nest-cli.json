@@ -3,7 +3,7 @@
   "collection": "@nestjs/schematics",
   "sourceRoot": "src",
   "compilerOptions": {
-    "assets": ["ai/prompts/**/*", "sandbox/scenario/*.json"],
+    "assets": ["ai/prompts/**/*", "sandbox/scenario/*.json", "sandbox/probe/*.json"],
     "watchAssets": true
   },
   "watchOptions": {

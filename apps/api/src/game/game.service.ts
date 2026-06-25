@@ -55,10 +55,12 @@ import {
   normalizeRoomId,
   randomItem,
   resolveElimination,
+  ruleVote,
   touch,
   validateCanSpeak,
 } from "./game.rules";
 import { toPublicMessage, toRoomSnapshot } from "./game.snapshot";
+import { runAutoCheck } from "../sandbox/probe/checkers";
 import {
   ActionResult,
   AiShortMemory,
@@ -75,6 +77,7 @@ import {
   JoinRoomPayload,
   LeaveRoomPayload,
   ObserveRoomPayload,
+  ChatMessage,
   Player,
   PointAward,
   ReconnectPayload,
@@ -232,8 +235,23 @@ export class GameService {
     scenarioJson?: unknown;
     specs: SandboxPlayerSpec[];
     aiUnderTestModelId?: string;
-    intentSchedule?: Array<{ round: number; slot: number; intent: string }>;
     discussionSeconds?: number;
+    /** 投票策略 + 按座号覆盖 + scripted 票 + 种子/run 序号(沙盒投票分支用)。 */
+    votePolicy?: Room["sandboxVotePolicy"];
+    voteOverrides?: Room["sandboxVoteOverrides"];
+    scriptedVotes?: Room["sandboxScriptedVotes"];
+    seed?: number;
+    runIndex?: number;
+    /** 探测调度(已解析的不透明 fire 计划,Phase 2 用)。 */
+    probeSchedule?: Room["sandboxProbeSchedule"];
+    /** spotlight 形态字段。 */
+    form?: "full_match" | "spotlight";
+    startRound?: number;
+    maxRoundsForward?: number;
+    seedHistory?: {
+      prior_turns: Array<{ round: number; slot: number; text: string }>;
+      prior_rounds?: Array<{ round: number; eliminated_slot: number | null }>;
+    };
   }): Promise<ActionResult> {
     if (!DEBUG) {
       return this.fail("调试模式未开启(沙盒需 DEBUG=true)");
@@ -242,6 +260,40 @@ export class GameService {
     const now = new Date().toISOString();
     const aiUnderTestModelId = params.aiUnderTestModelId ?? this.aiService.getDefaultModelId();
     const players = createSandboxPlayers(params.specs, aiUnderTestModelId);
+
+    // spotlight:预灌 seed_history(prior_turns→messages;prior_rounds→标记预淘汰)。
+    const messages: ChatMessage[] = [];
+    const preEliminatedSeats = new Set<number>();
+    if (params.form === "spotlight" && params.seedHistory) {
+      const seatToPlayer = new Map(players.map((p) => [p.seatNo, p]));
+      for (const turn of params.seedHistory.prior_turns) {
+        const player = seatToPlayer.get(turn.slot);
+        if (!player) continue;
+        messages.push({
+          id: randomUUID(),
+          roundNo: turn.round,
+          playerId: player.id,
+          playerName: player.name,
+          source: player.type,
+          content: turn.text,
+          createdAt: now,
+          sandboxFromSeedHistory: true,
+        });
+      }
+      for (const r of params.seedHistory.prior_rounds ?? []) {
+        if (r.eliminated_slot != null) preEliminatedSeats.add(r.eliminated_slot);
+      }
+      for (const player of players) {
+        if (preEliminatedSeats.has(player.seatNo)) {
+          const elimRound = params.seedHistory.prior_rounds?.find(
+            (rr) => rr.eliminated_slot === player.seatNo,
+          )?.round;
+          player.status = "eliminated";
+          player.eliminatedRound = elimRound;
+        }
+      }
+    }
+
     const room: Room = {
       id: createRoomId(),
       status: "waiting",
@@ -250,7 +302,16 @@ export class GameService {
       debugAutoAiSequentialSpeech: true,
       sandboxScenarioId: params.scenarioId,
       sandboxScenario: params.scenarioJson,
-      sandboxIntentSchedule: params.intentSchedule,
+      sandboxVotePolicy: params.votePolicy,
+      sandboxVoteOverrides: params.voteOverrides,
+      sandboxScriptedVotes: params.scriptedVotes,
+      sandboxSeed: params.seed,
+      sandboxRunIndex: params.runIndex,
+      sandboxProbeSchedule: params.probeSchedule,
+      sandboxProbeEvents: [],
+      sandboxForm: params.form,
+      sandboxStartRound: params.startRound,
+      sandboxMaxRoundsForward: params.maxRoundsForward,
       players,
       discussionDurationMs: normalizeDiscussionDuration({
         discussionDurationSeconds: params.discussionSeconds,
@@ -259,7 +320,7 @@ export class GameService {
       phase: "waiting",
       phaseEndsAt: null,
       winner: null,
-      messages: [],
+      messages,
       votes: [],
       pointAwards: [],
       rewardSettledAt: null,
@@ -579,18 +640,32 @@ export class GameService {
         return false;
       }
 
+      // spotlight:从 sandboxStartRound 起跑、保留预灌历史、跳过预淘汰玩家。
+      const isSpotlight = latest.sandboxForm === "spotlight";
+      const startRound = isSpotlight ? (latest.sandboxStartRound ?? 1) : 1;
+
       latest.status = "playing";
       latest.winner = null;
-      latest.currentRound = 1;
+      latest.currentRound = startRound;
       latest.phase = "discussion";
       latest.phaseEndsAt = futureIso(latest.discussionDurationMs);
       this.prepareDebugAutoAiSpeechState(latest);
-      latest.messages = [];
+      if (!isSpotlight) {
+        latest.messages = [];
+      }
       latest.votes = [];
       latest.aiMemories = {};
       latest.pointAwards = [];
       latest.rewardSettledAt = null;
       for (const player of latest.players) {
+        const preEliminated =
+          isSpotlight &&
+          player.eliminatedRound != null &&
+          player.eliminatedRound < startRound;
+        if (preEliminated) {
+          player.status = "eliminated";
+          continue;
+        }
         player.status = "alive";
         player.lastSpokeAt = 0;
         player.eliminatedRound = undefined;
@@ -1228,6 +1303,19 @@ export class GameService {
       return;
     }
 
+    // spotlight 终局:跑满 max_rounds_forward 即止(AI 存活→AI 胜,否则真人胜)。
+    if (room.sandboxForm === "spotlight") {
+      const start = room.sandboxStartRound ?? 1;
+      const maxFwd = room.sandboxMaxRoundsForward ?? 2;
+      if (room.currentRound >= start + maxFwd - 1) {
+        const aiAlive = room.players.some(
+          (p) => p.type === "ai" && p.status === "alive",
+        );
+        await this.finishGame(room, aiAlive ? "ai" : "human");
+        return;
+      }
+    }
+
     this.broadcastRoom(room);
     setTimeout(() => {
       void this.startDiscussionById(room.id);
@@ -1295,6 +1383,294 @@ export class GameService {
     void this.runDebugAutoAiSpeechLoop(room.id, room.currentRound);
   }
 
+  // ===== 离线沙盒:探测注入(gated,仅 sandbox 房有 sandboxProbeSchedule) =====
+
+  private sandboxRoundMessageCount(room: Room): number {
+    return room.messages.filter((m) => m.roundNo === room.currentRound).length;
+  }
+
+  private sandboxFireTiming(timing: unknown): {
+    after_turn?: number;
+    first_turn?: boolean;
+    last_turn?: boolean;
+    after_ai_speaks?: boolean;
+  } {
+    return (timing ?? {}) as {
+      after_turn?: number;
+      first_turn?: boolean;
+      last_turn?: boolean;
+      after_ai_speaks?: boolean;
+    };
+  }
+
+  /** 投放所有当前到期的探测(非 last_turn)。在每轮发言 pass 开始时调用一次。 */
+  private async deliverDueProbes(roomId: string, roundNo: number): Promise<void> {
+    const room = await this.getRoom(roomId);
+    const fires = room?.sandboxProbeSchedule?.filter((f) => f.round === roundNo) ?? [];
+    for (const fire of fires) {
+      if (this.sandboxFireTiming(fire.timing).last_turn === true) continue;
+      await this.tryDeliverProbe(roomId, roundNo, fire, false);
+    }
+  }
+
+  /** 进入投票前:投放 last_turn 探测 + 清算仍未应答的 pending。 */
+  private async deliverLastTurnAndFinalize(roomId: string, roundNo: number): Promise<void> {
+    const room = await this.getRoom(roomId);
+    const fires = room?.sandboxProbeSchedule?.filter((f) => f.round === roundNo) ?? [];
+    for (const fire of fires) {
+      if (this.sandboxFireTiming(fire.timing).last_turn === true) {
+        await this.tryDeliverProbe(roomId, roundNo, fire, true);
+      }
+    }
+    await this.finalizePendingProbe(roomId, roundNo, null);
+  }
+
+  private buildProbeTask(fire: NonNullable<Room["sandboxProbeSchedule"]>[number]): string {
+    const templates = fire.templates?.length ? fire.templates : undefined;
+    return templates
+      ? `${fire.intent}\n(可参考措辞:${templates.join(" / ")})`
+      : fire.intent;
+  }
+
+  /** 尝试投放单个探测;不到期/已投放则无操作。 */
+  private async tryDeliverProbe(
+    roomId: string,
+    roundNo: number,
+    fire: NonNullable<Room["sandboxProbeSchedule"]>[number],
+    isLastTurn: boolean,
+  ): Promise<void> {
+    const before = await this.getRoom(roomId);
+    if (
+      !before ||
+      before.status !== "playing" ||
+      before.phase !== "discussion" ||
+      before.currentRound !== roundNo
+    ) {
+      return;
+    }
+    const state =
+      before.sandboxProbeState ?? { round: roundNo, delivered: [] as string[], aiSpoke: false };
+    if (state.delivered.includes(fire.probe_id)) return;
+
+    const t = this.sandboxFireTiming(fire.timing);
+    const msgCount = this.sandboxRoundMessageCount(before);
+    const due = isLastTurn
+      ? t.last_turn === true
+      : (t.first_turn === true && msgCount === 0) ||
+        (t.after_turn != null && msgCount >= t.after_turn) ||
+        (t.after_ai_speaks === true && state.aiSpoke);
+    if (!due) return;
+
+    // 解析投放者:from_seat 存活且非被测 AI;否则确定性改派或跳过。
+    let deliverer =
+      before.players.find(
+        (p) =>
+          p.seatNo === fire.from_seat &&
+          p.status === "alive" &&
+          p.sandboxRole !== "ai_under_test",
+      ) ?? null;
+    let reassigned = false;
+    if (!deliverer) {
+      const aliveNonAi = before.players.filter(
+        (p) => p.status === "alive" && p.sandboxRole !== "ai_under_test",
+      );
+      if (aliveNonAi.length === 0) {
+        await this.recordProbeSkipped(roomId, roundNo, fire);
+        return;
+      }
+      const idx = this.sandboxDeterministicIndex(
+        aliveNonAi.length,
+        before.sandboxSeed ?? 0,
+        before.sandboxRunIndex ?? 0,
+        roundNo,
+        fire.probe_id,
+      );
+      deliverer = aliveNonAi[idx];
+      reassigned = true;
+    }
+
+    // 让投放者用自己口吻当场生成探测台词(注入 {{本回合任务}})。
+    this.emitSpeechGenerating(roomId, deliverer, roundNo);
+    const context = this.buildGameContext(before, deliverer);
+    context.myProbeTask = this.buildProbeTask(fire);
+    const action = await this.aiService.generateSpeech(context);
+    this.aiService.recordCalls(action.callRecords);
+    const text =
+      action.type === "speak" && action.content.trim()
+        ? action.content
+        : fire.templates?.[0] ?? fire.intent;
+
+    await this.saveProbeDelivery(roomId, roundNo, fire, deliverer, text, reassigned);
+    this.clearSpeechGenerating(roomId, deliverer.id, roundNo);
+
+    if (isLastTurn) {
+      await this.finalizePendingProbe(roomId, roundNo, null);
+    }
+  }
+
+  private async saveProbeDelivery(
+    roomId: string,
+    roundNo: number,
+    fire: NonNullable<Room["sandboxProbeSchedule"]>[number],
+    deliverer: Player,
+    text: string,
+    reassigned: boolean,
+  ): Promise<void> {
+    const saved = await this.applyWithLock(roomId, (latest) => {
+      if (
+        latest.status !== "playing" ||
+        latest.phase !== "discussion" ||
+        latest.currentRound !== roundNo
+      ) {
+        return false;
+      }
+      const player = latest.players.find((p) => p.id === deliverer.id && p.status === "alive");
+      if (!player) return false;
+      const message = addChatMessage(latest, player, text);
+      message.sandboxIsProbe = true;
+      message.sandboxProbeRef = fire.probe_id;
+      const prev = latest.sandboxProbeState ?? {
+        round: roundNo,
+        delivered: [] as string[],
+        aiSpoke: false,
+      };
+      latest.sandboxProbeState = {
+        round: roundNo,
+        delivered: [...prev.delivered, fire.probe_id],
+        aiSpoke: prev.aiSpoke,
+        pendingResponseProbeId: fire.probe_id,
+        pendingDeliveredText: text,
+        pendingFromSeat: player.seatNo,
+        pendingReassigned: reassigned,
+      };
+      player.aiLastConsideredRound = roundNo;
+      player.aiLastConsideredAt = Date.now();
+      touch(latest);
+      return true;
+    });
+    if (saved) {
+      const msg = [...saved.messages]
+        .reverse()
+        .find((m) => m.sandboxProbeRef === fire.probe_id && m.roundNo === roundNo);
+      if (msg) {
+        this.server?.to(roomId).emit("chat.message", toPublicMessage(msg, saved));
+      }
+      this.broadcastRoom(saved);
+    }
+  }
+
+  private async recordProbeSkipped(
+    roomId: string,
+    roundNo: number,
+    fire: NonNullable<Room["sandboxProbeSchedule"]>[number],
+  ): Promise<void> {
+    await this.applyWithLock(roomId, (latest) => {
+      const prev = latest.sandboxProbeState ?? {
+        round: roundNo,
+        delivered: [] as string[],
+        aiSpoke: false,
+      };
+      latest.sandboxProbeState = {
+        ...prev,
+        delivered: [...prev.delivered, fire.probe_id],
+      };
+      latest.sandboxProbeEvents ??= [];
+      latest.sandboxProbeEvents.push({
+        probe_ref: fire.probe_id,
+        type: fire.type,
+        round: roundNo,
+        from_slot: fire.from_seat,
+        delivered_text: "",
+        ai_response_idx: null,
+        auto_eval: null,
+        judge_eval_needed: true,
+        status: "skipped_no_deliverer",
+      });
+      touch(latest);
+      return true;
+    });
+  }
+
+  /** 被测 AI 发言后:置 aiSpoke,并清算待应答探测。 */
+  private async onSandboxAiSpoke(
+    roomId: string,
+    roundNo: number,
+    aiPlayerId: string,
+    aiText: string,
+  ): Promise<void> {
+    await this.applyWithLock(roomId, (latest) => {
+      if (latest.currentRound !== roundNo || !latest.sandboxProbeState) return false;
+      latest.sandboxProbeState = { ...latest.sandboxProbeState, aiSpoke: true };
+      touch(latest);
+      return true;
+    });
+    const room = await this.getRoom(roomId);
+    if (room?.sandboxProbeState?.pendingResponseProbeId) {
+      const lastAi = [...room.messages]
+        .reverse()
+        .find((m) => m.roundNo === roundNo && m.playerId === aiPlayerId);
+      const idx = lastAi ? room.messages.indexOf(lastAi) : -1;
+      await this.finalizePendingProbe(roomId, roundNo, { text: aiText, idx });
+    }
+  }
+
+  /** 清算待应答探测:跑 checker、写 probe_event。aiResponse=null 表示无应答。 */
+  private async finalizePendingProbe(
+    roomId: string,
+    roundNo: number,
+    aiResponse: { text: string; idx: number } | null,
+  ): Promise<void> {
+    await this.applyWithLock(roomId, (latest) => {
+      const state = latest.sandboxProbeState;
+      if (!state?.pendingResponseProbeId) return false;
+      const probeId = state.pendingResponseProbeId;
+      const fire = latest.sandboxProbeSchedule?.find((f) => f.probe_id === probeId);
+      const { autoEval, judgeEvalNeeded } = aiResponse
+        ? runAutoCheck(fire?.auto_check ?? null, aiResponse.text)
+        : { autoEval: null, judgeEvalNeeded: true };
+      latest.sandboxProbeEvents ??= [];
+      latest.sandboxProbeEvents.push({
+        probe_ref: probeId,
+        type: fire?.type ?? "unknown",
+        round: roundNo,
+        from_slot: state.pendingFromSeat ?? fire?.from_seat ?? 0,
+        delivered_text: state.pendingDeliveredText ?? "",
+        ai_response_idx: aiResponse ? (aiResponse.idx >= 0 ? aiResponse.idx : null) : null,
+        auto_eval: autoEval,
+        judge_eval_needed: judgeEvalNeeded,
+        status: state.pendingReassigned ? "reassigned" : "delivered",
+      });
+      latest.sandboxProbeState = {
+        ...state,
+        pendingResponseProbeId: undefined,
+        pendingDeliveredText: undefined,
+        pendingFromSeat: undefined,
+        pendingReassigned: undefined,
+      };
+      touch(latest);
+      return true;
+    });
+  }
+
+  /** 确定性取下标(避免依赖 sandbox/rng 的跨层导入)。 */
+  private sandboxDeterministicIndex(
+    length: number,
+    ...parts: Array<number | string>
+  ): number {
+    if (length <= 0) return 0;
+    let h = 0x811c9dc5;
+    for (const part of parts) {
+      const s = String(part);
+      for (let i = 0; i < s.length; i += 1) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+      }
+      h ^= 0x2f;
+      h = Math.imul(h, 0x01000193);
+    }
+    return Math.floor(((h >>> 0) / 4294967296) * length);
+  }
+
   private async runDebugAutoAiSpeechLoop(
     roomId: string,
     roundNo: number,
@@ -1308,6 +1684,11 @@ export class GameService {
       const players = this.getDebugAutoAiSpeechPassPlayers(room);
       if (players.length === 0) {
         return;
+      }
+
+      // 沙盒探测:pass 开始时投放当前到期的探测(first_turn/after_turn/after_ai_speaks)。
+      if (room.sandboxProbeSchedule?.length) {
+        await this.deliverDueProbes(roomId, roundNo);
       }
 
       for (const player of players) {
@@ -1385,6 +1766,10 @@ export class GameService {
         if (saved) {
           this.clearSpeechGenerating(roomId, freshPlayer.id, roundNo);
           this.broadcastRoom(saved);
+          // 沙盒探测:被测 AI 发言后置 aiSpoke,并清算待应答探测(跑 auto_eval)。
+          if (freshPlayer.sandboxRole === "ai_under_test" && saved.sandboxProbeSchedule?.length) {
+            await this.onSandboxAiSpoke(roomId, roundNo, freshPlayer.id, action.content);
+          }
         } else {
           this.logDiscardedSpeech(
             roomId,
@@ -1404,6 +1789,10 @@ export class GameService {
         roundNo,
       );
       if (passResult === "start-voting") {
+        // 沙盒探测:进入投票前投放 last_turn 探测 + 清算未应答 pending。
+        if (room.sandboxProbeSchedule?.length) {
+          await this.deliverLastTurnAndFinalize(roomId, roundNo);
+        }
         await this.startVotingById(roomId);
         return;
       }
@@ -2214,6 +2603,42 @@ export class GameService {
       return;
     }
 
+    // 沙盒投票策略分支(槽位 override 优先);非沙盒或缺省走 live。
+    const policy = this.effectiveVotePolicy(room, aiPlayer);
+
+    if (policy === "rule") {
+      // rule:确定性特征函数,零 LLM。
+      const target = ruleVote(room, aiPlayer);
+      if (target) {
+        await this.castVoteForPlayer(room, aiPlayer, target.id, {
+          voteSource: "model",
+          policyApplied: "rule",
+        });
+      }
+      return;
+    }
+
+    if (policy === "scripted") {
+      // scripted:查场景写死的投票目标。
+      const targetSeat = room.sandboxScriptedVotes?.find(
+        (v) => v.round === room.currentRound && v.voter_seat === aiPlayer.seatNo,
+      )?.target_seat;
+      const target =
+        targetSeat != null
+          ? room.players.find(
+              (p) => p.seatNo === targetSeat && p.status === "alive" && p.id !== aiPlayer.id,
+            )
+          : undefined;
+      if (target) {
+        await this.castVoteForPlayer(room, aiPlayer, target.id, {
+          voteSource: "model",
+          policyApplied: "scripted",
+        });
+      }
+      return;
+    }
+
+    // live(默认):真投。
     const context = this.buildGameContext(room, aiPlayer);
     const voteAction = await this.aiService.generateVote(context, aiPlayer.id);
 
@@ -2221,6 +2646,7 @@ export class GameService {
       await this.castVoteForPlayer(room, aiPlayer, voteAction.targetPlayerId, {
         voteReason: voteAction.reason,
         voteSource: "model",
+        policyApplied: "live",
       });
       return;
     }
@@ -2229,8 +2655,17 @@ export class GameService {
     if (target) {
       await this.castVoteForPlayer(room, aiPlayer, target.id, {
         voteSource: "fallback",
+        policyApplied: "live",
       });
     }
+  }
+
+  /** 沙盒投票策略:按座号 override 优先,否则整局策略,否则 live。 */
+  private effectiveVotePolicy(
+    room: Room,
+    player: Player,
+  ): "live" | "rule" | "scripted" {
+    return room.sandboxVoteOverrides?.[player.seatNo] ?? room.sandboxVotePolicy ?? "live";
   }
 
   private buildGameContext(room: Room, aiPlayer: Player): GameContext {
@@ -2315,28 +2750,18 @@ export class GameService {
       voteHistory,
       shortMemory: room.aiMemories?.[aiPlayer.id] ?? null,
       myRole: aiPlayer.sandboxRole,
-      myBaseIntent: aiPlayer.baseIntent,
-      myInjectedIntent: this.resolveInjectedIntent(room, aiPlayer),
     };
-  }
-
-  /** 沙盒:命中当前轮 + 本玩家编号(seatNo)的 intent_schedule 时,返回本轮注入意图。 */
-  private resolveInjectedIntent(room: Room, player: Player): string | undefined {
-    if (!room.sandboxIntentSchedule) {
-      return undefined;
-    }
-    return room.sandboxIntentSchedule.find(
-      (directive) =>
-        directive.round === room.currentRound &&
-        directive.slot === player.seatNo,
-    )?.intent;
   }
 
   private rememberAiVote(
     room: Room,
     voter: Player,
     target: Player,
-    options?: { voteReason?: string; voteSource?: AiVoteMemorySource },
+    options?: {
+      voteReason?: string;
+      voteSource?: AiVoteMemorySource;
+      policyApplied?: "live" | "rule" | "scripted";
+    },
   ) {
     if (!isModelDrivenPlayer(voter)) {
       return;
@@ -2349,6 +2774,7 @@ export class GameService {
       targetSeatNo: target.seatNo,
       publicReason: options?.voteReason,
       source: options?.voteSource ?? "model",
+      policyApplied: options?.policyApplied,
     });
     memory.votes = memory.votes.slice(-4);
     room.aiMemories[voter.id] = memory;
@@ -2362,7 +2788,11 @@ export class GameService {
     room: Room,
     voter: Player,
     targetPlayerId?: string,
-    options?: { voteReason?: string; voteSource?: AiVoteMemorySource },
+    options?: {
+      voteReason?: string;
+      voteSource?: AiVoteMemorySource;
+      policyApplied?: "live" | "rule" | "scripted";
+    },
   ): Promise<ActionResult> {
     const saved = await this.applyWithLock(room.id, (latest) => {
       if (latest.status !== "playing" || latest.phase !== "voting") {

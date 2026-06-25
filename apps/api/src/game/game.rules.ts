@@ -306,13 +306,12 @@ export interface SandboxPlayerSpec {
   role: SandboxRole;
   personaId: string;
   modelId?: string;
-  baseIntent?: string;
 }
 
 /**
  * 按场景 roster 逐槽位建玩家:ai_under_test→type:"ai";detective/filler→
  * type:"human",simulated:true(均 model-driven,复用现有调度)。slot 即座位号,
- * 直接落到 seatNo;role/baseIntent 落到 Player 上供提示词分支与意图注入。
+ * 直接落到 seatNo;role 落到 Player 上供提示词分支(侦探/填充的立场由人设卡承载)。
  */
 export function createSandboxPlayers(
   specs: SandboxPlayerSpec[],
@@ -337,7 +336,6 @@ export function createSandboxPlayers(
       aiPersonaId: spec.personaId,
       aiModelId: isAiUnderTest ? aiUnderTestModelId : spec.modelId,
       sandboxRole: spec.role,
-      baseIntent: spec.baseIntent,
     };
   });
 }
@@ -378,6 +376,36 @@ export function normalizeDiscussionDuration(payload: CreateRoomPayload) {
   }
 
   return Math.max(Math.floor(minutes), 1) * 60_000;
+}
+
+/**
+ * rule 投票(零 LLM、确定性):主信号=此前各轮被投次数(谁最被怀疑),平票按最小座号兜底。
+ * 无历史票时(如 R1)所有候选同分 → 最小座号(非自己)。机械、可复现,仅作快测/冒烟。
+ */
+export function ruleVote(room: Room, voter: Player): Player | null {
+  const candidates = room.players.filter(
+    (player) => player.status === "alive" && player.id !== voter.id,
+  );
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const score = new Map<string, number>();
+  for (const vote of room.votes) {
+    if (vote.roundNo >= room.currentRound) continue; // 仅历史轮的票作"被指认"信号
+    score.set(vote.targetPlayerId, (score.get(vote.targetPlayerId) ?? 0) + 1);
+  }
+
+  let best = candidates[0];
+  let bestScore = score.get(best.id) ?? 0;
+  for (const candidate of candidates) {
+    const s = score.get(candidate.id) ?? 0;
+    if (s > bestScore || (s === bestScore && candidate.seatNo < best.seatNo)) {
+      best = candidate;
+      bestScore = s;
+    }
+  }
+  return best;
 }
 
 export function chooseFallbackVoteTarget(
