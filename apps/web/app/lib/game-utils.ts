@@ -42,6 +42,17 @@ export function winnerLabel(winner: "human" | "ai" | null) {
   }
 }
 
+export function sandboxWinnerLabel(winner: "human" | "ai" | null) {
+  switch (winner) {
+    case "human":
+      return "侦探方获胜";
+    case "ai":
+      return "被测AI获胜";
+    default:
+      return "";
+  }
+}
+
 export function phaseLabel(phase: GamePhase) {
   switch (phase) {
     case "waiting":

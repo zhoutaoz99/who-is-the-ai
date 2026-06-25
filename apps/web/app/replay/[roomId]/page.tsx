@@ -43,15 +43,25 @@ function callTypeLabel(type: string) {
     case "vote":
       return "投票决策";
     case "sim-human-speech":
-      return "模拟真人发言";
+      return "侦探/填充发言";
     case "sim-human-vote":
-      return "模拟真人投票";
+      return "侦探/填充投票";
     default:
       return type;
   }
 }
 
-function winnerLabel(winner: string | null) {
+function winnerLabel(winner: string | null, sandbox = false) {
+  if (sandbox) {
+    switch (winner) {
+      case "human":
+        return "侦探方获胜";
+      case "ai":
+        return "被测AI获胜";
+      default:
+        return "已中止";
+    }
+  }
   switch (winner) {
     case "human":
       return "真人获胜";
@@ -60,6 +70,27 @@ function winnerLabel(winner: string | null) {
     default:
       return "已中止";
   }
+}
+
+function roleLabelFor(player?: RoomSnapshot["players"][number]): {
+  label: string;
+  cls: string;
+} | null {
+  if (!player) return null;
+  if (player.sandboxRole === "ai_under_test") {
+    return { label: "被测AI", cls: "ai" };
+  }
+  if (player.sandboxRole === "detective") {
+    return { label: "侦探", cls: "human simulated" };
+  }
+  if (player.sandboxRole === "filler") {
+    return { label: "填充", cls: "human simulated" };
+  }
+  if (!player.revealedType) return null;
+  return {
+    label: player.revealedType === "ai" ? "AI" : player.simulated ? "模型玩家" : "真人",
+    cls: `${player.revealedType}${player.simulated ? " simulated" : ""}`,
+  };
 }
 
 function MarkdownContent({ content }: { content: string }) {
@@ -858,7 +889,7 @@ export default function ReplayPage() {
         <div className="replay-header-left">
           <h1>复盘 - Room {room.id}</h1>
           <span className={`replay-result ${room.winner === "human" ? "win" : room.winner === "ai" ? "loss" : "aborted"}`}>
-            {winnerLabel(room.winner)}
+            {winnerLabel(room.winner, Boolean(room.sandboxScenarioId))}
           </span>
         </div>
         <div className="replay-header-actions">
@@ -1008,44 +1039,47 @@ export default function ReplayPage() {
           {room.players
             .slice()
             .sort((a, b) => a.seatNo - b.seatNo)
-            .map((player) => (
-              <div
-                key={player.id}
-                className={`replay-player ${player.status === "eliminated" ? "eliminated" : ""}`}
-              >
+            .map((player) => {
+              const roleTag = roleLabelFor(player);
+              return (
                 <div
-                  className="replay-player-avatar"
-                  style={{ backgroundColor: getSeatColor(player.seatNo) }}
+                  key={player.id}
+                  className={`replay-player ${player.status === "eliminated" ? "eliminated" : ""}`}
                 >
-                  {player.seatNo}
-                </div>
-                <div className="replay-player-info">
-                  <div className="replay-player-row">
-                    <strong>#{player.seatNo} {player.name}</strong>
-                    {player.revealedType && (
-                      <span className={`identity-tag ${player.revealedType}${player.simulated ? " simulated" : ""}`}>
-                        {player.revealedType === "ai" ? "AI" : player.simulated ? "模拟真人" : "真人"}
-                      </span>
-                    )}
-                    {player.status === "eliminated" ? (
-                      <span className="replay-dead">淘汰</span>
-                    ) : (
-                      <span className="replay-alive">存活</span>
-                    )}
+                  <div
+                    className="replay-player-avatar"
+                    style={{ backgroundColor: getSeatColor(player.seatNo) }}
+                  >
+                    {player.seatNo}
                   </div>
-                  {(player.aiPersonaName || player.aiModelId) && (
-                    <div className="replay-player-meta">
-                      {player.aiPersonaName && (
-                        <span className="replay-persona-tag">{player.aiPersonaName}</span>
+                  <div className="replay-player-info">
+                    <div className="replay-player-row">
+                      <strong>#{player.seatNo} {player.name}</strong>
+                      {roleTag && (
+                        <span className={`identity-tag ${roleTag.cls}`}>
+                          {roleTag.label}
+                        </span>
                       )}
-                      {player.aiModelId && (
-                        <span className="replay-model-tag">{player.aiModelId}</span>
+                      {player.status === "eliminated" ? (
+                        <span className="replay-dead">淘汰</span>
+                      ) : (
+                        <span className="replay-alive">存活</span>
                       )}
                     </div>
-                  )}
+                    {(player.aiPersonaName || player.aiModelId) && (
+                      <div className="replay-player-meta">
+                        {player.aiPersonaName && (
+                          <span className="replay-persona-tag">{player.aiPersonaName}</span>
+                        )}
+                        {player.aiModelId && (
+                          <span className="replay-model-tag">{player.aiModelId}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
         </div>
       </section>
 
@@ -1092,6 +1126,7 @@ export default function ReplayPage() {
                 if (item.type === "message") {
                   const seatNo = seatMap.get(item.msg.playerId) ?? "?";
                   const player = playerMap.get(item.msg.playerId);
+                  const roleTag = roleLabelFor(player);
                   return (
                     <div key={`msg-${item.msg.id}`} className="replay-timeline-item">
                       <div className="replay-message">
@@ -1103,9 +1138,9 @@ export default function ReplayPage() {
                         </span>
                         <div className="replay-msg-body">
                           <strong>{item.msg.playerName}</strong>
-                          {item.msg.source && (
-                            <span className={`identity-tag mini ${item.msg.source}${player?.simulated ? " simulated" : ""}`}>
-                              {item.msg.source === "ai" ? "AI" : player?.simulated ? "模拟真人" : "真人"}
+                          {roleTag && (
+                            <span className={`identity-tag mini ${roleTag.cls}`}>
+                              {roleTag.label}
                             </span>
                           )}
                           <p>{item.msg.content}</p>

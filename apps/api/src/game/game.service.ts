@@ -314,7 +314,7 @@ export class GameService {
       }
 
       if (isSandboxRoom(latest)) {
-        failure = "自动对抗调试房不能加入真人玩家";
+        failure = "沙盒房不能加入真人玩家";
         return false;
       }
 
@@ -563,17 +563,17 @@ export class GameService {
 
       if (isSandbox) {
         if (countAi(latest) < 1) {
-          failure = "至少需要 1 名 AI 玩家";
+          failure = "至少需要 1 名被测AI玩家";
           return false;
         }
 
         if (countSimulatedHumans(latest) < 1) {
-          failure = "至少需要 1 名模拟真人玩家";
+          failure = "至少需要 1 名侦探或填充玩家";
           return false;
         }
 
         if (!canStartSandboxRoom(latest)) {
-          failure = "自动对局至少需要 1 名 AI 和 1 名模拟真人";
+          failure = "沙盒对局至少需要 1 名被测AI玩家和 1 名侦探或填充玩家";
           return false;
         }
       } else if (countHumans(latest) < 1) {
@@ -840,11 +840,11 @@ export class GameService {
     }
 
     if (!isSandboxRoom(room)) {
-      return this.fail("只能删除自动对抗调试房");
+      return this.fail("只能删除沙盒房");
     }
 
     if (room.status !== "waiting") {
-      return this.fail("只能删除未开局的自动对抗调试房");
+      return this.fail("只能删除未开局的沙盒房");
     }
 
     this.clearTimers(room.id);
@@ -1483,7 +1483,7 @@ export class GameService {
             freshPlayer,
             schedulerKind,
             roundNo,
-            "自动对抗串行发言返回后对局已离开发言阶段或上下文失效",
+            "沙盒顺序发言返回后对局已离开发言阶段或上下文失效",
             action.type === "speak" ? action.content : undefined,
           );
           this.aiService.recordCalls(action.callRecords);
@@ -1527,7 +1527,7 @@ export class GameService {
             freshPlayer,
             schedulerKind,
             roundNo,
-            "自动对抗串行发言保存失败",
+            "沙盒顺序发言保存失败",
             action.content,
           );
           this.emitSpeechDiscarded(roomId, freshPlayer, "保存发言失败", roundNo);
@@ -2490,7 +2490,7 @@ export class GameService {
       myModelId: aiPlayer.aiModelId,
       mySeatNo: aiPlayer.seatNo,
       // 任何带 personaId 的 model-driven 玩家(含沙盒侦探/填充)都解析人格;
-      // 普通 debug 模拟真人无 personaId,解析为 null,行为不变。
+      // 旧调试模型玩家无 personaId,解析为 null,行为不变。
       myPersona: getAiPersonaById(aiPlayer.aiPersonaId),
       alivePlayers,
       recentMessages,

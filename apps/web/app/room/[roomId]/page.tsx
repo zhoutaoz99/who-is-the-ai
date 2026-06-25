@@ -297,6 +297,27 @@ function UserAvatar({ name }: { name: string }) {
   );
 }
 
+function roleTagFor(player: {
+  sandboxRole?: "ai_under_test" | "detective" | "filler";
+  revealedType?: "human" | "ai";
+  simulated?: boolean;
+}): { label: string; cls: string } | null {
+  if (player.sandboxRole === "ai_under_test") {
+    return { label: "被测AI", cls: "ai" };
+  }
+  if (player.sandboxRole === "detective") {
+    return { label: "侦探", cls: "human simulated" };
+  }
+  if (player.sandboxRole === "filler") {
+    return { label: "填充", cls: "human simulated" };
+  }
+  if (!player.revealedType) return null;
+  return {
+    label: player.revealedType === "ai" ? "AI" : player.simulated ? "模型玩家" : "真人",
+    cls: `${player.revealedType}${player.simulated ? " simulated" : ""}`,
+  };
+}
+
 export default function WaitingRoomPage() {
   const params = useParams<{ roomId: string }>();
   const router = useRouter();
@@ -320,6 +341,7 @@ export default function WaitingRoomPage() {
 
   const room = getRoom(roomId);
   const playerId = getPlayerId(roomId);
+  const isSandboxRoom = Boolean(room?.sandboxScenarioId);
   const isOwner = Boolean(
     room && playerId && room.ownerPlayerId === playerId,
   );
@@ -702,8 +724,8 @@ export default function WaitingRoomPage() {
                 </button>
                 {!room.canStart && (
                   <p className="muted-text canstart-hint">
-                    {false
-                      ? "需要至少 1 名 AI 和 1 名模拟真人"
+                    {isSandboxRoom
+                      ? "需要至少 1 名被测AI玩家和 1 名侦探或填充玩家"
                       : "等待更多玩家加入后才能开始"}
                   </p>
                 )}
@@ -772,9 +794,9 @@ export default function WaitingRoomPage() {
               {room.players.map((player, index) => {
                 const isSelf = !false && player.id === playerId;
                 const isRoomOwner = !false && player.id === room.ownerPlayerId;
-                const isAi = player.revealedType === "ai";
-                const isSimulatedHuman =
-                  player.revealedType === "human" && player.simulated;
+                const roleTag = roleTagFor(player);
+                const isAi = roleTag?.cls === "ai";
+                const isSimulatedHuman = roleTag?.cls.includes("simulated") ?? false;
                 const seatBgColors = [
                   "#0f766e",
                   "#2563eb",
@@ -804,10 +826,9 @@ export default function WaitingRoomPage() {
                       <div className="player-row-name">
                         <strong>{player.name}</strong>
                         {isSelf && <span className="self">你</span>}
-                        {isAi && <span className="identity-tag ai">AI</span>}
-                        {isSimulatedHuman && (
-                          <span className="identity-tag human simulated">
-                            模拟真人
+                        {roleTag && (
+                          <span className={`identity-tag ${roleTag.cls}`}>
+                            {roleTag.label}
                           </span>
                         )}
                         {player.aiPersonaName && (

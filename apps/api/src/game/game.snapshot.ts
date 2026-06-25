@@ -62,7 +62,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
           aiPersonaId: persona?.id,
           aiPersonaName: persona?.nickname,
           aiModelId: (revealTypes || exposeDebugType) ? player.aiModelId : undefined,
-          // 沙盒角色(仅 sandbox 房有;前台据此显示 被测AI/侦探/填充,而非产品术语 AI/模拟真人)。
+          // 沙盒角色(仅 sandbox 房有;前台据此显示 被测AI/侦探/填充)。
           sandboxRole: player.sandboxRole,
         };
       }),
@@ -97,7 +97,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
         ? canStartSandboxRoom(room)
         : countHumans(room) >= 1),
     debug: DEBUG || undefined,
-    // 沙盒房标识(有则前台按被测AI/侦探/填充渲染,而非产品 AI/模拟真人)。
+    // 沙盒房标识(有则前台按被测AI/侦探/填充渲染)。
     sandboxScenarioId: room.sandboxScenarioId,
     promptGenerationId: room.promptGenerationId,
     createdAt: room.createdAt,

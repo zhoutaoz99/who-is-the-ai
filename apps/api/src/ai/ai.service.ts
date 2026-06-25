@@ -793,7 +793,7 @@ function parseSeatNo(value: string | null | undefined): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** 单层发言不再由模型给反应时间，按发言长度估一个“打字耗时”，模拟真人不秒回。 */
+/** 单层发言不再由模型给反应时间，按发言长度估一个“打字耗时”，模型驱动玩家不秒回。 */
 function typingDelayForContent(content: string): number {
   return Math.min(8_000, 1_500 + content.length * 120);
 }

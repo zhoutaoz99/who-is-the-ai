@@ -280,7 +280,9 @@ export default function SandboxConfigPage() {
                 {starting ? "开局中…" : "开始对局"}
               </button>
               {!room.canStart && (
-                <p className="muted-text canstart-hint">需要至少 1 名 AI 和 1 名模拟真人</p>
+                <p className="muted-text canstart-hint">
+                  需要至少 1 名被测AI玩家和 1 名侦探或填充玩家
+                </p>
               )}
 
               {room.status === "waiting" && (

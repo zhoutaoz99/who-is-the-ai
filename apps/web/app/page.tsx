@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "./lib/auth-client";
 import { useGameClient } from "./lib/game-client";
-import { humanCount, statusLabel, winnerLabel } from "./lib/game-utils";
+import {
+  humanCount,
+  sandboxWinnerLabel,
+  statusLabel,
+  winnerLabel,
+} from "./lib/game-utils";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -709,11 +714,9 @@ export default function Home() {
                             </span>
                             {room.status === "finished" && room.winner && (
                               <span className="room-tag winner">
-                                {isSandboxRoom && room.winner === "human"
-                                  ? "模拟真人获胜"
-                                  : isSandboxRoom && room.winner === "ai"
-                                    ? "AI 获胜"
-                                    : winnerLabel(room.winner)}
+                                {isSandboxRoom
+                                  ? sandboxWinnerLabel(room.winner)
+                                  : winnerLabel(room.winner)}
                               </span>
                             )}
                             {room.status === "finished" && !room.winner && (

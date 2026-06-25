@@ -92,7 +92,7 @@ export function getWinner(room: Room): Winner {
     return "ai";
   }
 
-  // 只剩1个AI和1个模拟真人时，模拟真人不可能获胜，提前结束
+  // 只剩1个AI和1个模型驱动真人时，该真人不可能获胜，提前结束
   if (aliveAiCount === 1 && aliveHumanCount === 1) {
     const aliveHuman = room.players.find(
       (player) => player.type === "human" && player.status === "alive",
@@ -282,7 +282,7 @@ export function normalizeContent(content: string | undefined) {
 export function normalizeDiscussionDuration(payload: CreateRoomPayload) {
   const seconds = Number(payload.discussionDurationSeconds);
   if (Number.isFinite(seconds)) {
-    // 秒级(主要用于 debug 自动迭代):最小 10s。
+    // 秒级(主要用于沙盒/自动化运行):最小 10s。
     return Math.max(Math.floor(seconds), 10) * 1000;
   }
   const minutes = Number(payload.discussionDurationMinutes);

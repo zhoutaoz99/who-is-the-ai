@@ -270,7 +270,7 @@ function getSeatColor(seatNo: number) {
 }
 
 /**
- * 玩家身份标签:沙盒房按 sandboxRole 显示 被测AI/侦探/填充;产品对局维持 AI/模拟真人/真人。
+ * 玩家身份标签:沙盒房按 sandboxRole 显示 被测AI/侦探/填充;产品对局维持 AI/真人。
  * 返回 {label, cls},无身份(未揭示)返回 null。
  */
 function roleTagFor(player: {
@@ -285,7 +285,7 @@ function roleTagFor(player: {
   }
   if (!player.revealedType) return null;
   return {
-    label: player.revealedType === "ai" ? "AI" : player.simulated ? "模拟真人" : "真人",
+    label: player.revealedType === "ai" ? "AI" : player.simulated ? "模型玩家" : "真人",
     cls: `${player.revealedType}${player.simulated ? " simulated" : ""}`,
   };
 }
@@ -585,7 +585,7 @@ export default function GamePage() {
                   ? room.winner === "human"
                     ? "侦探方获胜"
                     : room.winner === "ai"
-                      ? "被测AI 获胜"
+                      ? "被测AI获胜"
                       : "沙盒对局结束"
                   : room.winner === "human"
                   ? "真人玩家获胜"
@@ -598,7 +598,7 @@ export default function GamePage() {
                   ? room.winner === "human"
                     ? "侦探成功识别并投票淘汰了被测AI。"
                     : room.winner === "ai"
-                      ? "被测AI 成功隐藏，侦探未能将其淘汰。"
+                      ? "被测AI成功隐藏，侦探未能将其淘汰。"
                       : "可返回大厅查看 MatchRecord。"
                   : room.winner === "human"
                   ? formatPointAwardSummary(room)
