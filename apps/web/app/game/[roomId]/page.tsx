@@ -269,6 +269,27 @@ function getSeatColor(seatNo: number) {
   return SEAT_COLORS[(seatNo - 1) % SEAT_COLORS.length];
 }
 
+/**
+ * 玩家身份标签:沙盒房按 sandboxRole 显示 被测AI/侦探/填充;产品对局维持 AI/模拟真人/真人。
+ * 返回 {label, cls},无身份(未揭示)返回 null。
+ */
+function roleTagFor(player: {
+  sandboxRole?: "ai_under_test" | "detective" | "filler";
+  revealedType?: "human" | "ai";
+  simulated?: boolean;
+}): { label: string; cls: string } | null {
+  if (player.sandboxRole) {
+    if (player.sandboxRole === "ai_under_test") return { label: "被测AI", cls: "ai" };
+    if (player.sandboxRole === "detective") return { label: "侦探", cls: "human simulated" };
+    return { label: "填充", cls: "human simulated" };
+  }
+  if (!player.revealedType) return null;
+  return {
+    label: player.revealedType === "ai" ? "AI" : player.simulated ? "模拟真人" : "真人",
+    cls: `${player.revealedType}${player.simulated ? " simulated" : ""}`,
+  };
+}
+
 /* ===== Main Page ===== */
 export default function GamePage() {
   const params = useParams<{ roomId: string }>();
@@ -276,7 +297,7 @@ export default function GamePage() {
   const roomId = params.roomId.toUpperCase();
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const accountRefreshRoomRef = useRef<string | null>(null);
-  const observedDebugRoomRef = useRef<string | null>(null);
+  const observedSandboxRoomRef = useRef<string | null>(null);
   const { refreshMe } = useAuth();
   const {
     connected,
@@ -303,11 +324,11 @@ export default function GamePage() {
 
   const room = getRoom(roomId);
   const storedPlayerId = getPlayerId(roomId);
-  const playerId = room?.debugAutoAi ? null : storedPlayerId;
+  const playerId = room?.sandboxScenarioId ? null : storedPlayerId;
 
   useRoomReconnect({
     connected,
-    disabled: !room || Boolean(room.debugAutoAi),
+    disabled: !room || Boolean(room.sandboxScenarioId),
     roomId,
     getPlayerId,
     reconnectRoom,
@@ -315,16 +336,16 @@ export default function GamePage() {
 
   useEffect(() => {
     if (!connected) {
-      observedDebugRoomRef.current = null;
+      observedSandboxRoomRef.current = null;
       return;
     }
-    if (!room?.debugAutoAi || observedDebugRoomRef.current === room.id) {
+    if (!room?.sandboxScenarioId || observedSandboxRoomRef.current === room.id) {
       return;
     }
 
-    observedDebugRoomRef.current = room.id;
+    observedSandboxRoomRef.current = room.id;
     void fetchRoom(room.id);
-  }, [connected, fetchRoom, room?.debugAutoAi, room?.id]);
+  }, [connected, fetchRoom, room?.sandboxScenarioId, room?.id]);
 
   useEffect(() => {
     if (room || fetchAttempted) return;
@@ -368,7 +389,7 @@ export default function GamePage() {
   }, [refreshMe, room]);
 
   const currentPlayer = useMemo(() => {
-    if (!room || !playerId || room.debugAutoAi) {
+    if (!room || !playerId || room.sandboxScenarioId) {
       return null;
     }
     return room.players.find((player) => player.id === playerId) ?? null;
@@ -424,7 +445,7 @@ export default function GamePage() {
   const selectedVotePlayer =
     alivePlayers.find((player) => player.id === selectedVoteTarget) ?? null;
   const transcriptItems = buildTranscriptItems(room);
-  const isObserverMode = Boolean(room.debugAutoAi);
+  const isObserverMode = Boolean(room.sandboxScenarioId);
 
   const activeSpeechGeneratingIds = new Set(
     [
@@ -562,10 +583,10 @@ export default function GamePage() {
               <h2>
                 {isObserverMode
                   ? room.winner === "human"
-                    ? "模拟真人获胜"
+                    ? "侦探方获胜"
                     : room.winner === "ai"
-                      ? "AI 获胜"
-                      : "AI 自动对抗结束"
+                      ? "被测AI 获胜"
+                      : "沙盒对局结束"
                   : room.winner === "human"
                   ? "真人玩家获胜"
                   : room.winner === "ai"
@@ -575,10 +596,10 @@ export default function GamePage() {
               <p>
                 {isObserverMode
                   ? room.winner === "human"
-                    ? "模拟真人成功识别并投票淘汰了所有 AI 玩家。"
+                    ? "侦探成功识别并投票淘汰了被测AI。"
                     : room.winner === "ai"
-                      ? "AI 玩家成功隐藏身份，模拟真人未能将其全部淘汰。"
-                      : "可返回大厅进入复盘查看模型行为记录。"
+                      ? "被测AI 成功隐藏，侦探未能将其淘汰。"
+                      : "可返回大厅查看 MatchRecord。"
                   : room.winner === "human"
                   ? formatPointAwardSummary(room)
                   : room.winner === "ai"
@@ -639,17 +660,12 @@ export default function GamePage() {
                     <div className="game-player-name">
                       <strong>#{player.seatNo}</strong>
                       {isSelf && <span className="self">你</span>}
-                      {player.revealedType && (
-                        <span
-                          className={`identity-tag ${player.revealedType}${player.simulated ? " simulated" : ""}`}
-                        >
-                          {player.revealedType === "ai"
-                            ? "AI"
-                            : player.simulated
-                              ? "模拟真人"
-                              : "真人"}
-                        </span>
-                      )}
+                      {(() => {
+                        const tag = roleTagFor(player);
+                        return tag ? (
+                          <span className={`identity-tag ${tag.cls}`}>{tag.label}</span>
+                        ) : null;
+                      })()}
                     </div>
                     <div className="game-player-status">
                       {player.status === "alive" ? (
@@ -753,7 +769,7 @@ export default function GamePage() {
           </div>
 
           {isObserverMode ? (
-            <div className="observer-note">AI 自动对抗进行中</div>
+            <div className="observer-note">沙盒对局进行中(被测AI + 侦探 + 填充)</div>
           ) : (
             <form
               className="composer immersive-composer"
@@ -1030,11 +1046,12 @@ function renderTranscriptItem(
         <div className="msg-meta">
           <strong>#{seatNo}</strong>
           <span>第 {item.message.roundNo} 轮</span>
-          {item.message.source && (
-            <span className={`msg-source ${isAi ? "ai" : "human"}${messagePlayer?.simulated ? " simulated" : ""}`}>
-              {isAi ? "AI" : messagePlayer?.simulated ? "模拟真人" : "真人"}
-            </span>
-          )}
+          {item.message.source && (() => {
+            const tag = messagePlayer ? roleTagFor(messagePlayer) : null;
+            return tag ? (
+              <span className={`msg-source ${tag.cls}`}>{tag.label}</span>
+            ) : null;
+          })()}
           {isObserverMode && messagePlayer?.aiPersonaName && (
             <span className="msg-source msg-persona">{messagePlayer.aiPersonaName}</span>
           )}

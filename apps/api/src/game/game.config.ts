@@ -1,12 +1,5 @@
 export const MAX_HUMAN_PLAYERS = 5;
 export const AI_PLAYER_COUNT = 2;
-export const DEBUG_AUTO_AI_PLAYER_COUNT = Number(
-  process.env.DEBUG_AUTO_AI_PLAYER_COUNT ?? AI_PLAYER_COUNT,
-);
-export const DEBUG_AUTO_SIMULATED_HUMAN_COUNT = Number(
-  process.env.DEBUG_AUTO_SIMULATED_HUMAN_COUNT ?? 3,
-);
-export const ACTIVE_ICEBREAKER_PERSONA_ID = "active_icebreaker";
 export const MAX_ROUNDS = 4;
 export const REWARD_POOL = 2000;
 export const DEFAULT_DISCUSSION_DURATION_MS = Number(

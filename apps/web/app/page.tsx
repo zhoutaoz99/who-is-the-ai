@@ -267,7 +267,6 @@ export default function Home() {
     setError,
     refreshRooms,
     createRoom,
-    createDebugAutoAiRoom,
     joinRoom,
     deleteRoom,
   } = useGameClient();
@@ -317,7 +316,7 @@ export default function Home() {
   }, [connected]);
 
   const sortedRooms = rooms
-    .filter((room) => !(room.debugAutoAi && room.status === "waiting"))
+    .filter((room) => !(room.sandboxScenarioId && room.status === "waiting"))
     .sort((a, b) => {
     if (a.status === "finished" && b.status !== "finished") return 1;
     if (a.status !== "finished" && b.status === "finished") return -1;
@@ -367,13 +366,6 @@ export default function Home() {
     }
 
     const result = await createRoom();
-    if (result.ok && result.room) {
-      router.push(`/room/${result.room.id}`);
-    }
-  }
-
-  async function handleCreateDebugAutoAiRoom() {
-    const result = await createDebugAutoAiRoom();
     if (result.ok && result.room) {
       router.push(`/room/${result.room.id}`);
     }
@@ -544,30 +536,6 @@ export default function Home() {
             <div className="debug-auto-ai-entry">
               <div className="lobby-card-header">
                 <div className="lobby-icon debug-ai-icon" aria-hidden="true">
-                  <IconBot width="20" height="20" />
-                </div>
-                <div>
-                  <p className="eyebrow">Debug Auto AI</p>
-                  <h2>AI 自动对抗</h2>
-                </div>
-              </div>
-              <p className="muted-text">
-                默认 2 个 AI 和 3 个模拟真人，用于调试对抗。
-              </p>
-              <button
-                className="secondary"
-                disabled={pending || authPending}
-                onClick={handleCreateDebugAutoAiRoom}
-              >
-                创建自动对抗
-              </button>
-            </div>
-          )}
-
-          {debug && (
-            <div className="debug-auto-ai-entry">
-              <div className="lobby-card-header">
-                <div className="lobby-icon debug-ai-icon" aria-hidden="true">
                   <svg
                     viewBox="0 0 24 24"
                     width="20"
@@ -600,7 +568,7 @@ export default function Home() {
           )}
 
           {debug && (
-            <div className="debug-auto-ai-entry">
+            <div className="sandbox-entry">
               <div className="lobby-card-header">
                 <div className="lobby-icon debug-ai-icon" aria-hidden="true">
                   <IconBot width="20" height="20" />
@@ -709,7 +677,7 @@ export default function Home() {
                   const humans = humanCount(room);
                   const maxHumans = room.config.maxHumanPlayers;
                   const aiCount = room.config.aiPlayerCount;
-                  const isDebugAutoAiRoom = Boolean(room.debugAutoAi);
+                  const isSandboxRoom = Boolean(room.sandboxScenarioId);
                   const fillPercent =
                     maxHumans > 0 ? (humans / maxHumans) * 100 : 0;
                   return (
@@ -718,14 +686,14 @@ export default function Home() {
                       key={room.id}
                       data-status={room.status}
                       disabled={
-                        room.status === "playing" && !isDebugAutoAiRoom
+                        room.status === "playing" && !isSandboxRoom
                       }
                       onClick={() => {
                         if (room.status === "finished") {
                           router.push(`/game/${room.id}`);
-                        } else if (room.status === "playing" && isDebugAutoAiRoom) {
+                        } else if (room.status === "playing" && isSandboxRoom) {
                           router.push(`/game/${room.id}`);
-                        } else if (isDebugAutoAiRoom) {
+                        } else if (isSandboxRoom) {
                           router.push(`/room/${room.id}`);
                         } else {
                           handleJoinRoom(room.id);
@@ -741,9 +709,9 @@ export default function Home() {
                             </span>
                             {room.status === "finished" && room.winner && (
                               <span className="room-tag winner">
-                                {isDebugAutoAiRoom && room.winner === "human"
+                                {isSandboxRoom && room.winner === "human"
                                   ? "模拟真人获胜"
-                                  : isDebugAutoAiRoom && room.winner === "ai"
+                                  : isSandboxRoom && room.winner === "ai"
                                     ? "AI 获胜"
                                     : winnerLabel(room.winner)}
                               </span>
@@ -776,7 +744,7 @@ export default function Home() {
                         {room.status === "waiting" && (
                           <div className="replay-room-actions">
                             <span className="room-join-hint">
-                              {isDebugAutoAiRoom ? "管理 →" : "加入 →"}
+                              {isSandboxRoom ? "管理 →" : "加入 →"}
                             </span>
                             {debug && (
                               <span
@@ -805,7 +773,7 @@ export default function Home() {
                         )}
                         {room.status === "playing" && (
                           <div className="replay-room-actions">
-                            {isDebugAutoAiRoom && (
+                            {isSandboxRoom && (
                               <span className="room-join-hint">观察 →</span>
                             )}
                             {debug && (

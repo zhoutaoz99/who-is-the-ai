@@ -85,8 +85,8 @@ export default function SandboxConfigPage() {
     getRoom,
     fetchRoom,
     updateDiscussionDuration,
-    updateDebugModel,
-    deleteDebugAutoAiRoom,
+    updateSandboxPlayerModel,
+    deleteSandboxRoom,
   } = useGameClient();
 
   const [config, setConfig] = useState<SandboxConfig | null>(null);
@@ -178,8 +178,8 @@ export default function SandboxConfigPage() {
   }
 
   async function handleBackToLobby() {
-    if (room?.debugAutoAi && room.status === "waiting") {
-      await deleteDebugAutoAiRoom(room.id);
+    if (room?.sandboxScenarioId && room.status === "waiting") {
+      await deleteSandboxRoom(room.id);
     }
     router.push("/");
   }
@@ -364,7 +364,7 @@ export default function SandboxConfigPage() {
                             value={liveModel}
                             disabled={pending}
                             onChange={(e) => {
-                              if (player) void updateDebugModel(room.id, player.id, e.target.value);
+                              if (player) void updateSandboxPlayerModel(room.id, player.id, e.target.value);
                             }}
                           >
                             {models.map((m) => (

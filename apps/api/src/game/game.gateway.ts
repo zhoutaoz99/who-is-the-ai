@@ -13,12 +13,8 @@ import { AuthService } from "../auth/auth.service";
 import { AuthenticatedAccount } from "../auth/auth.types";
 import {
   CastVotePayload,
-  CreateDebugAutoAiRoomPayload,
   CreateRoomPayload,
-  DebugAddAiPayload,
-  DebugDeleteAutoAiRoomPayload,
-  DebugRemoveAiPayload,
-  DebugUpdateModelPayload,
+  DeleteSandboxRoomPayload,
   DeleteRoomPayload,
   JoinRoomPayload,
   LeaveRoomPayload,
@@ -28,7 +24,7 @@ import {
   StartGamePayload,
   StopGamePayload,
   UpdateDiscussionDurationPayload,
-  UpdateDebugAutoAiSequentialSpeechPayload,
+  UpdateSandboxPlayerModelPayload,
 } from "./game.types";
 import { PostgresService } from "../data/postgres.service";
 import { DEBUG } from "./game.config";
@@ -95,19 +91,6 @@ export class GameGateway
       payload ?? {},
       authResult.account,
     );
-    if (result.room) {
-      client.join(result.room.id);
-      this.server.to(result.room.id).emit("room.updated", result.room);
-    }
-    return result;
-  }
-
-  @SubscribeMessage("debug.ai-room.create")
-  async handleCreateDebugAutoAiRoom(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() payload: CreateDebugAutoAiRoomPayload,
-  ) {
-    const result = await this.gameService.createDebugAutoAiRoom(payload ?? {});
     if (result.room) {
       client.join(result.room.id);
       this.server.to(result.room.id).emit("room.updated", result.room);
@@ -209,26 +192,18 @@ export class GameGateway
     return this.gameService.stopGame(payload ?? {});
   }
 
-  @SubscribeMessage("debug.ai.add")
-  async handleDebugAddAi(@MessageBody() payload: DebugAddAiPayload) {
-    return this.gameService.addDebugAi(payload ?? {});
-  }
-
-  @SubscribeMessage("debug.ai.remove")
-  async handleDebugRemoveAi(@MessageBody() payload: DebugRemoveAiPayload) {
-    return this.gameService.removeDebugAi(payload ?? {});
-  }
-
-  @SubscribeMessage("debug.ai.updateModel")
-  async handleDebugUpdateModel(@MessageBody() payload: DebugUpdateModelPayload) {
-    return this.gameService.updateDebugModel(payload ?? {});
-  }
-
-  @SubscribeMessage("debug.ai-room.delete")
-  async handleDebugDeleteAutoAiRoom(
-    @MessageBody() payload: DebugDeleteAutoAiRoomPayload,
+  @SubscribeMessage("sandbox.player.updateModel")
+  async handleUpdateSandboxPlayerModel(
+    @MessageBody() payload: UpdateSandboxPlayerModelPayload,
   ) {
-    return this.gameService.deleteDebugAutoAiRoom(payload ?? {});
+    return this.gameService.updateSandboxPlayerModel(payload ?? {});
+  }
+
+  @SubscribeMessage("sandbox.room.delete")
+  async handleDeleteSandboxRoom(
+    @MessageBody() payload: DeleteSandboxRoomPayload,
+  ) {
+    return this.gameService.deleteSandboxRoom(payload ?? {});
   }
 
   @SubscribeMessage("room.delete")
@@ -241,13 +216,6 @@ export class GameGateway
     @MessageBody() payload: UpdateDiscussionDurationPayload,
   ) {
     return this.gameService.updateDiscussionDuration(payload ?? {});
-  }
-
-  @SubscribeMessage("debug.ai-room.sequentialSpeech.update")
-  async handleUpdateDebugAutoAiSequentialSpeech(
-    @MessageBody() payload: UpdateDebugAutoAiSequentialSpeechPayload,
-  ) {
-    return this.gameService.updateDebugAutoAiSequentialSpeech(payload ?? {});
   }
 
   private async getAccount(authToken: string | undefined): Promise<

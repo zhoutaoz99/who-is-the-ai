@@ -42,28 +42,16 @@ type GameClientContextValue = {
   getPlayerId: (roomId: string) => string | null;
   refreshRooms: (silent?: boolean) => Promise<{ ok: boolean; error?: string }>;
   createRoom: () => Promise<ActionResult>;
-  createDebugAutoAiRoom: () => Promise<ActionResult>;
   joinRoom: (roomId?: string) => Promise<ActionResult>;
   leaveRoom: (roomId: string) => Promise<ActionResult>;
   reconnectRoom: (roomId: string) => Promise<ActionResult>;
   startGame: (roomId: string) => Promise<ActionResult>;
-  addDebugAi: (
-    roomId: string,
-    playerType?: "human" | "ai",
-    personaId?: string,
-    modelId?: string,
-  ) => Promise<ActionResult>;
-  removeDebugAi: (roomId: string, aiPlayerId: string) => Promise<ActionResult>;
-  updateDebugModel: (roomId: string, targetPlayerId: string, modelId: string) => Promise<ActionResult>;
-  deleteDebugAutoAiRoom: (roomId: string) => Promise<ActionResult>;
+  updateSandboxPlayerModel: (roomId: string, targetPlayerId: string, modelId: string) => Promise<ActionResult>;
+  deleteSandboxRoom: (roomId: string) => Promise<ActionResult>;
   deleteRoom: (roomId: string) => Promise<ActionResult>;
   updateDiscussionDuration: (
     roomId: string,
     discussionDurationMinutes: number,
-  ) => Promise<ActionResult>;
-  updateDebugAutoAiSequentialSpeech: (
-    roomId: string,
-    sequentialSpeech: boolean,
   ) => Promise<ActionResult>;
   sendChat: (roomId: string, content: string) => Promise<ActionResult>;
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
@@ -611,8 +599,6 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           playerName: normalizedName,
         });
       },
-      createDebugAutoAiRoom: async () =>
-        emitAction("debug.ai-room.create", {}),
       startIteration: async (payload: StartIterationPayload) =>
         emitAction<StartIterationPayload>("iteration.start", payload ?? {}),
       continueIteration: async () => emitAction("iteration.continue", {}),
@@ -664,34 +650,15 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
         }),
-      addDebugAi: (
-        roomId: string,
-        playerType: "human" | "ai" = "ai",
-        personaId?: string,
-        modelId?: string,
-      ) =>
-        emitAction("debug.ai.add", {
-          roomId,
-          playerId: playerIds[roomId.toUpperCase()],
-          playerType,
-          personaId,
-          modelId,
-        }),
-      removeDebugAi: (roomId: string, aiPlayerId: string) =>
-        emitAction("debug.ai.remove", {
-          roomId,
-          playerId: playerIds[roomId.toUpperCase()],
-          aiPlayerId,
-        }),
-      updateDebugModel: (roomId: string, targetPlayerId: string, modelId: string) =>
-        emitAction("debug.ai.updateModel", {
+      updateSandboxPlayerModel: (roomId: string, targetPlayerId: string, modelId: string) =>
+        emitAction("sandbox.player.updateModel", {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
           targetPlayerId,
           modelId,
         }),
-      deleteDebugAutoAiRoom: (roomId: string) =>
-        emitAction("debug.ai-room.delete", {
+      deleteSandboxRoom: (roomId: string) =>
+        emitAction("sandbox.room.delete", {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
         }),
@@ -705,12 +672,6 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           roomId,
           playerId: playerIds[roomId.toUpperCase()],
           discussionDurationMinutes,
-        }),
-      updateDebugAutoAiSequentialSpeech: (roomId: string, sequentialSpeech: boolean) =>
-        emitAction("debug.ai-room.sequentialSpeech.update", {
-          roomId,
-          playerId: playerIds[roomId.toUpperCase()],
-          sequentialSpeech,
         }),
       sendChat: (roomId: string, content: string) =>
         emitAction("chat.send", {

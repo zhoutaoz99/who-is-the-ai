@@ -58,7 +58,7 @@ export interface SandboxConfig {
 }
 
 /**
- * 离线沙盒引擎(薄服务):按 Scenario 驱动一局 debugAutoAi 对局,复用产品运行时
+ * 离线沙盒引擎(薄服务):按 Scenario 驱动一局沙盒对局,复用产品运行时
  * (GameService)+ gateway 实时可视化。流程:prepare(建等待房)→ [前台配置页改参数]
  * → start(开局 + 后台落盘 MatchRecord)。
  */

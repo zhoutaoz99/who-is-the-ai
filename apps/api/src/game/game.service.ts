@@ -33,14 +33,12 @@ import {
 import { GameRoomRepository } from "./game-room.repository";
 import {
   addChatMessage,
-  canStartDebugAutoAiRoom,
+  canStartSandboxRoom,
   chooseFallbackVoteTarget,
   countAi,
   countHumans,
   countSimulatedHumans,
-  createAiPlayer,
   createAiPlayers,
-  createDebugAutoAiPlayers,
   createHumanPlayer,
   createSandboxPlayers,
   type SandboxPlayerSpec,
@@ -49,6 +47,7 @@ import {
   futureIso,
   getWinner,
   isModelDrivenPlayer,
+  isSandboxRoom,
   isSimulatedHuman,
   normalizeContent,
   normalizeDiscussionDuration,
@@ -66,12 +65,8 @@ import {
   AiShortMemory,
   AiVoteMemorySource,
   CastVotePayload,
-  CreateDebugAutoAiRoomPayload,
   CreateRoomPayload,
-  DebugAddAiPayload,
-  DebugDeleteAutoAiRoomPayload,
-  DebugRemoveAiPayload,
-  DebugUpdateModelPayload,
+  DeleteSandboxRoomPayload,
   DeleteRoomPayload,
   GameAccount,
   JoinRoomPayload,
@@ -88,7 +83,7 @@ import {
   StartGamePayload,
   StopGamePayload,
   UpdateDiscussionDurationPayload,
-  UpdateDebugAutoAiSequentialSpeechPayload,
+  UpdateSandboxPlayerModelPayload,
   Winner,
 } from "./game.types";
 
@@ -106,7 +101,7 @@ type AiSpeechContextMark = {
 
 type SpeechSchedulerKind = "ai" | "simulated-human";
 type SpeechTimerKey = "aiSpeech" | "simulatedHumanSpeech";
-type DebugAutoAiSpeechPassResult = "continue" | "start-voting" | "stop";
+type SandboxSpeechPassResult = "continue" | "start-voting" | "stop";
 
 @Injectable()
 export class GameService {
@@ -173,61 +168,9 @@ export class GameService {
     };
   }
 
-  async createDebugAutoAiRoom(
-    payload: CreateDebugAutoAiRoomPayload,
-  ): Promise<ActionResult> {
-    if (!DEBUG) {
-      return this.fail("调试模式未开启");
-    }
-
-    const now = new Date().toISOString();
-    const defaultModelId = this.aiService.getDefaultModelId();
-    const personaIds = (payload.personaIds ?? []).filter(Boolean);
-    if (personaIds.length > 0) {
-      const activePersonaIds = new Set(getActivePersonas().map((persona) => persona.id));
-      const missing = personaIds.filter((id) => !activePersonaIds.has(id));
-      if (missing.length > 0) {
-        return this.fail(`AI 人格不存在: ${missing.join(", ")}`);
-      }
-    }
-    const aiPlayers = createDebugAutoAiPlayers(
-      1,
-      personaIds.length > 0 ? personaIds.length : undefined,
-      undefined,
-      defaultModelId,
-      personaIds.length > 0 ? personaIds : undefined,
-    );
-    const room: Room = {
-      id: createRoomId(),
-      status: "waiting",
-      ownerPlayerId: aiPlayers[0].id,
-      debugAutoAi: true,
-      debugAutoAiSequentialSpeech: payload.sequentialSpeech === true,
-      players: aiPlayers,
-      discussionDurationMs: normalizeDiscussionDuration(payload),
-      currentRound: 0,
-      phase: "waiting",
-      phaseEndsAt: null,
-      winner: null,
-      messages: [],
-      votes: [],
-      pointAwards: [],
-      rewardSettledAt: null,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await this.roomRepository.save(room);
-    return {
-      ok: true,
-      room: this.snapshot(room),
-      playerId: room.ownerPlayerId,
-    };
-  }
-
   /**
-   * 离线沙盒:按场景 roster 建一个 debugAutoAi 房间(全 model-driven),写入意图调度,
-   * 复用产品运行时的对局循环与 gateway 实时可视化(观战模式)。
+   * 离线沙盒:按场景 roster 建一个沙盒房(全 model-driven),复用产品运行时的
+   * 对局循环与 gateway 实时可视化(观战模式)。
    */
   async createSandboxRoom(params: {
     scenarioId: string;
@@ -298,8 +241,6 @@ export class GameService {
       id: createRoomId(),
       status: "waiting",
       ownerPlayerId: players[0].id,
-      debugAutoAi: true,
-      debugAutoAiSequentialSpeech: true,
       sandboxScenarioId: params.scenarioId,
       sandboxScenario: params.scenarioJson,
       sandboxVotePolicy: params.votePolicy,
@@ -372,7 +313,7 @@ export class GameService {
         return false;
       }
 
-      if (latest.debugAutoAi) {
+      if (isSandboxRoom(latest)) {
         failure = "自动对抗调试房不能加入真人玩家";
         return false;
       }
@@ -609,18 +550,18 @@ export class GameService {
     const roomId = normalizeRoomId(payload.roomId);
     let failure = "房间不存在或操作冲突";
     const room = await this.applyWithLock(roomId, (latest) => {
-      const isDebugAutoAiRoom = DEBUG && latest.debugAutoAi === true;
+      const isSandbox = DEBUG && isSandboxRoom(latest) === true;
       if (latest.status !== "waiting") {
         failure = "游戏已经开始";
         return false;
       }
 
-      if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
+      if (!isSandbox && payload.playerId !== latest.ownerPlayerId) {
         failure = "只有房主可以开始游戏";
         return false;
       }
 
-      if (isDebugAutoAiRoom) {
+      if (isSandbox) {
         if (countAi(latest) < 1) {
           failure = "至少需要 1 名 AI 玩家";
           return false;
@@ -631,7 +572,7 @@ export class GameService {
           return false;
         }
 
-        if (!canStartDebugAutoAiRoom(latest)) {
+        if (!canStartSandboxRoom(latest)) {
           failure = "自动对局至少需要 1 名 AI 和 1 名模拟真人";
           return false;
         }
@@ -649,7 +590,7 @@ export class GameService {
       latest.currentRound = startRound;
       latest.phase = "discussion";
       latest.phaseEndsAt = futureIso(latest.discussionDurationMs);
-      this.prepareDebugAutoAiSpeechState(latest);
+      this.prepareSandboxSpeechState(latest);
       if (!isSpotlight) {
         latest.messages = [];
       }
@@ -676,7 +617,7 @@ export class GameService {
         }
       }
 
-      if (!isDebugAutoAiRoom) {
+      if (!isSandbox) {
         const existingAiPlayers = latest.players.filter(
           (player) => player.type === "ai",
         );
@@ -808,13 +749,13 @@ export class GameService {
     const roomId = normalizeRoomId(payload.roomId);
     let failure = "房间不存在或操作冲突";
     const room = await this.applyWithLock(roomId, (latest) => {
-      const isDebugAutoAiRoom = latest.debugAutoAi === true;
+      const isSandbox = isSandboxRoom(latest) === true;
       if (latest.status !== "playing") {
         failure = "游戏未在进行中";
         return false;
       }
 
-      if (!isDebugAutoAiRoom) {
+      if (!isSandbox) {
         const player = latest.players.find(
           (candidate) =>
             candidate.id === payload.playerId && candidate.type === "human",
@@ -848,158 +789,7 @@ export class GameService {
     };
   }
 
-  async addDebugAi(payload: DebugAddAiPayload): Promise<ActionResult> {
-    if (!DEBUG) {
-      return this.fail("调试模式未开启");
-    }
-
-    const roomId = normalizeRoomId(payload.roomId);
-    let failure = "房间不存在或操作冲突";
-
-    const room = await this.applyWithLock(roomId, (latest) => {
-      const isDebugAutoAiRoom = latest.debugAutoAi === true;
-      const playerType = payload.playerType === "human" ? "human" : "ai";
-      const modelId = payload.modelId || (isDebugAutoAiRoom ? this.aiService.getDefaultModelId() : undefined);
-      if (latest.status !== "waiting") {
-        failure = "只能在等待房间添加调试玩家";
-        return false;
-      }
-
-      if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
-        failure = "只有房主可以添加调试玩家";
-        return false;
-      }
-
-      if (!isDebugAutoAiRoom && playerType !== "ai") {
-        failure = "普通房间只能添加 AI 玩家";
-        return false;
-      }
-
-      const existingAiCount = latest.players.filter(
-        (player) => player.type === "ai",
-      ).length;
-      if (playerType === "ai" && !isDebugAutoAiRoom && existingAiCount >= AI_PLAYER_COUNT) {
-        failure = "AI 名额已满";
-        return false;
-      }
-
-      const nextSeatNo =
-        Math.max(0, ...latest.players.map((player) => player.seatNo)) + 1;
-      let player: Player;
-      if (playerType === "ai") {
-        const usedPersonaIds = new Set(
-          latest.players.flatMap((player) =>
-            player.aiPersonaId ? [player.aiPersonaId] : [],
-          ),
-        );
-        const selectedPersona = payload.personaId
-          ? getAiPersonaById(payload.personaId)
-          : isDebugAutoAiRoom
-            ? randomItem(getActivePersonas())
-            : (getActivePersonas().find(
-                (persona) => !usedPersonaIds.has(persona.id),
-              ) ?? getActivePersonas()[0]);
-        if (!selectedPersona) {
-          failure = "AI 人格不存在";
-          return false;
-        }
-        if (!isDebugAutoAiRoom && usedPersonaIds.has(selectedPersona.id)) {
-          failure = "该 AI 人格已在房间中";
-          return false;
-        }
-
-        player = createAiPlayer(
-          nextSeatNo,
-          selectedPersona.id,
-          latest.players.map((candidate) => candidate.name),
-          modelId,
-        );
-      } else {
-        player = createSimulatedHumanPlayer(
-          nextSeatNo,
-          latest.players.map((candidate) => candidate.name),
-          modelId,
-        );
-      }
-      latest.players.push(player);
-      if (
-        isDebugAutoAiRoom &&
-        !latest.players.some((candidate) => candidate.id === latest.ownerPlayerId)
-      ) {
-        latest.ownerPlayerId = player.id;
-      }
-      touch(latest);
-      return true;
-    });
-
-    if (!room) {
-      return this.fail(failure);
-    }
-
-    this.broadcastRoom(room);
-    return {
-      ok: true,
-      room: this.snapshot(room),
-    };
-  }
-
-  async removeDebugAi(payload: DebugRemoveAiPayload): Promise<ActionResult> {
-    if (!DEBUG) {
-      return this.fail("调试模式未开启");
-    }
-
-    const roomId = normalizeRoomId(payload.roomId);
-    let failure = "房间不存在或操作冲突";
-
-    const room = await this.applyWithLock(roomId, (latest) => {
-      const isDebugAutoAiRoom = latest.debugAutoAi === true;
-      if (latest.status !== "waiting") {
-        failure = "只能在等待房间删除调试玩家";
-        return false;
-      }
-
-      if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
-        failure = "只有房主可以删除调试玩家";
-        return false;
-      }
-
-      const targetPlayerId = payload.targetPlayerId ?? payload.aiPlayerId;
-      const target = latest.players.find(
-        (player) =>
-          player.id === targetPlayerId &&
-          (isDebugAutoAiRoom ? isModelDrivenPlayer(player) : player.type === "ai"),
-      );
-      if (!target) {
-        failure = "调试玩家不存在";
-        return false;
-      }
-
-      latest.players = latest.players.filter((player) => player.id !== target.id);
-      if (latest.ownerPlayerId === target.id) {
-        latest.ownerPlayerId = latest.players[0]?.id ?? target.id;
-      }
-      latest.players
-        .slice()
-        .sort((a, b) => a.seatNo - b.seatNo)
-        .forEach((player, index) => {
-          player.seatNo = index + 1;
-        });
-      touch(latest);
-      return true;
-    });
-
-    if (!room) {
-      return this.fail(failure);
-    }
-
-    this.broadcastRoom(room);
-    return {
-      ok: true,
-      room: this.snapshot(room),
-    };
-  }
-
-  async updateDebugModel(payload: DebugUpdateModelPayload): Promise<ActionResult> {
+  async updateSandboxPlayerModel(payload: UpdateSandboxPlayerModelPayload): Promise<ActionResult> {
     if (!DEBUG) {
       return this.fail("调试模式未开启");
     }
@@ -1037,8 +827,8 @@ export class GameService {
     };
   }
 
-  async deleteDebugAutoAiRoom(
-    payload: DebugDeleteAutoAiRoomPayload,
+  async deleteSandboxRoom(
+    payload: DeleteSandboxRoomPayload,
   ): Promise<ActionResult> {
     if (!DEBUG) {
       return this.fail("调试模式未开启");
@@ -1049,7 +839,7 @@ export class GameService {
       return this.fail("房间不存在");
     }
 
-    if (!room.debugAutoAi) {
+    if (!isSandboxRoom(room)) {
       return this.fail("只能删除自动对抗调试房");
     }
 
@@ -1095,57 +885,18 @@ export class GameService {
         return false;
       }
 
-      const isDebugAutoAiRoom = latest.debugAutoAi === true;
-      if (isDebugAutoAiRoom && !DEBUG) {
+      const isSandbox = isSandboxRoom(latest) === true;
+      if (isSandbox && !DEBUG) {
         failure = "调试模式未开启";
         return false;
       }
 
-      if (!isDebugAutoAiRoom && payload.playerId !== latest.ownerPlayerId) {
+      if (!isSandbox && payload.playerId !== latest.ownerPlayerId) {
         failure = "只有房主可以修改每轮发言时间";
         return false;
       }
 
       latest.discussionDurationMs = normalizeDiscussionDuration(payload);
-      touch(latest);
-      return true;
-    });
-
-    if (!room) {
-      return this.fail(failure);
-    }
-
-    this.broadcastRoom(room);
-    return {
-      ok: true,
-      room: this.snapshot(room),
-    };
-  }
-
-  async updateDebugAutoAiSequentialSpeech(
-    payload: UpdateDebugAutoAiSequentialSpeechPayload,
-  ): Promise<ActionResult> {
-    const roomId = normalizeRoomId(payload.roomId);
-    let failure = "房间不存在或操作冲突";
-
-    const room = await this.applyWithLock(roomId, (latest) => {
-      if (!DEBUG) {
-        failure = "调试模式未开启";
-        return false;
-      }
-
-      if (!latest.debugAutoAi) {
-        failure = "只能修改自动对抗调试房";
-        return false;
-      }
-
-      if (latest.status !== "waiting") {
-        failure = "只能在开局前修改快速模式";
-        return false;
-      }
-
-      latest.debugAutoAiSequentialSpeech = payload.sequentialSpeech === true;
-      latest.debugAutoAiSpeech = undefined;
       touch(latest);
       return true;
     });
@@ -1194,7 +945,7 @@ export class GameService {
       latest.currentRound += 1;
       latest.phase = "discussion";
       latest.phaseEndsAt = futureIso(latest.discussionDurationMs);
-      this.prepareDebugAutoAiSpeechState(latest);
+      this.prepareSandboxSpeechState(latest);
       for (const player of latest.players) {
         if (isModelDrivenPlayer(player)) {
           player.aiSkipBackoffUntil = undefined;
@@ -1214,8 +965,8 @@ export class GameService {
     this.broadcastRoom(room);
     this.server?.to(room.id).emit("round.started", this.snapshot(room));
     this.startTick(room);
-    if (room.debugAutoAi && room.debugAutoAiSequentialSpeech) {
-      this.startDebugAutoAiSpeechLoop(room);
+    if (isSandboxRoom(room)) {
+      this.startSandboxSpeechLoop(room);
     } else {
       this.startAiSpeech(room);
       this.startSimulatedHumanSpeech(room);
@@ -1238,7 +989,7 @@ export class GameService {
 
       latest.phase = "voting";
       latest.phaseEndsAt = futureIso(VOTE_DURATION_MS);
-      latest.debugAutoAiSpeech = undefined;
+      latest.sandboxSpeech = undefined;
       touch(latest);
       return true;
     });
@@ -1379,8 +1130,8 @@ export class GameService {
     }, 1_000);
   }
 
-  private startDebugAutoAiSpeechLoop(room: Room) {
-    void this.runDebugAutoAiSpeechLoop(room.id, room.currentRound);
+  private startSandboxSpeechLoop(room: Room) {
+    void this.runSandboxSpeechLoop(room.id, room.currentRound);
   }
 
   // ===== 离线沙盒:探测注入(gated,仅 sandbox 房有 sandboxProbeSchedule) =====
@@ -1671,17 +1422,17 @@ export class GameService {
     return Math.floor(((h >>> 0) / 4294967296) * length);
   }
 
-  private async runDebugAutoAiSpeechLoop(
+  private async runSandboxSpeechLoop(
     roomId: string,
     roundNo: number,
   ) {
     while (true) {
-      const room = await this.beginDebugAutoAiSpeechPass(roomId, roundNo);
+      const room = await this.beginSandboxSpeechPass(roomId, roundNo);
       if (!room) {
         return;
       }
 
-      const players = this.getDebugAutoAiSpeechPassPlayers(room);
+      const players = this.getSandboxSpeechPassPlayers(room);
       if (players.length === 0) {
         return;
       }
@@ -1746,7 +1497,7 @@ export class GameService {
         }
 
         if (action.type === "skip") {
-          await this.markDebugAutoAiSpeechConsidered(
+          await this.markSandboxSpeechConsidered(
             roomId,
             freshPlayer.id,
             roundNo,
@@ -1756,7 +1507,7 @@ export class GameService {
           continue;
         }
 
-        const saved = await this.saveDebugAutoAiSpeech(
+        const saved = await this.saveSandboxSpeech(
           roomId,
           freshPlayer.id,
           roundNo,
@@ -1784,7 +1535,7 @@ export class GameService {
         }
       }
 
-      const passResult = await this.completeDebugAutoAiSpeechPass(
+      const passResult = await this.completeSandboxSpeechPass(
         roomId,
         roundNo,
       );
@@ -1802,7 +1553,7 @@ export class GameService {
     }
   }
 
-  private async beginDebugAutoAiSpeechPass(
+  private async beginSandboxSpeechPass(
     roomId: string,
     roundNo: number,
   ): Promise<Room | null> {
@@ -1811,8 +1562,7 @@ export class GameService {
         latest.status !== "playing" ||
         latest.phase !== "discussion" ||
         latest.currentRound !== roundNo ||
-        !latest.debugAutoAi ||
-        !latest.debugAutoAiSequentialSpeech
+        !isSandboxRoom(latest)
       ) {
         return false;
       }
@@ -1825,13 +1575,13 @@ export class GameService {
       }
 
       const state =
-        this.getDebugAutoAiSpeechState(latest) ??
+        this.getSandboxSpeechState(latest) ??
         {
           roundNo,
           startOffset: 0,
           passNo: 0,
         };
-      latest.debugAutoAiSpeech = {
+      latest.sandboxSpeech = {
         roundNo,
         startOffset: state.startOffset % players.length,
         passNo: state.passNo,
@@ -1843,7 +1593,7 @@ export class GameService {
     });
   }
 
-  private getDebugAutoAiSpeechPassPlayers(room: Room): Player[] {
+  private getSandboxSpeechPassPlayers(room: Room): Player[] {
     const players = room.players
       .filter((player) => isModelDrivenPlayer(player) && player.status === "alive")
       .sort((a, b) => a.seatNo - b.seatNo);
@@ -1851,7 +1601,7 @@ export class GameService {
       return players;
     }
 
-    const state = this.getDebugAutoAiSpeechState(room);
+    const state = this.getSandboxSpeechState(room);
     const startIndex = state
       ? state.startOffset % players.length
       : 0;
@@ -1861,27 +1611,27 @@ export class GameService {
     ];
   }
 
-  private getDebugAutoAiSpeechState(room: Room) {
+  private getSandboxSpeechState(room: Room) {
     if (
-      room.debugAutoAiSpeech &&
-      room.debugAutoAiSpeech.roundNo === room.currentRound
+      room.sandboxSpeech &&
+      room.sandboxSpeech.roundNo === room.currentRound
     ) {
-      return room.debugAutoAiSpeech;
+      return room.sandboxSpeech;
     }
 
     return null;
   }
 
-  private prepareDebugAutoAiSpeechState(room: Room) {
-    if (!room.debugAutoAi || !room.debugAutoAiSequentialSpeech) {
-      room.debugAutoAiSpeech = undefined;
+  private prepareSandboxSpeechState(room: Room) {
+    if (!isSandboxRoom(room)) {
+      room.sandboxSpeech = undefined;
       return;
     }
 
     const modelDrivenCount = room.players.filter(
       (player) => isModelDrivenPlayer(player) && player.status === "alive",
     ).length;
-    room.debugAutoAiSpeech = {
+    room.sandboxSpeech = {
       roundNo: room.currentRound,
       startOffset:
         modelDrivenCount > 0
@@ -1892,17 +1642,17 @@ export class GameService {
     };
   }
 
-  private async completeDebugAutoAiSpeechPass(
+  private async completeSandboxSpeechPass(
     roomId: string,
     roundNo: number,
-  ): Promise<DebugAutoAiSpeechPassResult> {
-    let result: DebugAutoAiSpeechPassResult = "stop";
+  ): Promise<SandboxSpeechPassResult> {
+    let result: SandboxSpeechPassResult = "stop";
     const saved = await this.applyWithLock(roomId, (latest) => {
       if (
         latest.status !== "playing" ||
         latest.phase !== "discussion" ||
         latest.currentRound !== roundNo ||
-        !latest.debugAutoAi
+        !isSandboxRoom(latest)
       ) {
         return false;
       }
@@ -1918,14 +1668,14 @@ export class GameService {
         latest.phaseEndsAt != null &&
         Date.now() >= new Date(latest.phaseEndsAt).getTime();
       const state =
-        this.getDebugAutoAiSpeechState(latest) ??
+        this.getSandboxSpeechState(latest) ??
         {
           roundNo,
           startOffset: 0,
           passNo: 0,
         };
       if (phaseEnded) {
-        latest.debugAutoAiSpeech = {
+        latest.sandboxSpeech = {
           roundNo,
           startOffset: state.startOffset % players.length,
           passNo: state.passNo + 1,
@@ -1937,7 +1687,7 @@ export class GameService {
         return true;
       }
 
-      latest.debugAutoAiSpeech = {
+      latest.sandboxSpeech = {
         roundNo,
         startOffset: (state.startOffset + 1) % players.length,
         passNo: state.passNo + 1,
@@ -1951,7 +1701,7 @@ export class GameService {
     return saved ? result : "stop";
   }
 
-  private async markDebugAutoAiSpeechConsidered(
+  private async markSandboxSpeechConsidered(
     roomId: string,
     playerId: string,
     roundNo: number,
@@ -1983,7 +1733,7 @@ export class GameService {
     });
   }
 
-  private async saveDebugAutoAiSpeech(
+  private async saveSandboxSpeech(
     roomId: string,
     playerId: string,
     roundNo: number,
@@ -2061,7 +1811,7 @@ export class GameService {
           return;
         }
 
-        if (room.debugAutoAi) {
+        if (isSandboxRoom(room)) {
           this.emitSpeechGenerating(room.id, aiPlayer, room.currentRound);
         }
 
@@ -2092,7 +1842,7 @@ export class GameService {
               "模型返回后对局已离开发言阶段或轮次已变化",
               action.type === "speak" ? action.content : undefined,
             );
-            if (latestAfterModel?.debugAutoAi) {
+            if (latestAfterModel && isSandboxRoom(latestAfterModel)) {
               this.emitSpeechDiscarded(
                 room.id,
                 aiPlayer,
@@ -2113,7 +1863,7 @@ export class GameService {
               "模型返回后上下文已失效",
               action.type === "speak" ? action.content : undefined,
             );
-            if (latestAfterModel.debugAutoAi) {
+            if (isSandboxRoom(latestAfterModel)) {
               this.emitSpeechDiscarded(
                 room.id,
                 aiPlayer,
@@ -2133,7 +1883,7 @@ export class GameService {
               schedulerKind,
             );
             this.aiService.recordCalls(action.callRecords);
-            if (room.debugAutoAi) {
+            if (isSandboxRoom(room)) {
               this.emitSpeechDiscarded(room.id, aiPlayer, "skip", contextMark.roundNo);
             }
           }
@@ -2194,7 +1944,7 @@ export class GameService {
                 discardReason ?? "保存发言时上下文已失效",
                 action.content,
               );
-              if (room.debugAutoAi) {
+              if (isSandboxRoom(room)) {
                 this.emitSpeechDiscarded(
                   room.id,
                   aiPlayer,
@@ -2223,7 +1973,7 @@ export class GameService {
                 discardReason ?? "保存发言失败",
                 action.content,
               );
-              if (room.debugAutoAi) {
+              if (isSandboxRoom(room)) {
                 this.emitSpeechDiscarded(
                   room.id,
                   aiPlayer,
@@ -2365,7 +2115,7 @@ export class GameService {
     }
 
     if (
-      !room.debugAutoAi ||
+      !isSandboxRoom(room) ||
       room.status !== "playing" ||
       room.phase !== "discussion"
     ) {

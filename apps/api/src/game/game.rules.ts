@@ -1,11 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { getActivePersonas } from "../ai/ai.personas";
 import {
-  ACTIVE_ICEBREAKER_PERSONA_ID,
   AI_NAMES,
   AI_PLAYER_COUNT,
-  DEBUG_AUTO_AI_PLAYER_COUNT,
-  DEBUG_AUTO_SIMULATED_HUMAN_COUNT,
   DEFAULT_DISCUSSION_DURATION_MS,
   MAX_ROUNDS,
   MESSAGE_LIMIT,
@@ -43,15 +40,12 @@ export function isModelDrivenPlayer(player: Player) {
   return player.type === "ai" || isSimulatedHuman(player);
 }
 
-export function hasActiveIcebreaker(room: Room) {
-  return room.players.some(
-    (player) =>
-      player.type === "ai" &&
-      player.aiPersonaId === ACTIVE_ICEBREAKER_PERSONA_ID,
-  );
+/** 是否沙盒房(以场景来源 sandboxScenarioId 判定)。 */
+export function isSandboxRoom(room: Room): boolean {
+  return room.sandboxScenarioId != null;
 }
 
-export function canStartDebugAutoAiRoom(room: Room) {
+export function canStartSandboxRoom(room: Room) {
   return countAi(room) >= 1 && countSimulatedHumans(room) >= 1;
 }
 
@@ -193,30 +187,6 @@ export function createSimulatedHumanPlayer(
   };
 }
 
-export function createAiPlayer(
-  seatNo: number,
-  personaId?: string,
-  usedNames: string[] = [],
-  modelId?: string,
-): Player {
-  const names = AI_NAMES.filter((name) => !usedNames.includes(name));
-  const selectedPersona =
-    getActivePersonas().find((persona) => persona.id === personaId) ??
-    randomItem(getActivePersonas());
-
-  return {
-    id: randomUUID(),
-    name: randomItem(names.length > 0 ? names : AI_NAMES) ?? `玩家${seatNo}`,
-    type: "ai" as PlayerType,
-    status: "alive" as const,
-    seatNo,
-    lastSpokeAt: 0,
-    connected: true,
-    aiPersonaId: selectedPersona?.id,
-    aiModelId: modelId,
-  };
-}
-
 export function createAiPlayers(
   startSeatNo: number,
   count = AI_PLAYER_COUNT,
@@ -242,61 +212,6 @@ export function createAiPlayers(
   }));
 }
 
-export function createDebugAutoAiPlayers(
-  startSeatNo = 1,
-  aiCount = DEBUG_AUTO_AI_PLAYER_COUNT,
-  simulatedHumanCount = DEBUG_AUTO_SIMULATED_HUMAN_COUNT,
-  defaultModelId?: string,
-  personaIds?: string[],
-): Player[] {
-  const players: Player[] = [];
-  const requestedPersonaIds = (personaIds ?? []).filter(Boolean);
-  const safeAiCount = Math.max(1, Math.floor(aiCount), requestedPersonaIds.length);
-  const safeSimulatedHumanCount = Math.max(1, Math.floor(simulatedHumanCount));
-
-  players.push(
-    createAiPlayer(
-      startSeatNo,
-      requestedPersonaIds[0] ?? ACTIVE_ICEBREAKER_PERSONA_ID,
-      [],
-      defaultModelId,
-    ),
-  );
-
-  const otherPersonaIds = getActivePersonas().filter(
-    (persona) => persona.id !== ACTIVE_ICEBREAKER_PERSONA_ID,
-  )
-    .sort(() => Math.random() - 0.5)
-    .map((persona) => persona.id);
-
-  while (players.filter((player) => player.type === "ai").length < safeAiCount) {
-    const aiIndex = players.filter((player) => player.type === "ai").length;
-    const personaId =
-      requestedPersonaIds[aiIndex] ??
-      otherPersonaIds[aiIndex - 1] ??
-      randomItem(getActivePersonas())?.id;
-    players.push(
-      createAiPlayer(
-        startSeatNo + players.length,
-        personaId,
-        players.map((player) => player.name),
-        defaultModelId,
-      ),
-    );
-  }
-
-  while (players.filter((player) => isSimulatedHuman(player)).length < safeSimulatedHumanCount) {
-    players.push(
-      createSimulatedHumanPlayer(
-        startSeatNo + players.length,
-        players.map((player) => player.name),
-        defaultModelId,
-      ),
-    );
-  }
-
-  return players;
-}
 
 // ===== 离线沙盒:按场景 roster 建玩家 =====
 

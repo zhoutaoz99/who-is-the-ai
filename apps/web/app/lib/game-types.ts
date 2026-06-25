@@ -8,6 +8,8 @@ export type GamePhase =
   | "game_over";
 export type Winner = "human" | "ai" | null;
 
+export type SandboxRole = "ai_under_test" | "detective" | "filler";
+
 export type PublicPlayer = {
   id: string;
   name: string;
@@ -20,6 +22,7 @@ export type PublicPlayer = {
   aiPersonaId?: string;
   aiPersonaName?: string;
   aiModelId?: string;
+  sandboxRole?: SandboxRole;
 };
 
 export type PublicMessage = {
@@ -83,8 +86,7 @@ export type RoomSnapshot = {
   };
   canStart: boolean;
   debug?: boolean;
-  debugAutoAi?: boolean;
-  debugAutoAiSequentialSpeech?: boolean;
+  sandboxScenarioId?: string;
   createdAt: string;
   updatedAt: string;
 };

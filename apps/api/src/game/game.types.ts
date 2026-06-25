@@ -102,8 +102,6 @@ export interface Room {
   ownerPlayerId: string;
   /** 本局开局时生效的 AI 提示词版本代号(用于版本感知复盘);旧局可能缺失。 */
   promptGenerationId?: string;
-  debugAutoAi?: boolean;
-  debugAutoAiSequentialSpeech?: boolean;
   players: Player[];
   discussionDurationMs: number;
   currentRound: number;
@@ -113,7 +111,8 @@ export interface Room {
   messages: ChatMessage[];
   votes: Vote[];
   aiMemories?: Record<string, AiShortMemory>;
-  debugAutoAiSpeech?: {
+  /** 沙盒顺序发言循环的 pass 状态(仅 sandbox 房,内部使用)。 */
+  sandboxSpeech?: {
     roundNo: number;
     startOffset: number;
     passNo: number;
@@ -185,6 +184,8 @@ export interface PublicPlayer {
   aiPersonaId?: string;
   aiPersonaName?: string;
   aiModelId?: string;
+  /** 沙盒角色(仅 sandbox 房;前台显示 被测AI/侦探/填充)。 */
+  sandboxRole?: SandboxRole;
 }
 
 export interface RoomSnapshot {
@@ -220,8 +221,8 @@ export interface RoomSnapshot {
   };
   canStart: boolean;
   debug?: boolean;
-  debugAutoAi?: boolean;
-  debugAutoAiSequentialSpeech?: boolean;
+  /** 沙盒房标识(有则前台按被测AI/侦探/填充渲染)。 */
+  sandboxScenarioId?: string;
   promptGenerationId?: string;
   createdAt: string;
   updatedAt: string;
@@ -292,35 +293,14 @@ export interface StopGamePayload {
   playerId?: string;
 }
 
-export interface DebugAddAiPayload {
-  roomId?: string;
-  playerId?: string;
-  playerType?: PlayerType;
-  personaId?: string;
-  modelId?: string;
-}
-
-export interface CreateDebugAutoAiRoomPayload {
-  discussionDurationSeconds?: number;
-  sequentialSpeech?: boolean;
-  personaIds?: string[];
-}
-
-export interface DebugRemoveAiPayload {
-  roomId?: string;
-  playerId?: string;
-  aiPlayerId?: string;
-  targetPlayerId?: string;
-}
-
-export interface DebugUpdateModelPayload {
+export interface UpdateSandboxPlayerModelPayload {
   roomId?: string;
   playerId?: string;
   targetPlayerId?: string;
   modelId?: string;
 }
 
-export interface DebugDeleteAutoAiRoomPayload {
+export interface DeleteSandboxRoomPayload {
   roomId?: string;
   playerId?: string;
 }
@@ -333,12 +313,6 @@ export interface UpdateDiscussionDurationPayload {
   roomId?: string;
   playerId?: string;
   discussionDurationMinutes?: number;
-}
-
-export interface UpdateDebugAutoAiSequentialSpeechPayload {
-  roomId?: string;
-  playerId?: string;
-  sequentialSpeech?: boolean;
 }
 
 export interface ActionResult {

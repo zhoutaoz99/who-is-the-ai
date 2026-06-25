@@ -9,9 +9,10 @@ import {
 } from "./game.config";
 import { getActivePersonas, getAiPersonaById } from "../ai/ai.personas";
 import {
-  canStartDebugAutoAiRoom,
+  canStartSandboxRoom,
   countAi,
   countHumans,
+  isSandboxRoom,
 } from "./game.rules";
 import {
   ChatMessage,
@@ -23,9 +24,9 @@ import {
 export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string; default?: boolean }>): RoomSnapshot {
   const revealTypes = room.status === "finished";
   const showDebugWaitingAi = DEBUG && room.status === "waiting";
-  const showDebugAutoAi = DEBUG && room.debugAutoAi === true;
+  const showSandbox = DEBUG && isSandboxRoom(room);
   const hideAi = room.status === "waiting" && !showDebugWaitingAi;
-  const aiPlayerCount = room.debugAutoAi ? countAi(room) : AI_PLAYER_COUNT;
+  const aiPlayerCount = showSandbox ? countAi(room) : AI_PLAYER_COUNT;
 
   return {
     id: room.id,
@@ -37,7 +38,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
       .filter((player) => !hideAi || player.type !== "ai")
       .map((player) => {
         const exposeDebugType =
-          showDebugAutoAi ||
+          showSandbox ||
           (player.type === "ai" && showDebugWaitingAi);
         const persona = revealTypes || exposeDebugType
           ? getAiPersonaById(player.aiPersonaId)
@@ -55,12 +56,14 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
               ? player.type
               : undefined,
           simulated:
-            revealTypes || showDebugAutoAi
+            revealTypes || showSandbox
               ? player.simulated === true
               : undefined,
           aiPersonaId: persona?.id,
           aiPersonaName: persona?.nickname,
           aiModelId: (revealTypes || exposeDebugType) ? player.aiModelId : undefined,
+          // 沙盒角色(仅 sandbox 房有;前台据此显示 被测AI/侦探/填充,而非产品术语 AI/模拟真人)。
+          sandboxRole: player.sandboxRole,
         };
       }),
     currentRound: room.currentRound,
@@ -90,15 +93,12 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
     },
     canStart:
       room.status === "waiting" &&
-      (showDebugAutoAi
-        ? canStartDebugAutoAiRoom(room)
+      (showSandbox
+        ? canStartSandboxRoom(room)
         : countHumans(room) >= 1),
     debug: DEBUG || undefined,
-    debugAutoAi: showDebugAutoAi || undefined,
-    debugAutoAiSequentialSpeech:
-      showDebugAutoAi && room.debugAutoAiSequentialSpeech === true
-        ? true
-        : undefined,
+    // 沙盒房标识(有则前台按被测AI/侦探/填充渲染,而非产品 AI/模拟真人)。
+    sandboxScenarioId: room.sandboxScenarioId,
     promptGenerationId: room.promptGenerationId,
     createdAt: room.createdAt,
     updatedAt: room.updatedAt,
@@ -114,7 +114,7 @@ export function toPublicMessage(message: ChatMessage, room: Room) {
     content: message.content,
     createdAt: message.createdAt,
     source:
-      room.status === "finished" || (DEBUG && room.debugAutoAi)
+      room.status === "finished" || (DEBUG && isSandboxRoom(room))
         ? message.source
         : undefined,
   };
