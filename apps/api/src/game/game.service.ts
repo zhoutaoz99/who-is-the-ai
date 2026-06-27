@@ -195,6 +195,8 @@ export class GameService {
       prior_turns: Array<{ round: number; slot: number; text: string }>;
       prior_rounds?: Array<{ round: number; eliminated_slot: number | null }>;
     };
+    /** 被测 AI 提示词版本代号;缺省走产品默认 AI 提示词。 */
+    aiPromptVersionId?: string;
   }): Promise<ActionResult> {
     if (!DEBUG) {
       return this.fail("调试模式未开启(沙盒需 DEBUG=true)");
@@ -253,6 +255,7 @@ export class GameService {
       sandboxForm: params.form,
       sandboxStartRound: params.startRound,
       sandboxMaxRoundsForward: params.maxRoundsForward,
+      sandboxAiPromptVersionId: params.aiPromptVersionId,
       players,
       discussionDurationMs: normalizeDiscussionDuration({
         discussionDurationSeconds: params.discussionSeconds,
@@ -2500,6 +2503,7 @@ export class GameService {
       voteHistory,
       shortMemory: room.aiMemories?.[aiPlayer.id] ?? null,
       myRole: aiPlayer.sandboxRole,
+      myPromptVersionId: room.sandboxAiPromptVersionId,
     };
   }
 

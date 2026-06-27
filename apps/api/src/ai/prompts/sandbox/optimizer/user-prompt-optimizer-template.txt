@@ -1,0 +1,21 @@
+==== 本次要攻的靶子(只改这一个) ====
+破绽:{{assigned_target}}
+建议改法(edit_type):{{assigned_edit_type}}（若为空,你自己从枚举里选最合适的一种）
+
+==== 当前提示词(persona 范围:{{persona_scope}}) ====
+{{current_prompt}}
+
+==== 不许改动的锁定段 ====
+{{locked_sections}}
+
+==== 它现在最稳定的弱点(可靠度高的排前面,供参考) ====
+{{weak_dimensions}}
+
+==== 与本靶子相关的高频失败(附代表样本) ====
+{{failure_clusters}}
+
+==== 已经试过、没用的改法(别再走这些死路) ====
+{{tried_and_rejected}}
+
+==== 长度预算 ====
+{{length_budget}}

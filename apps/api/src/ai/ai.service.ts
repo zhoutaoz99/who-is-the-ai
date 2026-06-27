@@ -15,7 +15,7 @@ import {
   PersonaCard,
   RoundVoteSummary,
 } from "./ai.types";
-import { loadPrompt, renderTemplate } from "./prompt-loader";
+import { loadPrompt, loadPromptVersionText, renderTemplate } from "./prompt-loader";
 import { formatPersonaCard } from "./ai.personas";
 
 type SpeechRole = "ai_under_test" | "detective" | "filler";
@@ -227,6 +227,28 @@ export class AiService {
   }
 
   /**
+   * 解析某模型(或缺省)的调用配置 + 连接参数,供离线沙盒模块(裁判/优化器)复用 callModel。
+   * 返回的 mainConfig 可被调用方克隆后覆盖参数(如裁判用低 temperature、优化器用中 temperature)。
+   */
+  resolveCallConfig(modelId?: string): {
+    mainConfig: AiModelCallConfig;
+    connection: { baseURL?: string; apiKey?: string; timeoutMs?: number };
+  } {
+    const override = this.resolveModelOverride(modelId);
+    if (override) {
+      return override;
+    }
+    return {
+      mainConfig: this.config,
+      connection: {
+        baseURL: this.config.baseURL,
+        apiKey: this.config.apiKey,
+        timeoutMs: this.config.timeoutMs,
+      },
+    };
+  }
+
+  /**
    * 单层发言（v4.0）：讨论一次调用直接产出聊天发言，不再走“策略层 JSON → 表达层造句”。
    * 模型可选择“这轮先看着”（输出沉默标记），由 isSilenceResponse 判定为不发言。
    */
@@ -363,11 +385,16 @@ export class AiService {
     }
   }
 
-  private buildDiscussionSystemPrompt(persona: PersonaCard, seatNo: number): string {
-    return loadPrompt("ai-player/system-discussion.txt").replaceAll(
-      "{{persona}}",
-      formatPersonaCard(persona, seatNo),
-    );
+  private buildDiscussionSystemPrompt(
+    persona: PersonaCard,
+    seatNo: number,
+    versionId?: string,
+  ): string {
+    // ai_under_test 优先用指定版本提示词(配对评测用),缺省走产品默认。
+    const template =
+      (versionId && loadPromptVersionText(versionId)) ||
+      loadPrompt("ai-player/system-discussion.txt");
+    return template.replaceAll("{{persona}}", formatPersonaCard(persona, seatNo));
   }
 
   private buildVoteSystemPrompt(persona: PersonaCard, seatNo: number): string {
@@ -395,7 +422,11 @@ export class AiService {
         persona: card,
       });
     }
-    return this.buildDiscussionSystemPrompt(persona, context.mySeatNo);
+    return this.buildDiscussionSystemPrompt(
+      persona,
+      context.mySeatNo,
+      context.myPromptVersionId,
+    );
   }
 
   /** 离线沙盒按 role 选投票系统提示词:detective/filler 用侦探投票模板,其余走 AI 投票提示词。 */

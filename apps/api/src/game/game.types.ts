@@ -168,6 +168,8 @@ export interface Room {
     pendingFromSeat?: number;
     pendingReassigned?: boolean;
   };
+  /** 被测 AI 使用的提示词版本代号(编排器配对评测用);缺省走产品默认 AI 提示词。 */
+  sandboxAiPromptVersionId?: string;
   createdAt: string;
   updatedAt: string;
 }

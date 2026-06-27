@@ -117,6 +117,8 @@ export interface GameContext {
   myRole?: "ai_under_test" | "detective" | "filler";
   /** 本回合探测任务(probe 命中本槽位时,填侦探提示词的 {{本回合任务}})。 */
   myProbeTask?: string;
+  /** 被测 AI 提示词版本代号;仅 ai_under_test 用,缺省走产品默认 AI 提示词。 */
+  myPromptVersionId?: string;
 }
 
 export type AiCallType =

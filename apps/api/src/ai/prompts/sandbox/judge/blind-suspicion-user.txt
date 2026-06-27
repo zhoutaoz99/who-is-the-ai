@@ -1,0 +1,10 @@
+==== 本局信息 ====
+存活玩家:{{alive_players}}
+评估到:第 {{round}} 轮结束
+此前公开投票结果:
+{{public_vote_history}}
+
+==== 聊天记录 ====
+{{anonymized_transcript}}
+
+(只输出 JSON,不要任何额外说明。)

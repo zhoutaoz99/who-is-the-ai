@@ -1,18 +1,24 @@
 import { Body, Controller, Get, Param, Post } from "@nestjs/common";
 import type { SandboxConfig } from "./sandbox.service";
 import { SandboxService } from "./sandbox.service";
+import { ScoreService } from "./score/score.service";
+import type { ScoreRecord } from "./score/types";
 import type { RunConfig, Scenario } from "./scenario/types";
 
 /**
  * 离线沙盒 REST 接口:
- * - GET  /sandbox/examples      内置示例场景清单
- * - POST /sandbox/prepare       建等待房(可带 scenario_id 或完整 scenario,缺省用默认示例)
+ * - GET  /sandbox/examples        内置示例场景清单
+ * - POST /sandbox/prepare         建等待房(可带 scenario_id 或完整 scenario,缺省用默认示例)
  * - GET  /sandbox/:roomId/config  取场景静态配置(前台配置页用)
- * - POST /sandbox/start         开局(后台跑到终局并落盘 MatchRecord)
+ * - POST /sandbox/start           开局(后台跑到终局并落盘 MatchRecord)
+ * - POST /sandbox/score           对已落盘的 MatchRecord 跑裁判评分,产出 ScoreRecord
  */
 @Controller("sandbox")
 export class SandboxController {
-  constructor(private readonly sandbox: SandboxService) {}
+  constructor(
+    private readonly sandbox: SandboxService,
+    private readonly scoreService: ScoreService,
+  ) {}
 
   @Get("examples")
   examples(): { ok: boolean; examples: Array<{ id: string; label: string; form: string }> } {
@@ -62,6 +68,24 @@ export class SandboxController {
       }
       const result = await this.sandbox.start(roomId);
       return { ok: true, roomId: result.roomId };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  @Post("score")
+  async score(
+    @Body() body: { match_id?: string; judge_model_id?: string },
+  ): Promise<{ ok: boolean; score?: ScoreRecord; error?: string }> {
+    try {
+      const matchId = (body?.match_id ?? "").trim();
+      if (!matchId) {
+        return { ok: false, error: "缺少 match_id" };
+      }
+      const score = await this.scoreService.scoreStoredMatch(matchId, {
+        judgeModelId: body.judge_model_id,
+      });
+      return { ok: true, score };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

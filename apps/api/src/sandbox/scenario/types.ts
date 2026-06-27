@@ -126,5 +126,9 @@ export interface RunConfig {
   ai_under_test_model_id?: string;
   /** 讨论时长(秒);缺省走房间默认,本增量建议给较短值控制成本。 */
   discussion_seconds?: number;
+  /** 覆盖场景 seed(配对评测多种子用);缺省用 scenario.seed。 */
+  seed_override?: number;
+  /** 被测 AI 提示词版本代号(配对评测用);缺省走产品默认 AI 提示词。 */
+  ai_prompt_version_id?: string;
 }
 

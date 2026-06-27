@@ -164,8 +164,9 @@ export class SandboxService implements OnModuleInit {
         voter_seat: v.voter_slot,
         target_seat: v.target_slot,
       })),
-      seed: scenario.seed,
+      seed: runConfig.seed_override ?? scenario.seed,
       runIndex: runConfig.run_index ?? 0,
+      aiPromptVersionId: runConfig.ai_prompt_version_id,
       probeSchedule,
       form: scenario.form,
       startRound: scenario.seed_history?.start_round,
@@ -219,6 +220,23 @@ export class SandboxService implements OnModuleInit {
     });
 
     return { roomId };
+  }
+
+  /** 跑完一局并返回 MatchRecord(编排器配对评测用;同步等到终局再返回)。 */
+  async runMatch(scenario: Scenario, runConfig: RunConfig = {}): Promise<MatchRecord> {
+    const { roomId } = await this.prepare(scenario, runConfig);
+    const waitingRoom = await this.gameService.getRoomInternal(roomId);
+    if (!waitingRoom) {
+      throw new Error(`房间不存在 room=${roomId}`);
+    }
+    const started = await this.gameService.startGame({
+      roomId,
+      playerId: waitingRoom.ownerPlayerId,
+    });
+    if (!started.ok) {
+      throw new Error(`开局失败: ${started.error ?? "?"}`);
+    }
+    return this.finalize(roomId);
   }
 
   /** 取场景静态配置(前台配置页展示用)。 */

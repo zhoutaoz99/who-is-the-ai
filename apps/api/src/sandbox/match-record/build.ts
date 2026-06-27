@@ -97,7 +97,7 @@ export function buildMatchRecord(
     seed_history_ref: null,
     prompt_version_id: options.promptVersionId,
     run_index: options.runIndex,
-    seed: scenario.seed,
+    seed: room.sandboxSeed ?? scenario.seed,
     mode: scenario.mode,
     vote_policy: scenario.vote_policy,
     ai_under_test_slot: scenario.ai_under_test_slot,
