@@ -3,7 +3,7 @@
 // MVP(Phase 1)只跑决策信号;诊断层(八维/failure_cases)随《诊断评分》在 Phase 2 接入。
 
 import { Injectable, Logger } from "@nestjs/common";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AiService } from "../../ai/ai.service";
 import { writeJsonFile } from "../shared/store";
@@ -82,5 +82,16 @@ export class ScoreService {
     }
     const match = JSON.parse(raw) as MatchRecord;
     return this.scoreMatch(match, opts);
+  }
+
+  /** 读已落盘的 ScoreRecord(score_id = s_<match_id>);缺失返回 null。 */
+  loadStoredScore(matchId: string): ScoreRecord | null {
+    const file = join(this.outDir, "scores", `s_${matchId}.json`);
+    if (!existsSync(file)) return null;
+    try {
+      return JSON.parse(readFileSync(file, "utf-8")) as ScoreRecord;
+    } catch {
+      return null;
+    }
   }
 }

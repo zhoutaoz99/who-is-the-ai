@@ -18,8 +18,8 @@ import {
   IterationGameResult,
   IterationRunStatus,
   OrchestratorChild,
+  OrchestratorGame,
   OrchestratorGate,
-  OrchestratorMatch,
   OrchestratorSnapshot,
   OrchestratorStartPayload,
   OrchestratorValidate,
@@ -322,36 +322,32 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("orchestrator.status", (payload: OrchestratorSnapshot) =>
       setOrchestratorRun(payload),
     );
-    socket.on("orchestrator.match", (payload: OrchestratorMatch) =>
-      setOrchestratorRun((cur) =>
-        cur?.active_run
-          ? {
-              ...cur,
-              active_run: {
-                ...cur.active_run,
-                progress: {
-                  ...cur.active_run.progress,
-                  champion_done:
-                    payload.progress?.champion_done ??
-                    cur.active_run.progress.champion_done,
-                  child_done:
-                    payload.progress?.child_done ??
-                    cur.active_run.progress.child_done,
-                  champion_total:
-                    payload.progress?.champion_total ??
-                    cur.active_run.progress.champion_total,
-                  child_total:
-                    payload.progress?.child_total ??
-                    cur.active_run.progress.child_total,
-                  matches: [
-                    ...cur.active_run.progress.matches,
-                    stripMatchProgress(payload),
-                  ],
-                },
-              },
-            }
-          : cur,
-      ),
+    // 逐局状态:按 side×scenario×seed×run 就地 upsert;done 计数随之重算(与服务端一致)。
+    socket.on("orchestrator.game", (payload: OrchestratorGame) =>
+      setOrchestratorRun((cur) => {
+        if (!cur?.active_run) return cur;
+        const games = upsertOrchestratorGame(cur.active_run.progress.games, payload);
+        return {
+          ...cur,
+          active_run: {
+            ...cur.active_run,
+            progress: {
+              ...cur.active_run.progress,
+              champion_done: games.filter(
+                (g) =>
+                  g.side === "champion" &&
+                  (g.status === "finished" || g.status === "failed"),
+              ).length,
+              child_done: games.filter(
+                (g) =>
+                  g.side === "child" &&
+                  (g.status === "finished" || g.status === "failed"),
+              ).length,
+              games,
+            },
+          },
+        };
+      }),
     );
     socket.on(
       "orchestrator.proposal",
@@ -931,7 +927,19 @@ function upsertIterationGame(
 }
 
 /** 从 match 事件载荷中去掉 progress 字段(进度计数已合并到 active_run.progress)。 */
-function stripMatchProgress(payload: OrchestratorMatch): OrchestratorMatch {
-  const { progress: _omit, ...rest } = payload;
-  return rest;
+function upsertOrchestratorGame(
+  games: OrchestratorGame[],
+  g: OrchestratorGame,
+): OrchestratorGame[] {
+  const idx = games.findIndex(
+    (x) =>
+      x.side === g.side &&
+      x.scenario_id === g.scenario_id &&
+      x.seed === g.seed &&
+      x.run === g.run,
+  );
+  if (idx < 0) return [...games, g];
+  const next = games.slice();
+  next[idx] = { ...next[idx], ...g };
+  return next;
 }

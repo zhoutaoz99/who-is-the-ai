@@ -12,6 +12,7 @@ import type { RunConfig, Scenario } from "./scenario/types";
  * - GET  /sandbox/:roomId/config  取场景静态配置(前台配置页用)
  * - POST /sandbox/start           开局(后台跑到终局并落盘 MatchRecord)
  * - POST /sandbox/score           对已落盘的 MatchRecord 跑裁判评分,产出 ScoreRecord
+ * - GET  /sandbox/score/:matchId  读已落盘的 ScoreRecord(打分详情回看)
  */
 @Controller("sandbox")
 export class SandboxController {
@@ -23,6 +24,15 @@ export class SandboxController {
   @Get("examples")
   examples(): { ok: boolean; examples: Array<{ id: string; label: string; form: string }> } {
     return { ok: true, examples: this.sandbox.getExampleList() };
+  }
+
+  /** 读已落盘的 ScoreRecord(编排器打分详情回看用)。 */
+  @Get("score/:matchId")
+  storedScore(
+    @Param("matchId") matchId: string,
+  ): { ok: boolean; score?: ScoreRecord; error?: string } {
+    const score = this.scoreService.loadStoredScore(matchId);
+    return score ? { ok: true, score } : { ok: false, error: "未找到该局的打分记录" };
   }
 
   @Post("prepare")

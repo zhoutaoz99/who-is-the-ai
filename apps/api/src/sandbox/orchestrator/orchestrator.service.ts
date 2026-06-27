@@ -17,7 +17,6 @@ import { OptimizerService } from "../optimizer/propose";
 import { validatePrompt } from "../optimizer/validate-prompt";
 import type { PromptValidation } from "../optimizer/validate-prompt";
 import { writeJsonFile } from "../shared/store";
-import type { ScoreRecord } from "../score/types";
 import { optimizeGate } from "./gate";
 import type { GateDecision } from "./gate";
 import type { GenerationEval } from "./generation-eval";
@@ -31,7 +30,7 @@ import type {
   ActiveRun,
   ActiveRunChild,
   ConfirmResult,
-  MatchProgress,
+  GameItem,
   RunDecision,
   RunMode,
 } from "./active-run";
@@ -210,7 +209,7 @@ export class OrchestratorService implements OnModuleInit {
         runsPerSeed: plan.runsPerSeed,
         evalSetVersion: plan.evalSetVersion,
       },
-      progress: { champion_done: 0, champion_total: total, child_done: 0, child_total: total, matches: [] },
+      progress: { champion_done: 0, champion_total: total, child_done: 0, child_total: total, games: [] },
       started_at: new Date().toISOString(),
     };
     this.stopRequested = false;
@@ -239,7 +238,7 @@ export class OrchestratorService implements OnModuleInit {
     // 1) 评测 champion
     this.setPhase("evaluating_champion");
     const championScores = await this.pairedEval.runVersionEval(champion, plan, {
-      onMatch: (score) => this.recordMatch("champion", score),
+      onGameStatus: (patch) => this.recordGameStatus({ side: "champion", ...patch }),
       shouldStop: () => this.stopRequested,
     });
     if (this.stopRequested) return this.settleStopped("用户停止");
@@ -295,7 +294,7 @@ export class OrchestratorService implements OnModuleInit {
     // 4) 评测 child
     this.setPhase("evaluating_child");
     const childScores = await this.pairedEval.runVersionEval(proposal.child, plan, {
-      onMatch: (score) => this.recordMatch("child", score),
+      onGameStatus: (patch) => this.recordGameStatus({ side: "child", ...patch }),
       shouldStop: () => this.stopRequested,
     });
     if (this.stopRequested) return this.settleStopped("用户停止");
@@ -400,22 +399,28 @@ export class OrchestratorService implements OnModuleInit {
     this.emitStatus();
   }
 
-  private recordMatch(side: "champion" | "child", score: ScoreRecord): void {
+  /** 逐局状态就地 upsert(以 side×scenario×seed×run 为 key)+ 从 games 重算 done 计数 + emit game。 */
+  private recordGameStatus(item: GameItem): void {
     const run = this.activeRun!;
-    if (side === "champion") run.progress.champion_done += 1;
-    else run.progress.child_done += 1;
-    const m: MatchProgress = {
-      side,
-      scenario_id: score.scenario_id,
-      seed: score.seed,
-      run: score.run_index,
-      margin: score.blind_suspicion?.suspicion_margin ?? null,
-      veto: score.veto_triggered === true,
-      status: score.status,
-    };
-    run.progress.matches.push(m);
+    const games = run.progress.games;
+    const idx = games.findIndex(
+      (g) =>
+        g.side === item.side &&
+        g.scenario_id === item.scenario_id &&
+        g.seed === item.seed &&
+        g.run === item.run,
+    );
+    if (idx >= 0) games[idx] = { ...games[idx], ...item };
+    else games.push(item);
+    // done 计数从 games[] 重算(idempotent,防并发重复计数)。
+    run.progress.champion_done = games.filter(
+      (g) => g.side === "champion" && (g.status === "finished" || g.status === "failed"),
+    ).length;
+    run.progress.child_done = games.filter(
+      (g) => g.side === "child" && (g.status === "finished" || g.status === "failed"),
+    ).length;
     this.persistRun();
-    this.events.emit("match", { ...m, progress: { ...run.progress, matches: undefined } });
+    this.events.emit("game", item);
   }
 
   private persistRun(): void {

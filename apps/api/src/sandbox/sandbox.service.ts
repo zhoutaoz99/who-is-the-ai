@@ -6,6 +6,7 @@ import { registerExtraPersonas } from "../ai/ai.personas";
 import { AiService } from "../ai/ai.service";
 import { GameService } from "../game/game.service";
 import type { SandboxPlayerSpec } from "../game/game.rules";
+import type { RoomSnapshot } from "../game/game.types";
 import { buildMatchRecord } from "./match-record/build";
 import type { MatchRecord } from "./match-record/types";
 import { SANDBOX_PERSONAS } from "./personas/detective-personas";
@@ -222,8 +223,15 @@ export class SandboxService implements OnModuleInit {
     return { roomId };
   }
 
-  /** 跑完一局并返回 MatchRecord(编排器配对评测用;同步等到终局再返回)。 */
-  async runMatch(scenario: Scenario, runConfig: RunConfig = {}): Promise<MatchRecord> {
+  /**
+   * 跑完一局并返回 MatchRecord(编排器配对评测用;同步等到终局再返回)。
+   * onProgress:轮询期间每次拿到房间快照时回调(对局内实时进度:phase/当前轮/AI 存活)。
+   */
+  async runMatch(
+    scenario: Scenario,
+    runConfig: RunConfig = {},
+    onProgress?: (room: RoomSnapshot) => void,
+  ): Promise<MatchRecord> {
     const { roomId } = await this.prepare(scenario, runConfig);
     const waitingRoom = await this.gameService.getRoomInternal(roomId);
     if (!waitingRoom) {
@@ -236,7 +244,7 @@ export class SandboxService implements OnModuleInit {
     if (!started.ok) {
       throw new Error(`开局失败: ${started.error ?? "?"}`);
     }
-    return this.finalize(roomId);
+    return this.finalize(roomId, onProgress);
   }
 
   /** 取场景静态配置(前台配置页展示用)。 */
@@ -277,8 +285,11 @@ export class SandboxService implements OnModuleInit {
     };
   }
 
-  private async finalize(roomId: string): Promise<MatchRecord> {
-    await this.waitForFinished(roomId);
+  private async finalize(
+    roomId: string,
+    onProgress?: (room: RoomSnapshot) => void,
+  ): Promise<MatchRecord> {
+    await this.waitForFinished(roomId, onProgress);
     const room = await this.gameService.getRoomInternal(roomId);
     if (!room) {
       throw new Error(`房间不存在 room=${roomId}`);
@@ -311,11 +322,15 @@ export class SandboxService implements OnModuleInit {
     return record;
   }
 
-  private async waitForFinished(roomId: string): Promise<void> {
+  private async waitForFinished(
+    roomId: string,
+    onProgress?: (room: RoomSnapshot) => void,
+  ): Promise<void> {
     const deadline = Date.now() + MATCH_DEADLINE_MS;
     while (Date.now() < deadline) {
       await this.sleep(POLL_INTERVAL_MS);
       const res = await this.gameService.observeRoom({ roomId });
+      if (res.room) onProgress?.(res.room);
       if (res.room?.status === "finished") {
         return;
       }

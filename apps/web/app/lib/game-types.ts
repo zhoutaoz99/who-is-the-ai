@@ -318,20 +318,32 @@ export type OrchestratorChild = {
   prompt_text: string;
 };
 
-export type OrchestratorMatch = {
+export type OrchestratorGameStatus =
+  | "pending"
+  | "running"
+  | "scoring"
+  | "finished"
+  | "failed";
+
+/** 单局进度(以 side×scenario×seed×run 为稳定 key,逐局增量更新)。 */
+export type OrchestratorGame = {
   side: "champion" | "child";
   scenario_id: string;
   seed: number;
   run: number;
-  margin: number | null;
-  veto: boolean;
-  status: string;
-  progress?: {
-    champion_done: number;
-    champion_total: number;
-    child_done: number;
-    child_total: number;
-  };
+  status: OrchestratorGameStatus;
+  room_id?: string;
+  /** 完成态:打分详情回看用(读 sandbox-out/scores/s_${match_id}.json)。 */
+  match_id?: string;
+  error?: string;
+  /** 进行中:对局内实时细节。 */
+  phase?: string;
+  current_round?: number;
+  ai_alive?: number;
+  ai_total?: number;
+  /** 完成态。 */
+  margin?: number | null;
+  veto?: boolean;
 };
 
 export type OrchestratorActiveRun = {
@@ -355,7 +367,7 @@ export type OrchestratorActiveRun = {
     champion_total: number;
     child_done: number;
     child_total: number;
-    matches: OrchestratorMatch[];
+    games: OrchestratorGame[];
   };
   decision?: string;
   started_at: string;

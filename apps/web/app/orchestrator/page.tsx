@@ -7,8 +7,9 @@ import { useAuth } from "../lib/auth-client";
 import { useGameClient } from "../lib/game-client";
 import type {
   OrchestratorActiveRun,
+  OrchestratorGame,
+  OrchestratorGameStatus,
   OrchestratorGeneration,
-  OrchestratorMatch,
   OrchestratorMetric,
   OrchestratorPhase,
   OrchestratorVerdict,
@@ -170,6 +171,9 @@ export default function OrchestratorPage() {
   const [editedPrompt, setEditedPrompt] = useState("");
 
   const [diff, setDiff] = useState<DiffModal | null>(null);
+
+  // 打分详情回看:点击某局「打分详情」打开 modal(按 match_id 拉已落盘 ScoreRecord)。
+  const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
 
   const activeRun = orchestratorRun?.active_run ?? null;
   const isActive = !!activeRun && activeRun.phase !== "settled";
@@ -544,16 +548,25 @@ export default function OrchestratorPage() {
 
           <ProgressBars run={activeRun} />
 
-          {/* 单局流 */}
-          {activeRun && activeRun.progress.matches.length > 0 && (
-            <div className="orch-match-list">
-              <p className="muted-text">单局流(最近)</p>
-              {[...activeRun.progress.matches]
-                .slice(-12)
-                .reverse()
-                .map((m, i) => (
-                  <MatchRow key={i} m={m} />
+          {/* 对局列表(父/子各 N 局,逐局实时状态) */}
+          {activeRun && (
+            <div className="orch-game-list">
+              <p className="muted-text">
+                对局列表({activeRun.progress.games.length})
+              </p>
+              {[...activeRun.progress.games]
+                .sort(compareGames)
+                .map((g) => (
+                  <GameRow
+                    key={`${g.side}-${g.scenario_id}-${g.seed}-${g.run}`}
+                    g={g}
+                    onViewLive={(roomId) => router.push(`/game/${roomId}`)}
+                    onViewScore={(matchId) => setScoreMatchId(matchId)}
+                  />
                 ))}
+              {activeRun.progress.games.length === 0 && (
+                <p className="muted-text">尚未开始。</p>
+              )}
             </div>
           )}
 
@@ -719,6 +732,15 @@ export default function OrchestratorPage() {
           </div>,
           document.body,
         )}
+
+      {scoreMatchId &&
+        createPortal(
+          <ScoreDetailModal
+            matchId={scoreMatchId}
+            onClose={() => setScoreMatchId(null)}
+          />,
+          document.body,
+        )}
     </main>
   );
 }
@@ -757,21 +779,334 @@ function ProgressBars({ run }: { run: OrchestratorActiveRun | null }) {
   );
 }
 
-function MatchRow({ m }: { m: OrchestratorMatch }) {
+const GAME_SIDE_ORDER: Record<"champion" | "child", number> = {
+  champion: 0,
+  child: 1,
+};
+
+function compareGames(a: OrchestratorGame, b: OrchestratorGame): number {
+  if (a.side !== b.side) return GAME_SIDE_ORDER[a.side] - GAME_SIDE_ORDER[b.side];
+  if (a.scenario_id !== b.scenario_id) return a.scenario_id < b.scenario_id ? -1 : 1;
+  if (a.seed !== b.seed) return a.seed - b.seed;
+  return a.run - b.run;
+}
+
+function gameStatusLabel(status: OrchestratorGameStatus): string {
+  switch (status) {
+    case "pending":
+      return "待开始";
+    case "running":
+      return "进行中";
+    case "scoring":
+      return "打分中";
+    case "finished":
+      return "已完成";
+    case "failed":
+      return "失败";
+  }
+}
+
+function phaseLabel(phase?: string): string {
+  switch (phase) {
+    case "waiting":
+      return "等待开局";
+    case "discussion":
+      return "讨论中";
+    case "voting":
+      return "投票中";
+    case "resolving":
+      return "结算中";
+    case "game_over":
+      return "已结束";
+    default:
+      return "待开始";
+  }
+}
+
+function GameRow({
+  g,
+  onViewLive,
+  onViewScore,
+}: {
+  g: OrchestratorGame;
+  onViewLive: (roomId: string) => void;
+  onViewScore: (matchId: string) => void;
+}) {
   return (
-    <div className={`iter-game-card ${m.side}`}>
-      <div className="iter-game-head">
-        <span className={`room-tag ${m.side === "champion" ? "" : "muted-tag"}`}>
-          {m.side === "champion" ? "父" : "子"}
+    <div className={`orch-game-row status-${g.status}`}>
+      <span className={`room-tag ${g.side === "champion" ? "" : "muted-tag"}`}>
+        {g.side === "champion" ? "父" : "子"}
+      </span>
+      <span className="orch-game-key">
+        {g.scenario_id} · s{g.seed} · r{g.run}
+      </span>
+      <span className={`orch-game-status status-${g.status}`}>
+        {gameStatusLabel(g.status)}
+      </span>
+      {g.status === "running" && (
+        <span className="orch-game-detail">
+          {phaseLabel(g.phase)} · 第 {g.current_round ?? "-"} 轮 · AI{" "}
+          {g.ai_alive ?? "-"}/{g.ai_total ?? "-"}
         </span>
-        <span className="muted-text">
-          {m.scenario_id} · seed{m.seed} · run{m.run}
-        </span>
-        <span className="orch-margin">
-          margin <strong>{m.margin ?? "—"}</strong>
-        </span>
-        {m.veto && <span className="room-tag" style={{ background: "#b42318" }}>否决</span>}
+      )}
+      {g.status === "scoring" && <span className="orch-game-detail muted-text">裁判评分中…</span>}
+      {g.status === "finished" && (
+        <>
+          <span className="orch-margin">
+            margin <strong>{g.margin ?? "—"}</strong>
+          </span>
+          {g.veto && (
+            <span className="room-tag" style={{ background: "#b42318" }}>
+              否决
+            </span>
+          )}
+        </>
+      )}
+      {g.status === "failed" && (
+        <span className="orch-game-error">{g.error ?? "失败"}</span>
+      )}
+      <span className="orch-game-actions">
+        <button
+          className="compact-button"
+          disabled={!g.room_id}
+          title={g.room_id ? "查看这局对局记录(实时 / 回看)" : "对局尚未开始"}
+          onClick={() => {
+            if (g.room_id) onViewLive(g.room_id);
+          }}
+        >
+          对局记录
+        </button>
+        <button
+          className="compact-button"
+          disabled={!g.match_id}
+          title={g.match_id ? "查看裁判打分详情" : "尚未完成打分"}
+          onClick={() => {
+            if (g.match_id) onViewScore(g.match_id);
+          }}
+        >
+          打分详情
+        </button>
+      </span>
+    </div>
+  );
+}
+
+type ScoreDetail = {
+  scenario_form?: string;
+  seed?: number;
+  run_index?: number;
+  prompt_version_id?: string;
+  status?: string;
+  judges?: string[];
+  errors?: string[];
+  veto_triggered?: boolean;
+  blind_suspicion?: {
+    ai_final?: number | null;
+    suspicion_rank?: number | null;
+    suspicion_margin?: number | null;
+    per_round?: Array<{
+      round: number;
+      ai_score?: number | null;
+      scores?: Record<string, number>;
+    }>;
+  };
+  outcome_metrics?: {
+    rounds_survived?: number;
+    eliminated_round?: number | null;
+    won?: boolean;
+    reached_terminal?: string;
+    votes_received_by_round?: Record<string, number>;
+    plurality_by_round?: Record<string, boolean>;
+    probe_pass_by_type?: Record<string, number>;
+  };
+};
+
+function ScoreDetailModal({
+  matchId,
+  onClose,
+}: {
+  matchId: string;
+  onClose: () => void;
+}) {
+  const [score, setScore] = useState<ScoreDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    fetch(`${API_URL}/sandbox/score/${encodeURIComponent(matchId)}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled) return;
+        if (json?.ok) setScore(json.score ?? null);
+        else setError(json?.error ?? "加载失败");
+      })
+      .catch(() => {
+        if (!cancelled) setError("加载失败");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [matchId]);
+
+  const blind = score?.blind_suspicion;
+  const outcome = score?.outcome_metrics;
+  const perRound = blind?.per_round ?? [];
+  const votes = outcome?.votes_received_by_round ?? {};
+  const plurality = outcome?.plurality_by_round ?? {};
+  const probes = outcome?.probe_pass_by_type ?? {};
+
+  return (
+    <div className="iteration-modal-overlay" onClick={onClose}>
+      <div
+        className="iteration-modal iter-score-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="iteration-modal-head">
+          <div>
+            <p className="eyebrow">打分详情 · {matchId}</p>
+            <h3>
+              {score?.scenario_form ?? "—"} · seed{score?.seed ?? "?"} · run
+              {score?.run_index ?? "?"}
+            </h3>
+          </div>
+          <button className="compact-button" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+
+        <div className="iter-score-modal-body">
+          {loading ? (
+            <p className="muted-text">加载中…</p>
+          ) : error ? (
+            <p className="error-text">{error}</p>
+          ) : score ? (
+            <>
+              <div className="iter-metric-grid">
+                <Metric
+                  label="可疑度 margin"
+                  value={fmtScore(blind?.suspicion_margin)}
+                />
+                <Metric label="可疑度排名" value={blind?.suspicion_rank ?? "—"} />
+                <Metric label="局末 ai_score" value={fmtScore(blind?.ai_final)} />
+                <Metric
+                  label="存活轮数"
+                  value={outcome?.rounds_survived ?? "—"}
+                />
+                <Metric
+                  label="结果"
+                  value={outcome?.won ? "AI 胜" : "AI 负"}
+                />
+                <Metric
+                  label="否决"
+                  value={score.veto_triggered ? "是" : "否"}
+                />
+              </div>
+
+              {score.status && score.status !== "ok" && (
+                <p className="orch-game-error">
+                  评分状态:{score.status}
+                  {score.errors?.length ? `(${score.errors.join("; ")})` : ""}
+                </p>
+              )}
+
+              {perRound.length > 0 && (
+                <div className="iter-section">
+                  <p className="eyebrow">逐轮可疑度</p>
+                  <div className="orch-table">
+                    {perRound.map((r) => (
+                      <div key={r.round} className="orch-table-row">
+                        <span>第 {r.round} 轮</span>
+                        <span className="orch-margin">
+                          ai_score{" "}
+                          <strong>{fmtScore(r.ai_score)}</strong>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="iter-section">
+                <p className="eyebrow">客观结果</p>
+                <div className="orch-kv-list">
+                  <span className="muted-text">终局</span>
+                  <strong>{outcome?.reached_terminal ?? "—"}</strong>
+                  <span className="muted-text">出局轮</span>
+                  <strong>
+                    {outcome?.eliminated_round != null
+                      ? `第 ${outcome.eliminated_round} 轮`
+                      : "存活"}
+                  </strong>
+                  <span className="muted-text">每轮得票</span>
+                  <strong>{kvPairs(votes) || "—"}</strong>
+                  <span className="muted-text">致命轮(票最高)</span>
+                  <strong>{boolKeys(plurality) || "—"}</strong>
+                  <span className="muted-text">探测通过率</span>
+                  <strong>{kvPctPairs(probes) || "—"}</strong>
+                </div>
+              </div>
+
+              <div className="iter-section">
+                <p className="eyebrow">原始 ScoreRecord</p>
+                <pre className="iter-detail-pre">
+                  {JSON.stringify(score, null, 2)}
+                </pre>
+              </div>
+            </>
+          ) : (
+            <p className="muted-text">无打分数据。</p>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function fmtScore(x: number | null | undefined): string {
+  if (x == null || !Number.isFinite(x)) return "—";
+  return Math.round(x * 100) / 100 + "";
+}
+
+function kvPairs(obj: Record<string, number>): string {
+  const entries = Object.entries(obj);
+  return entries.length === 0
+    ? ""
+    : entries.map(([k, v]) => `R${k}:${v}`).join("  ");
+}
+
+function boolKeys(obj: Record<string, boolean>): string {
+  const hit = Object.entries(obj)
+    .filter(([, v]) => v)
+    .map(([k]) => `R${k}`);
+  return hit.length === 0 ? "" : hit.join("  ");
+}
+
+function kvPctPairs(obj: Record<string, number>): string {
+  const entries = Object.entries(obj);
+  return entries.length === 0
+    ? ""
+    : entries.map(([k, v]) => `${k}:${Math.round(v * 100)}%`).join("  ");
+}
+
+function Metric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="iter-metric-card">
+      <span className="muted-text">{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
