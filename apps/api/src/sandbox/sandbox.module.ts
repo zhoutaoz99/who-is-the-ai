@@ -3,6 +3,7 @@ import { GameModule } from "../game/game.module";
 import { BlindSuspicionScorer } from "./score/blind-suspicion";
 import { ScoreService } from "./score/score.service";
 import { OrchestratorController } from "./orchestrator/orchestrator.controller";
+import { OrchestratorGateway } from "./orchestrator/orchestrator.gateway";
 import { OrchestratorService } from "./orchestrator/orchestrator.service";
 import { OrchestratorStateStore } from "./orchestrator/state";
 import { PairedEvalService } from "./orchestrator/paired-eval";
@@ -25,6 +26,7 @@ import { SandboxService } from "./sandbox.service";
     PairedEvalService,
     OptimizerService,
     OrchestratorService,
+    OrchestratorGateway,
   ],
 })
 export class SandboxModule {}

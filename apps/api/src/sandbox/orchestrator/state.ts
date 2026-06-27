@@ -4,6 +4,7 @@
 import { Injectable } from "@nestjs/common";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { ActiveRun } from "./active-run";
 import { BASELINE_VERSION_ID } from "./prompt-version";
 
 export interface TriedAndRejectedEntry {
@@ -21,6 +22,8 @@ export interface OrchestratorState {
   generation: number;
   eval_set_version: string;
   tried_and_rejected: TriedAndRejectedEntry[];
+  /** 活跃的一代 run(后台运行/待确认);无则 null。 */
+  active_run: ActiveRun | null;
   updatedAt: string;
 }
 
@@ -55,6 +58,7 @@ export class OrchestratorStateStore {
       generation: 0,
       eval_set_version: "optimize_v1",
       tried_and_rejected: [],
+      active_run: null,
       updatedAt: new Date().toISOString(),
     };
     this.save(state);

@@ -1,0 +1,239 @@
+/* ===== 编排器一代闭环(/orchestrator) =====
+   复用 iteration.css 的 iter-* / lobby-* / panel 等;此处只补 orchestrator 专属结构。 */
+
+/* 场景多选 */
+.orch-scenarios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.orch-scenario-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--surface);
+}
+.orch-scenario-chip input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+/* 单局流 */
+.orch-match-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.orch-match-list .iter-game-card {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.orch-margin strong {
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+
+/* 提案 / 闸门 区块 */
+.orch-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.orch-kv {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 6px 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.orch-kv strong {
+  color: var(--text);
+}
+.orch-hypothesis {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.orch-validate {
+  margin: 0;
+  font-size: 13px;
+}
+.orch-reasons {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* 闸门各指标行 */
+.orch-gate-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.orch-gate-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.orch-gate-label {
+  color: var(--text);
+}
+.orch-gate-point {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.orch-gate-verdict {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+/* 全宽区块 */
+.orch-section {
+  margin-top: 18px;
+}
+
+/* 历史代 */
+.orch-gen-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.orch-gen-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.orch-gen-arrow strong {
+  color: var(--accent-strong);
+}
+.orch-gen-child {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.orch-gen-decision {
+  font-weight: 600;
+  margin-left: auto;
+}
+.orch-gen-hyp {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+
+/* 版本列表 */
+.orch-version-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+.orch-version-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface);
+}
+.orch-version-item.champion {
+  border-color: var(--accent);
+  background: rgba(15, 118, 110, 0.06);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.18);
+}
+.orch-version-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.orch-version-head strong {
+  font-size: 13px;
+  word-break: break-all;
+}
+.orch-version-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.orch-version-hyp {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.orch-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.orch-status-champion {
+  background: var(--accent);
+  color: #fff;
+}
+.orch-status-accepted {
+  background: rgba(46, 125, 50, 0.16);
+  color: #2e7d32;
+}
+.orch-status-rejected {
+  background: rgba(180, 35, 24, 0.14);
+  color: #b42318;
+}
+.orch-status-candidate {
+  background: rgba(124, 58, 237, 0.14);
+  color: #7c3aed;
+}
+
+/* phase 徽标配色(对齐设计文档) */
+.iter-step-badge.step-evaluating_champion,
+.iter-step-badge.step-optimizing,
+.iter-step-badge.step-evaluating_child {
+  background: var(--accent);
+}
+.iter-step-badge.step-validating {
+  background: #2563eb;
+}
+.iter-step-badge.step-gating {
+  background: #7c3aed;
+}
+.iter-step-badge.step-awaiting_confirmation {
+  background: var(--warning);
+}
+.iter-step-badge.step-settled {
+  background: #2e7d32;
+}
+.iter-step-badge.step-idle {
+  background: var(--muted);
+}

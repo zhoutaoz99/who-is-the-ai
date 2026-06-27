@@ -11,10 +11,12 @@ export interface ChildEval {
   edit_type?: string;
   validation: ValidationReport;
   gate: GateDecision;
-  decision: "promote" | "reject";
+  /** 实际落定结果(promoted/rejected;confirm 模式下人可能覆盖 gate 建议)。 */
+  decision: "promoted" | "rejected";
 }
 
 export interface GenerationEval {
+  generation_id: string; // gen_<generation>_<child_id>,同时是落盘文件名
   generation: number;
   eval_set_version: string;
   mode: string; // MVP: scripted_intent

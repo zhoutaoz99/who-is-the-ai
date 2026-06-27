@@ -17,6 +17,13 @@ import {
   ActionResult,
   IterationGameResult,
   IterationRunStatus,
+  OrchestratorChild,
+  OrchestratorGate,
+  OrchestratorMatch,
+  OrchestratorSnapshot,
+  OrchestratorStartPayload,
+  OrchestratorValidate,
+  OrchestratorValidation,
   RoomSnapshot,
   RoundTickPayload,
   ServerReadyPayload,
@@ -63,6 +70,17 @@ type GameClientContextValue = {
   retryAutoOptimize: () => Promise<ActionResult>;
   stopIteration: () => Promise<ActionResult>;
   refreshIteration: () => Promise<void>;
+  // ===== 编排器一代闭环(F) =====
+  orchestratorRun: OrchestratorSnapshot | null;
+  refreshOrchestrator: () => Promise<void>;
+  startOrchestratorAuto: (
+    payload: OrchestratorStartPayload,
+  ) => Promise<{ ok: boolean; error?: string; run_id?: string }>;
+  stopOrchestrator: () => Promise<{ ok: boolean; error?: string }>;
+  confirmOrchestrator: (
+    accept: boolean,
+    edited?: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
 };
 
 const API_URL =
@@ -127,6 +145,8 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
   const [speechGeneratings, setSpeechGeneratings] = useState<SpeechGeneratingPayload[]>([]);
   const [speechDiscarded, setSpeechDiscarded] = useState<SpeechDiscardedPayload | null>(null);
   const [iterationRun, setIterationRun] = useState<IterationRunStatus | null>(null);
+  const [orchestratorRun, setOrchestratorRun] =
+    useState<OrchestratorSnapshot | null>(null);
   const speechGeneratingClearTimersRef = useRef<Record<string, number>>({});
   const speechDiscardedClearTimerRef = useRef<number | null>(null);
 
@@ -249,6 +269,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("connect", () => {
       setConnected(true);
       void refreshIteration();
+      void refreshOrchestrator();
     });
     socket.on("disconnect", () => {
       setConnected(false);
@@ -295,6 +316,77 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     });
     socket.on("iteration.done", () => {
       /* completed 状态由随后的 iteration.status 全量快照携带 */
+    });
+
+    // 编排器一代闭环(F):status 全量快照;match/proposal/gate 增量合并进 active_run。
+    socket.on("orchestrator.status", (payload: OrchestratorSnapshot) =>
+      setOrchestratorRun(payload),
+    );
+    socket.on("orchestrator.match", (payload: OrchestratorMatch) =>
+      setOrchestratorRun((cur) =>
+        cur?.active_run
+          ? {
+              ...cur,
+              active_run: {
+                ...cur.active_run,
+                progress: {
+                  ...cur.active_run.progress,
+                  champion_done:
+                    payload.progress?.champion_done ??
+                    cur.active_run.progress.champion_done,
+                  child_done:
+                    payload.progress?.child_done ??
+                    cur.active_run.progress.child_done,
+                  champion_total:
+                    payload.progress?.champion_total ??
+                    cur.active_run.progress.champion_total,
+                  child_total:
+                    payload.progress?.child_total ??
+                    cur.active_run.progress.child_total,
+                  matches: [
+                    ...cur.active_run.progress.matches,
+                    stripMatchProgress(payload),
+                  ],
+                },
+              },
+            }
+          : cur,
+      ),
+    );
+    socket.on(
+      "orchestrator.proposal",
+      (payload: { child: OrchestratorChild; validate: OrchestratorValidate }) =>
+        setOrchestratorRun((cur) =>
+          cur?.active_run
+            ? {
+                ...cur,
+                active_run: {
+                  ...cur.active_run,
+                  child: payload.child,
+                  validate: payload.validate,
+                },
+              }
+            : cur,
+        ),
+    );
+    socket.on(
+      "orchestrator.gate",
+      (payload: { validation: OrchestratorValidation; gate: OrchestratorGate }) =>
+        setOrchestratorRun((cur) =>
+          cur?.active_run
+            ? {
+                ...cur,
+                active_run: {
+                  ...cur.active_run,
+                  validation: payload.validation,
+                  gate: payload.gate,
+                },
+              }
+            : cur,
+        ),
+    );
+    socket.on("orchestrator.done", () => {
+      /* settled 由随后的 orchestrator.status(active_run=null) 携带 */
     });
 
     socket.on("player.speech.generating", (payload: SpeechGeneratingPayload) => {
@@ -499,6 +591,44 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /** 拉取编排器快照(首屏与断线重连兜底)。 */
+  const refreshOrchestrator = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/sandbox/orchestrator/state`);
+      const json = await res.json();
+      if (json?.ok) {
+        setOrchestratorRun(json.state ?? null);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /** 编排器 REST 动作统一封装(kickoff/stop/confirm)。 */
+  const orchestratorRest = useCallback(
+    async (
+      path: string,
+      body: Record<string, unknown>,
+    ): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> => {
+      setError("");
+      try {
+        const res = await fetch(`${API_URL}/sandbox/orchestrator/${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = await res.json();
+        if (!json?.ok) setError(json?.error ?? "操作失败");
+        return json as { ok: boolean; error?: string; [key: string]: unknown };
+      } catch {
+        const fail = { ok: false, error: "请求失败,请确认 API 服务已启动" };
+        setError(fail.error);
+        return fail;
+      }
+    },
+    [],
+  );
+
   const value = useMemo<GameClientContextValue>(() => {
     const normalizedName = (user?.displayName ?? playerName).trim();
 
@@ -605,6 +735,20 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       retryAutoOptimize: async () => emitAction("iteration.retryAutoOptimize", {}),
       stopIteration: async () => emitAction("iteration.stop", {}),
       refreshIteration,
+      orchestratorRun,
+      refreshOrchestrator,
+      startOrchestratorAuto: (payload: OrchestratorStartPayload) =>
+        orchestratorRest(
+          "run-generation-auto",
+          payload as unknown as Record<string, unknown>,
+        ) as Promise<{ ok: boolean; error?: string; run_id?: string }>,
+      stopOrchestrator: () =>
+        orchestratorRest("stop", {}) as Promise<{ ok: boolean; error?: string }>,
+      confirmOrchestrator: (accept: boolean, edited?: string) =>
+        orchestratorRest("confirm", {
+          accept,
+          edited_prompt_text: edited,
+        }) as Promise<{ ok: boolean; error?: string }>,
       joinRoom: async (roomId?: string) => {
         const targetRoomId = (roomId ?? roomCode).trim().toUpperCase();
         if (!normalizedName) {
@@ -741,10 +885,13 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     error,
     forgetPlayer,
     iterationRun,
+    orchestratorRest,
+    orchestratorRun,
     pending,
     playerIds,
     playerName,
     refreshIteration,
+    refreshOrchestrator,
     roomCode,
     rooms,
     speechGeneratings,
@@ -781,4 +928,10 @@ function upsertIterationGame(
       ? games.map((game, i) => (i === idx ? { ...game, ...next } : game))
       : [...games, next];
   return merged.slice().sort((a, b) => (a.gameIndex ?? 0) - (b.gameIndex ?? 0));
+}
+
+/** 从 match 事件载荷中去掉 progress 字段(进度计数已合并到 active_run.progress)。 */
+function stripMatchProgress(payload: OrchestratorMatch): OrchestratorMatch {
+  const { progress: _omit, ...rest } = payload;
+  return rest;
 }

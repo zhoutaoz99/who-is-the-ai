@@ -266,3 +266,164 @@ export type GenerationSummary = {
   manifest: Record<string, number>;
   createdAt: string;
 };
+
+// ===== 编排器一代闭环(F) =====
+
+export type OrchestratorPhase =
+  | "evaluating_champion"
+  | "optimizing"
+  | "validating"
+  | "evaluating_child"
+  | "gating"
+  | "awaiting_confirmation"
+  | "settled";
+
+export type OrchestratorVerdict = "improved" | "regressed" | "inconclusive";
+
+export type OrchestratorMetric = {
+  key: string;
+  nScenarios: number;
+  nPairs: number;
+  point: number | null;
+  ci95: [number, number] | null;
+  mde: number;
+  p?: number | null;
+  verdict: OrchestratorVerdict;
+};
+
+export type OrchestratorValidation = {
+  parentVersion: string;
+  childVersion: string;
+  buckets: Array<{
+    form: string;
+    nScenarios: number;
+    metrics: Record<string, OrchestratorMetric>;
+  }>;
+};
+
+export type OrchestratorGate = {
+  decision: "promote" | "reject";
+  reasons: string[];
+  marginVerdict: OrchestratorVerdict | null;
+};
+
+export type OrchestratorValidate = { ok: boolean; reasons: string[] };
+
+export type OrchestratorChild = {
+  version_id: string;
+  target: string;
+  edit_type: string;
+  hypothesis?: string;
+  diff_summary?: string;
+  prompt_text: string;
+};
+
+export type OrchestratorMatch = {
+  side: "champion" | "child";
+  scenario_id: string;
+  seed: number;
+  run: number;
+  margin: number | null;
+  veto: boolean;
+  status: string;
+  progress?: {
+    champion_done: number;
+    champion_total: number;
+    child_done: number;
+    child_total: number;
+  };
+};
+
+export type OrchestratorActiveRun = {
+  run_id: string;
+  phase: OrchestratorPhase;
+  mode: "auto" | "confirm";
+  generation: number;
+  champion_id: string;
+  plan_summary: {
+    scenarios: string[];
+    seedsPerScenario: number;
+    runsPerSeed: number;
+    evalSetVersion: string;
+  };
+  child?: OrchestratorChild;
+  validation?: OrchestratorValidation;
+  gate?: OrchestratorGate;
+  validate?: OrchestratorValidate;
+  progress: {
+    champion_done: number;
+    champion_total: number;
+    child_done: number;
+    child_total: number;
+    matches: OrchestratorMatch[];
+  };
+  decision?: string;
+  started_at: string;
+  settled_at?: string;
+  error?: string;
+};
+
+export type OrchestratorSnapshot = {
+  champion: string;
+  population: string[];
+  generation: number;
+  eval_set_version: string;
+  tried_count: number;
+  active_run: OrchestratorActiveRun | null;
+};
+
+export type OrchestratorGenerationChild = {
+  child_id: string;
+  based_on: string;
+  hypothesis?: string;
+  target_dimension?: string;
+  edit_type?: string;
+  decision: "promoted" | "rejected";
+};
+
+export type OrchestratorGeneration = {
+  generation_id: string;
+  generation: number;
+  eval_set_version: string;
+  mode: string;
+  champion_before: string;
+  champion_after: string;
+  children_evaluated: OrchestratorGenerationChild[];
+  population_after: string[];
+  tried_and_rejected_added: string[];
+  timestamp: string;
+};
+
+export type OrchestratorVersionMeta = {
+  version_id: string;
+  parent_id: string | null;
+  persona_scope: string;
+  status: string;
+  hypothesis?: string;
+  target_dimension?: string;
+  edit_type?: string;
+  created_by_generation?: number;
+  created_at: string;
+};
+
+export type OrchestratorVersion = OrchestratorVersionMeta & { prompt_text: string };
+
+export type OrchestratorStartPayload = {
+  scenario_ids: string[];
+  mode?: "auto" | "confirm";
+  seeds_per_scenario?: number;
+  runs_per_seed?: number;
+  assigned_target?: string;
+  assigned_edit_type?: string;
+  optimizer_model_id?: string;
+  judge_model_id?: string;
+  discussion_seconds?: number;
+  eval_set_version?: string;
+};
+
+export type SandboxExample = {
+  id: string;
+  label: string;
+  form: string;
+};
+

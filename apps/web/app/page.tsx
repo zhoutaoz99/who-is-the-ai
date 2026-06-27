@@ -557,15 +557,16 @@ export default function Home() {
                 </div>
                 <div>
                   <p className="eyebrow">Auto Iteration</p>
-                  <h2>自动对局评估自迭代</h2>
+                  <h2>自动迭代一代闭环</h2>
                 </div>
               </div>
               <p className="muted-text">
-                批量跑无头对局、量化打分,配合版本库迭代 AI 提示词。
+                跑一代:champion 评测 → 优化器提案 → 配对评测 → 闸门 →
+                人工确认/接受。过程可视化、可旁观、可叫停。
               </p>
               <button
                 className="secondary"
-                onClick={() => router.push("/iteration")}
+                onClick={() => router.push("/orchestrator")}
               >
                 进入自动迭代
               </button>

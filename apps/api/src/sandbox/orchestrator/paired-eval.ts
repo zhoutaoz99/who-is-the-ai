@@ -1,7 +1,8 @@
-// M5.3/M5.4 配对评测驱动 + paired_cache。
+// M5.3/M5.4 配对评测驱动 + paired_cache + (F0.2/F0.4) 逐局进度回调 / 停止钩子。
 // 跑某版本在 eval 集上的全部 (scenario, seed, run) → MatchRecord → ScoreRecord。
 // 子/父用【同一批 scenario、同一组 seed、同一 run_index】,差异只来自 AI 提示词版本。
 // paired_cache:同 (version, evalSet, seed 计划) 复用 → 重跑新子版本时父代不重跑,省算力。
+// F0:onMatch 回调驱动过程可视化;shouldStop 让编排器能在局间中止(用户停止)。
 
 import { Injectable, Logger } from "@nestjs/common";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -23,6 +24,13 @@ export interface EvalPlan {
   evalSetVersion: string;
 }
 
+export interface EvalRunOptions {
+  /** 每局评分完成后回调(过程可视化:逐局追加 margin/veto)。 */
+  onMatch?: (score: ScoreRecord) => void;
+  /** 局间检查;返回 true 则尽早中止,返回部分评分(不缓存)。 */
+  shouldStop?: () => boolean;
+}
+
 @Injectable()
 export class PairedEvalService {
   private readonly logger = new Logger(PairedEvalService.name);
@@ -36,19 +44,34 @@ export class PairedEvalService {
     this.cacheDir = join(root, "cache");
   }
 
-  async runVersionEval(version: PromptVersion, plan: EvalPlan): Promise<ScoreRecord[]> {
+  async runVersionEval(
+    version: PromptVersion,
+    plan: EvalPlan,
+    opts: EvalRunOptions = {},
+  ): Promise<ScoreRecord[]> {
     const key = cacheKey(version.version_id, plan);
     const cached = this.loadCache(key);
     if (cached) {
-      this.logger.log(`paired_cache 命中: ${version.version_id}(${cached.length} 条评分)`);
+      // 缓存命中:回放每条给 onMatch(前台仍能看到逐局进度),不跑新对局。
+      if (opts.onMatch) {
+        for (const sc of cached) opts.onMatch(sc);
+      }
+      this.logger.log(`paired_cache 命中(回放 ${cached.length} 条): ${version.version_id}`);
       return cached;
     }
 
     const scores: ScoreRecord[] = [];
+    let stopped = false;
     for (const scenario of plan.scenarios) {
+      if (stopped) break;
       for (let s = 0; s < plan.seedsPerScenario; s += 1) {
+        if (stopped) break;
         const seed = plan.seedsPerScenario > 1 ? scenario.seed + s * 7919 : scenario.seed;
         for (let r = 0; r < plan.runsPerSeed; r += 1) {
+          if (opts.shouldStop?.()) {
+            stopped = true;
+            break;
+          }
           const match = await this.sandbox.runMatch(scenario, {
             run_index: r,
             seed_override: seed,
@@ -59,13 +82,15 @@ export class PairedEvalService {
             judgeModelId: plan.judgeModelId,
           });
           scores.push(scoreRec);
+          opts.onMatch?.(scoreRec);
           this.logger.log(
             `评测 ${version.version_id} ${scenario.scenario_id} seed${seed} run${r} → margin=${scoreRec.blind_suspicion.suspicion_margin ?? "?"}`,
           );
         }
       }
     }
-    this.saveCache(key, scores);
+
+    if (!stopped) this.saveCache(key, scores); // 只缓存完整结果
     return scores;
   }
 
