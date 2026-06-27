@@ -1,6 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { registerExtraPersonas } from "../ai/ai.personas";
 import { AiService } from "../ai/ai.service";
@@ -13,6 +12,7 @@ import { SANDBOX_PERSONAS } from "./personas/detective-personas";
 import { loadDefaultProbeBank, resolveProbe } from "./probe/probe-bank";
 import { registerProbeCheckers } from "./probe/checkers";
 import type { ResolvedProbeFire } from "./probe/types";
+import { SandboxRepository } from "./sandbox.repository";
 import type { RunConfig, Scenario } from "./scenario/types";
 import { validateScenario } from "./scenario/validate";
 
@@ -61,17 +61,16 @@ export interface SandboxConfig {
 /**
  * 离线沙盒引擎(薄服务):按 Scenario 驱动一局沙盒对局,复用产品运行时
  * (GameService)+ gateway 实时可视化。流程:prepare(建等待房)→ [前台配置页改参数]
- * → start(开局 + 后台落盘 MatchRecord)。
+ * → start(开局 + 后台落库 MatchRecord)。
  */
 @Injectable()
 export class SandboxService implements OnModuleInit {
   private readonly logger = new Logger(SandboxService.name);
-  private readonly outDir =
-    process.env.SANDBOX_OUT_DIR ?? join(process.cwd(), "sandbox-out");
 
   constructor(
     private readonly gameService: GameService,
     private readonly aiService: AiService,
+    private readonly repo: SandboxRepository,
   ) {}
 
   onModuleInit(): void {
@@ -315,11 +314,14 @@ export class SandboxService implements OnModuleInit {
         retries: 0,
       }));
     }
-    await mkdir(this.outDir, { recursive: true });
-    const file = join(this.outDir, `${record.match_id}.json`);
-    await writeFile(file, JSON.stringify(record, null, 2), "utf-8");
-    this.logger.log(`MatchRecord 已写出: ${file}`);
+    await this.repo.upsertMatchRecord(record);
+    this.logger.log(`MatchRecord 已落库: ${record.match_id}`);
     return record;
+  }
+
+  /** 按 match_id 读已落库的 MatchRecord(scoreStoredMatch / 回看用)。 */
+  async loadMatchRecord(matchId: string): Promise<MatchRecord | null> {
+    return this.repo.loadMatchRecord(matchId);
   }
 
   private async waitForFinished(

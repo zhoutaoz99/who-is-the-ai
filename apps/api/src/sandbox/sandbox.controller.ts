@@ -26,12 +26,12 @@ export class SandboxController {
     return { ok: true, examples: this.sandbox.getExampleList() };
   }
 
-  /** 读已落盘的 ScoreRecord(编排器打分详情回看用)。 */
+  /** 读已落库的 ScoreRecord(编排器打分详情回看用)。 */
   @Get("score/:matchId")
-  storedScore(
+  async storedScore(
     @Param("matchId") matchId: string,
-  ): { ok: boolean; score?: ScoreRecord; error?: string } {
-    const score = this.scoreService.loadStoredScore(matchId);
+  ): Promise<{ ok: boolean; score?: ScoreRecord; error?: string }> {
+    const score = await this.scoreService.loadStoredScore(matchId);
     return score ? { ok: true, score } : { ok: false, error: "未找到该局的打分记录" };
   }
 

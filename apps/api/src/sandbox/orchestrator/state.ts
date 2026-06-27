@@ -1,11 +1,14 @@
 // M5.2 编排器状态:champion / population / 代计数 / 失败记忆 / 评测集版本。
-// MVP 单线贪心:population = [champion](top-k 在 Phase 4)。文件持久化 orchestrator-state.json。
+// MVP 单线贪心:population = [champion](top-k 在 Phase 4)。
+// 持久化:Postgres(sandbox_orchestrator_state 单例)。存在大量同步读调用点
+// (getState/getSnapshot/persistRun/recordGameStatus 等),故采用【内存缓存 + 启动加载 +
+// write-through】:init() 从 DB 装入内存,load() 同步读内存,save() 同步写内存 + 触发 DB 写,
+// flush() 等待 DB 写完成(关键落定路径用)。
 
-import { Injectable } from "@nestjs/common";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { Injectable, Logger } from "@nestjs/common";
 import type { ActiveRun } from "./active-run";
 import { BASELINE_VERSION_ID } from "./prompt-version";
+import { SandboxRepository } from "../sandbox.repository";
 
 export interface TriedAndRejectedEntry {
   version_id: string;
@@ -29,25 +32,35 @@ export interface OrchestratorState {
 
 @Injectable()
 export class OrchestratorStateStore {
-  private readonly file: string;
+  private readonly logger = new Logger(OrchestratorStateStore.name);
+  private cache: OrchestratorState | null = null;
+  private initialized = false;
+  /** 最近一次 DB upsert 的 promise;flush() 等它。 */
+  private pending: Promise<void> = Promise.resolve();
 
-  constructor() {
-    const root = process.env.SANDBOX_OUT_DIR ?? join(process.cwd(), "sandbox-out");
-    this.file = join(root, "orchestrator-state.json");
+  constructor(private readonly repo: SandboxRepository) {}
+
+  /** 启动加载:从 DB 装入内存缓存(由 OrchestratorService.onModuleInit 调一次)。 */
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    this.cache = await this.repo.loadState();
+    this.initialized = true;
   }
 
   load(): OrchestratorState | null {
-    if (!existsSync(this.file)) return null;
-    try {
-      return JSON.parse(readFileSync(this.file, "utf-8")) as OrchestratorState;
-    } catch {
-      return null;
-    }
+    return this.cache;
   }
 
   save(state: OrchestratorState): void {
-    mkdirSync(dirname(this.file), { recursive: true });
-    writeFileSync(this.file, JSON.stringify(state, null, 2), "utf-8");
+    this.cache = state;
+    this.pending = this.repo.upsertState(state).catch((err) => {
+      this.logger.warn(`orchestrator-state 落库失败: ${err instanceof Error ? err.message : err}`);
+    });
+  }
+
+  /** 等待最近一次 DB 写完成(关键落定路径用,确保 champion 指针落盘)。 */
+  async flush(): Promise<void> {
+    await this.pending;
   }
 
   /** 播种初始状态:champion = v0-baseline。 */

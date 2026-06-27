@@ -5,12 +5,11 @@
 // 并发:worker 池(GAME_CONCURRENCY)并发跑局;onGameStatus 回调逐局广播 pending→running→scoring→finished/failed 状态(含对局内细节);shouldStop 让编排器能在局间中止(用户停止)。
 
 import { Injectable, Logger } from "@nestjs/common";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type { RoomSnapshot } from "../../game/game.types";
 import type { Scenario } from "../scenario/types";
 import { ScoreService } from "../score/score.service";
 import type { ScoreRecord } from "../score/types";
+import { SandboxRepository } from "../sandbox.repository";
 import { SandboxService } from "../sandbox.service";
 import type { GameDetail, GameStatusPatch, GameStatusUpdate } from "./active-run";
 import type { PromptVersion } from "./prompt-version";
@@ -39,15 +38,12 @@ export interface EvalRunOptions {
 @Injectable()
 export class PairedEvalService {
   private readonly logger = new Logger(PairedEvalService.name);
-  private readonly cacheDir: string;
 
   constructor(
     private readonly sandbox: SandboxService,
     private readonly score: ScoreService,
-  ) {
-    const root = process.env.SANDBOX_OUT_DIR ?? join(process.cwd(), "sandbox-out");
-    this.cacheDir = join(root, "cache");
-  }
+    private readonly repo: SandboxRepository,
+  ) {}
 
   async runVersionEval(
     version: PromptVersion,
@@ -55,7 +51,7 @@ export class PairedEvalService {
     opts: EvalRunOptions = {},
   ): Promise<ScoreRecord[]> {
     const key = cacheKey(version.version_id, plan);
-    const cached = this.loadCache(key);
+    const cached = await this.loadCache(key);
     if (cached) {
       // 缓存命中:回放每条为 finished 状态给前台(列表仍能看到逐局),不跑新对局。
       if (opts.onGameStatus) {
@@ -145,23 +141,16 @@ export class PairedEvalService {
     );
     await Promise.all(workers);
 
-    if (!stopped) this.saveCache(key, scores); // 只缓存完整结果
+    if (!stopped) await this.saveCache(key, scores); // 只缓存完整结果
     return scores;
   }
 
-  private loadCache(key: string): ScoreRecord[] | null {
-    const file = join(this.cacheDir, `${key}.json`);
-    if (!existsSync(file)) return null;
-    try {
-      return JSON.parse(readFileSync(file, "utf-8")) as ScoreRecord[];
-    } catch {
-      return null;
-    }
+  private async loadCache(key: string): Promise<ScoreRecord[] | null> {
+    return this.repo.loadCache(key);
   }
 
-  private saveCache(key: string, scores: ScoreRecord[]): void {
-    mkdirSync(this.cacheDir, { recursive: true });
-    writeFileSync(join(this.cacheDir, `${key}.json`), JSON.stringify(scores, null, 2), "utf-8");
+  private async saveCache(key: string, scores: ScoreRecord[]): Promise<void> {
+    await this.repo.saveCache(key, scores);
   }
 }
 

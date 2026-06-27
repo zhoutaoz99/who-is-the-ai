@@ -1,12 +1,14 @@
-// M5.1 PromptVersion 记录 + 版本化存储(文件,MVP 不引 DB)。
-// prompt_text 进 versions/<id>.prompt.txt(ai.service 经 prompt-loader.loadPromptVersionText 读取);
-// 其余元数据进 versions/<id>.meta.json。baseline(v0-baseline)用当前 ai-player 提示词播种。
-// 结构对齐《总纲 §5》PromptVersion。
+// M5.1 PromptVersion 记录 + 版本化存储。
+// prompt_text 是 AI 玩家讨论系统提示词(含 {{persona}} 占位);其余为元数据。
+// baseline(v0-baseline)用当前 ai-player/system-discussion.txt 播种。结构对齐《总纲 §5》PromptVersion。
+// 持久化:Postgres(sandbox_prompt_versions:prompt_text 单列 + meta jsonb)。
+// 存在大量同步读调用点(getChampion/getVersion/list 等),故采用【内存缓存 + 启动加载 +
+// write-through】:init() 从 DB 全量装入,load/list 同步读内存,save/patch 同步写内存 + 触发 DB 写。
+// 运行时 ai.service 取 prompt_text 经 SandboxRepository.loadPromptVersionText 直读 DB(带缓存)。
 
-import { Injectable } from "@nestjs/common";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { Injectable, Logger } from "@nestjs/common";
 import { loadPrompt } from "../../ai/prompt-loader";
+import { SandboxRepository } from "../sandbox.repository";
 
 export type PromptVersionStatus = "candidate" | "accepted" | "rejected" | "champion";
 export const BASELINE_VERSION_ID = "v0-baseline";
@@ -37,67 +39,57 @@ export function toMeta(v: PromptVersion): PromptVersionMeta {
 
 @Injectable()
 export class PromptVersionStore {
-  private readonly dir: string;
+  private readonly logger = new Logger(PromptVersionStore.name);
+  private cache = new Map<string, PromptVersion>();
+  private initialized = false;
 
-  constructor() {
-    const root = process.env.SANDBOX_OUT_DIR ?? join(process.cwd(), "sandbox-out");
-    this.dir = join(root, "versions");
-  }
+  constructor(private readonly repo: SandboxRepository) {}
 
-  private promptPath(id: string): string {
-    return join(this.dir, `${id}.prompt.txt`);
-  }
-  private metaPath(id: string): string {
-    return join(this.dir, `${id}.meta.json`);
+  /** 启动加载:从 DB 全量装入内存(由 OrchestratorService.onModuleInit 调一次)。 */
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    const all = await this.repo.listPromptVersions();
+    this.cache = new Map(all.map((v) => [v.version_id, v]));
+    this.initialized = true;
   }
 
   save(v: PromptVersion): void {
-    mkdirSync(this.dir, { recursive: true });
-    writeFileSync(this.promptPath(v.version_id), v.prompt_text, "utf-8");
-    const { prompt_text: _omit, ...meta } = v;
-    writeFileSync(this.metaPath(v.version_id), JSON.stringify(meta, null, 2), "utf-8");
+    this.cache.set(v.version_id, v);
+    void this.repo.upsertPromptVersion(v).catch((err) => {
+      this.logger.warn(`prompt-version ${v.version_id} 落库失败: ${err instanceof Error ? err.message : err}`);
+    });
   }
 
   load(id: string): PromptVersion | null {
-    try {
-      const meta = JSON.parse(readFileSync(this.metaPath(id), "utf-8")) as PromptVersionMeta;
-      const prompt_text = readFileSync(this.promptPath(id), "utf-8");
-      return { ...meta, prompt_text };
-    } catch {
-      return null;
-    }
+    return this.cache.get(id) ?? null;
   }
 
   loadMeta(id: string): PromptVersionMeta | null {
-    try {
-      return JSON.parse(readFileSync(this.metaPath(id), "utf-8")) as PromptVersionMeta;
-    } catch {
-      return null;
-    }
+    const v = this.cache.get(id);
+    return v ? toMeta(v) : null;
   }
 
   list(): PromptVersionMeta[] {
-    if (!existsSync(this.dir)) return [];
-    return readdirSync(this.dir)
-      .filter((f) => f.endsWith(".meta.json"))
-      .map((f) => JSON.parse(readFileSync(join(this.dir, f), "utf-8")) as PromptVersionMeta);
+    return [...this.cache.values()].map(toMeta);
   }
 
   patchStatus(
     id: string,
     patch: Partial<Pick<PromptVersion, "status" | "validated_metrics" | "eval_set_version">>,
   ): boolean {
-    const meta = this.loadMeta(id);
-    if (!meta) return false;
-    Object.assign(meta, patch);
-    mkdirSync(dirname(this.metaPath(id)), { recursive: true });
-    writeFileSync(this.metaPath(id), JSON.stringify(meta, null, 2), "utf-8");
+    const v = this.cache.get(id);
+    if (!v) return false;
+    const updated = { ...v, ...patch };
+    this.cache.set(id, updated);
+    void this.repo.patchPromptVersionMeta(id, toMeta(updated)).catch((err) => {
+      this.logger.warn(`prompt-version ${id} patch 落库失败: ${err instanceof Error ? err.message : err}`);
+    });
     return true;
   }
 
   /** 若 v0-baseline 不存在,用当前 ai-player/system-discussion.txt 播种为 champion。 */
   seedBaselineIfMissing(): PromptVersion {
-    const existing = this.load(BASELINE_VERSION_ID);
+    const existing = this.cache.get(BASELINE_VERSION_ID);
     if (existing) return existing;
     const baseline: PromptVersion = {
       version_id: BASELINE_VERSION_ID,

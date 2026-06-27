@@ -62,18 +62,3 @@ export function renderTemplate(
 export function readPromptFile(filename: string): string {
   return readFile(filename);
 }
-
-/**
- * 读取一个【提示词版本】的正文(编排器 PromptVersionStore 写到 sandbox-out/versions/<id>.prompt.txt)。
- * 命中返回 trim 后的文本;不存在返回 null(调用方回退到产品默认 ai-player 提示词)。
- * 仅 ai_under_test 用,使配对评测能比较不同版本的 AI 系统提示词。
- */
-export function loadPromptVersionText(versionId: string): string | null {
-  if (!versionId) return null;
-  const dir = process.env.SANDBOX_OUT_DIR ?? join(process.cwd(), "sandbox-out");
-  try {
-    return readFileSync(join(dir, "versions", `${versionId}.prompt.txt`), "utf-8").trim();
-  } catch {
-    return null;
-  }
-}

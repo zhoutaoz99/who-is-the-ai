@@ -138,13 +138,15 @@ export class OrchestratorController {
   }
 
   @Get("generations")
-  generations(): { ok: boolean; generations: unknown[] } {
-    return { ok: true, generations: this.orchestrator.listGenerations() };
+  async generations(): Promise<{ ok: boolean; generations: unknown[] }> {
+    return { ok: true, generations: await this.orchestrator.listGenerations() };
   }
 
   @Get("generations/:id")
-  generation(@Param("id") id: string): { ok: boolean; generation?: unknown; error?: string } {
-    const g = this.orchestrator.getGeneration(id);
+  async generation(
+    @Param("id") id: string,
+  ): Promise<{ ok: boolean; generation?: unknown; error?: string }> {
+    const g = await this.orchestrator.getGeneration(id);
     return g ? { ok: true, generation: g } : { ok: false, error: "未找到该代" };
   }
 

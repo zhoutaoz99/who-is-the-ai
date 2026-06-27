@@ -33,7 +33,7 @@ export interface GameItem {
   run: number;
   status: GameStatus;
   room_id?: string;
-  /** 完成态:用于回看打分详情(读 sandbox-out/scores/s_${match_id}.json)。 */
+  /** 完成态:用于回看打分详情(按 match_id 从 DB 读 ScoreRecord)。 */
   match_id?: string;
   error?: string;
   /** 进行中:对局内实时细节(由 runMatch 的 onProgress 回调折算)。 */

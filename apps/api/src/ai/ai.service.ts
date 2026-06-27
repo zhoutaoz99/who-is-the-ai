@@ -15,7 +15,8 @@ import {
   PersonaCard,
   RoundVoteSummary,
 } from "./ai.types";
-import { loadPrompt, loadPromptVersionText, renderTemplate } from "./prompt-loader";
+import { loadPrompt, renderTemplate } from "./prompt-loader";
+import { PostgresService } from "../data/postgres.service";
 import { formatPersonaCard } from "./ai.personas";
 
 type SpeechRole = "ai_under_test" | "detective" | "filler";
@@ -46,6 +47,8 @@ export class AiService {
   private readonly config: AiConfig;
   private readonly models = new Map<string, AiModelEntry>();
   private readonly configPath = process.env.AI_MODELS_PATH || join(__dirname, "..", "..", "..", "..", "ai-models.json");
+  /** version_id → prompt_text 内存缓存(避免每条发言查 DB)。 */
+  private readonly promptTextCache = new Map<string, string>();
   private recorder?: AiCallRecorder;
 
   setRecorder(recorder: AiCallRecorder) {
@@ -86,7 +89,7 @@ export class AiService {
     return list;
   }
 
-  constructor() {
+  constructor(private readonly postgres: PostgresService) {
     this.loadModels();
 
     const defaultModel = this.getDefaultModel();
@@ -267,7 +270,7 @@ export class AiService {
     const callOptions = override?.connection;
 
     try {
-      const systemPrompt = this.buildSpeechSystemPrompt(persona, context);
+      const systemPrompt = await this.buildSpeechSystemPrompt(persona, context);
       const userPrompt = this.buildDiscussionUserPrompt(context);
       this.logModelRequest("DISCUSSION", context, modelConfig, systemPrompt, userPrompt);
       const startedAt = new Date().toISOString();
@@ -385,14 +388,36 @@ export class AiService {
     }
   }
 
-  private buildDiscussionSystemPrompt(
+  /**
+   * 取一个提示词版本的正文(原 prompt-loader.loadPromptVersionText,现从 DB 读)。
+   * 带 version_id → prompt_text 内存缓存,避免每条发言查一次 DB。仅 ai_under_test 用。
+   */
+  private async loadPromptVersionText(versionId?: string): Promise<string | null> {
+    if (!versionId) return null;
+    const cached = this.promptTextCache.get(versionId);
+    if (cached !== undefined) return cached;
+    try {
+      await this.postgres.ready;
+      const res = await this.postgres.query<{ prompt_text: string }>(
+        `SELECT prompt_text FROM sandbox_prompt_versions WHERE version_id = $1`,
+        [versionId],
+      );
+      const text = res.rows[0]?.prompt_text?.trim() ?? null;
+      if (text != null) this.promptTextCache.set(versionId, text);
+      return text;
+    } catch {
+      return null;
+    }
+  }
+
+  private async buildDiscussionSystemPrompt(
     persona: PersonaCard,
     seatNo: number,
     versionId?: string,
-  ): string {
+  ): Promise<string> {
     // ai_under_test 优先用指定版本提示词(配对评测用),缺省走产品默认。
     const template =
-      (versionId && loadPromptVersionText(versionId)) ||
+      (await this.loadPromptVersionText(versionId)) ||
       loadPrompt("ai-player/system-discussion.txt");
     return template.replaceAll("{{persona}}", formatPersonaCard(persona, seatNo));
   }
@@ -408,7 +433,10 @@ export class AiService {
    * 离线沙盒按 role 选发言系统提示词:detective/filler 用各自模板(立场由人设卡承载,
    * 仅探测时拼 probe_task);缺省/ai_under_test 走现有 AI 玩家提示词,对产品对局无影响。
    */
-  private buildSpeechSystemPrompt(persona: PersonaCard, context: GameContext): string {
+  private async buildSpeechSystemPrompt(
+    persona: PersonaCard,
+    context: GameContext,
+  ): Promise<string> {
     const role: SpeechRole = context.myRole ?? "ai_under_test";
     const card = formatPersonaCard(persona, context.mySeatNo);
     if (role === "detective") {

@@ -249,5 +249,69 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
       ALTER TABLE iteration_runs
       ADD COLUMN IF NOT EXISTS pending_generation_id text
     `);
+
+    // --- 离线优化沙盒产物(原 sandbox-out/ 文件存储,迁到 DB;jsonb 存完整文档)---
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_match_records (
+        match_id text PRIMARY KEY,
+        data jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_score_records (
+        score_id text PRIMARY KEY,
+        match_id text NOT NULL,
+        data jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS sandbox_score_records_match_idx
+      ON sandbox_score_records (match_id)
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_paired_cache (
+        cache_key text PRIMARY KEY,
+        data jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_generation_evals (
+        generation_id text PRIMARY KEY,
+        generation_no integer NOT NULL,
+        data jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS sandbox_generation_evals_no_idx
+      ON sandbox_generation_evals (generation_no DESC)
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_orchestrator_state (
+        id integer PRIMARY KEY DEFAULT 1,
+        data jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT NOW(),
+        CONSTRAINT sandbox_orchestrator_state_singleton CHECK (id = 1)
+      )
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_prompt_versions (
+        version_id text PRIMARY KEY,
+        status text NOT NULL,
+        prompt_text text NOT NULL,
+        meta jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
   }
 }

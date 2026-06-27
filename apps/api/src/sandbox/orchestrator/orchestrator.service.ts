@@ -6,9 +6,7 @@
 // 手动阻塞入口 runGeneration(传 child)保留;两路共用 settleGeneration。
 
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
-import { join } from "node:path";
 import { buildValidation } from "../aggregate/validation";
 import { DEFAULT_AGG_CONFIG } from "../aggregate/types";
 import type { ValidationReport } from "../aggregate/validation";
@@ -16,7 +14,7 @@ import { buildOptimizerInput, championProfile } from "../optimizer/input";
 import { OptimizerService } from "../optimizer/propose";
 import { validatePrompt } from "../optimizer/validate-prompt";
 import type { PromptValidation } from "../optimizer/validate-prompt";
-import { writeJsonFile } from "../shared/store";
+import { SandboxRepository } from "../sandbox.repository";
 import { optimizeGate } from "./gate";
 import type { GateDecision } from "./gate";
 import type { GenerationEval } from "./generation-eval";
@@ -52,7 +50,6 @@ export class OrchestratorService implements OnModuleInit {
   /** 内部事件;OrchestratorGateway 订阅后桥接到 socket。 */
   readonly events = new EventEmitter();
 
-  private readonly generationsDir: string;
   /** 待确认的 resolver(runLoop 在 awaiting_confirmation 时 await 它)。 */
   private confirmResolver: ((r: ConfirmResult | "stop") => void) | null = null;
   private stopRequested = false;
@@ -64,12 +61,13 @@ export class OrchestratorService implements OnModuleInit {
     private readonly stateStore: OrchestratorStateStore,
     private readonly pairedEval: PairedEvalService,
     private readonly optimizer: OptimizerService,
-  ) {
-    const root = process.env.SANDBOX_OUT_DIR ?? join(process.cwd(), "sandbox-out");
-    this.generationsDir = join(root, "generations");
-  }
+    private readonly repo: SandboxRepository,
+  ) {}
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
+    // 先把 state / prompt-version 内存缓存从 DB 装入,再 seed/续接。
+    await this.promptStore.init();
+    await this.stateStore.init();
     this.promptStore.seedBaselineIfMissing();
     const state = this.stateStore.load() ?? this.stateStore.seedBaseline();
     // 重启续接:仅 awaiting_confirmation 可续;运行中 phase 中断 → stopped。
@@ -123,29 +121,12 @@ export class OrchestratorService implements OnModuleInit {
     };
   }
 
-  listGenerations(): GenerationEval[] {
-    if (!existsSync(this.generationsDir)) return [];
-    return readdirSync(this.generationsDir)
-      .filter((f) => f.endsWith(".json"))
-      .map((f) => {
-        try {
-          return JSON.parse(readFileSync(join(this.generationsDir, f), "utf-8")) as GenerationEval;
-        } catch {
-          return null;
-        }
-      })
-      .filter((g): g is GenerationEval => g != null)
-      .sort((a, b) => b.generation - a.generation);
+  async listGenerations(): Promise<GenerationEval[]> {
+    return this.repo.listGenerations();
   }
 
-  getGeneration(generationId: string): GenerationEval | null {
-    const file = join(this.generationsDir, `${generationId}.json`);
-    if (!existsSync(file)) return null;
-    try {
-      return JSON.parse(readFileSync(file, "utf-8")) as GenerationEval;
-    } catch {
-      return null;
-    }
+  async getGeneration(generationId: string): Promise<GenerationEval | null> {
+    return this.repo.getGeneration(generationId);
   }
 
   listVersions(): PromptVersionMeta[] {
@@ -503,12 +484,14 @@ export class OrchestratorService implements OnModuleInit {
       timestamp: new Date().toISOString(),
     };
     this.stateStore.save(state);
-    await writeJsonFile(this.generationsDir, `${generation_id}.json`, genEval);
+    await this.repo.upsertGenerationEval(genEval);
+    // 关键落定:等 state(champion 指针)落库完成,避免重启回退。
+    await this.stateStore.flush();
     return genEval;
   }
 
   /** runLoop 正常落定后:标记 active_run settled + 清除 + emit done/status。 */
-  private settleRunDone(decision: RunDecision): void {
+  private async settleRunDone(decision: RunDecision): Promise<void> {
     const run = this.activeRun;
     if (run) {
       run.phase = "settled";
@@ -521,6 +504,7 @@ export class OrchestratorService implements OnModuleInit {
       state.updatedAt = new Date().toISOString();
       this.stateStore.save(state);
     }
+    await this.stateStore.flush();
     this.events.emit("done", {
       run_id: run?.run_id,
       generation: run?.generation,
@@ -533,7 +517,7 @@ export class OrchestratorService implements OnModuleInit {
   }
 
   /** 异常/停止落定:记 tried(若有候选)+ 标 stopped + emit done。 */
-  private settleStopped(reason: string): void {
+  private async settleStopped(reason: string): Promise<void> {
     const run = this.activeRun;
     const state = this.stateStore.load();
     if (run?.child && state) {
@@ -557,6 +541,7 @@ export class OrchestratorService implements OnModuleInit {
       state.updatedAt = new Date().toISOString();
       this.stateStore.save(state);
     }
+    await this.stateStore.flush();
     this.events.emit("done", {
       run_id: run?.run_id,
       generation: run?.generation,
