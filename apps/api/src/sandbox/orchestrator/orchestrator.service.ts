@@ -20,10 +20,10 @@ import type { GateDecision } from "./gate";
 import type { GenerationEval } from "./generation-eval";
 import { PairedEvalService } from "./paired-eval";
 import type { EvalPlan } from "./paired-eval";
-import { PromptVersionStore } from "./prompt-version";
+import { BASELINE_VERSION_ID, PromptVersionStore } from "./prompt-version";
 import type { PromptVersion, PromptVersionMeta } from "./prompt-version";
 import { OrchestratorStateStore } from "./state";
-import type { OrchestratorState } from "./state";
+import type { OrchestratorState, TriedAndRejectedEntry } from "./state";
 import type {
   ActiveRun,
   ActiveRunChild,
@@ -41,6 +41,8 @@ export interface OrchestratorSnapshot {
   generation: number;
   eval_set_version: string;
   tried_count: number;
+  /** 失败记忆全量(前台查看/删除用)。 */
+  tried_and_rejected: TriedAndRejectedEntry[];
   active_run: ActiveRun | null;
 }
 
@@ -53,6 +55,10 @@ export class OrchestratorService implements OnModuleInit {
   /** 待确认的 resolver(runLoop 在 awaiting_confirmation 时 await 它)。 */
   private confirmResolver: ((r: ConfirmResult | "stop") => void) | null = null;
   private stopRequested = false;
+  /** terminate 中:runLoop 的 settleStopped/recordGameStatus 见此旗即退避,由 terminate 接管清理。 */
+  private terminating = false;
+  /** 本 run 开始前的 state 快照(terminate 回滚用;kickoff 时捕获,新 run 时刷新)。 */
+  private runStartSnapshot: OrchestratorState | null = null;
   /** 活跃 run 的内存镜像(与 state.active_run 同步)。 */
   private activeRun: ActiveRun | null = null;
 
@@ -117,6 +123,7 @@ export class OrchestratorService implements OnModuleInit {
       generation: s.generation,
       eval_set_version: s.eval_set_version,
       tried_count: s.tried_and_rejected.length,
+      tried_and_rejected: s.tried_and_rejected,
       active_run: this.getActiveRun(),
     };
   }
@@ -129,12 +136,60 @@ export class OrchestratorService implements OnModuleInit {
     return this.repo.getGeneration(generationId);
   }
 
+  /** 删除一条历史代记录(纯历史日志;不影响 champion/代数计数等当前状态)。 */
+  async deleteGeneration(generationId: string): Promise<void> {
+    await this.repo.deleteGeneration(generationId);
+  }
+
   listVersions(): PromptVersionMeta[] {
     return this.promptStore.list();
   }
 
   getVersion(id: string): PromptVersion | null {
     return this.promptStore.load(id);
+  }
+
+  /**
+   * 删除一个提示词版本。禁止删除:当前 champion、baseline 种子、活跃 run 的候选
+   * (删了会让迭代状态/血脉失锚)。其余(candidate/accepted/rejected)可删。
+   * 注意:删除后该 version_id 若仍出现在 population/tried_and_rejected 里,只是悬空引用(无害)。
+   */
+  deleteVersion(versionId: string): void {
+    const state = this.stateStore.load();
+    if (versionId === BASELINE_VERSION_ID) {
+      throw new Error("不能删除 baseline 种子版本");
+    }
+    if (state && versionId === state.champion) {
+      throw new Error("不能删除当前 champion");
+    }
+    if (state?.active_run?.child?.version_id === versionId) {
+      throw new Error("不能删除活跃 run 的候选(先终止或确认本代)");
+    }
+    this.promptStore.deleteVersion(versionId);
+  }
+
+  /** 删除一条失败记忆(按 version_id;同 version_id 的条目一并移除)。 */
+  async removeTried(versionId: string): Promise<void> {
+    const state = this.stateStore.load();
+    if (!state) return;
+    const before = state.tried_and_rejected.length;
+    state.tried_and_rejected = state.tried_and_rejected.filter(
+      (e) => e.version_id !== versionId,
+    );
+    if (state.tried_and_rejected.length === before) return;
+    state.updatedAt = new Date().toISOString();
+    this.stateStore.save(state);
+    await this.stateStore.flush();
+  }
+
+  /** 清空全部失败记忆。 */
+  async clearTried(): Promise<void> {
+    const state = this.stateStore.load();
+    if (!state || state.tried_and_rejected.length === 0) return;
+    state.tried_and_rejected = [];
+    state.updatedAt = new Date().toISOString();
+    this.stateStore.save(state);
+    await this.stateStore.flush();
   }
 
   // ===== 手动阻塞入口(传 child;保留)=====
@@ -189,12 +244,19 @@ export class OrchestratorService implements OnModuleInit {
         seedsPerScenario: plan.seedsPerScenario,
         runsPerSeed: plan.runsPerSeed,
         evalSetVersion: plan.evalSetVersion,
+        discussionSeconds: plan.discussionSeconds,
+        judgeModelId: plan.judgeModelId,
+        optimizerModelId: opts.optimizerModelId,
+        assignedTarget: opts.assignedTarget,
       },
       progress: { champion_done: 0, champion_total: total, child_done: 0, child_total: total, games: [] },
       started_at: new Date().toISOString(),
     };
     this.stopRequested = false;
+    this.terminating = false;
     this.confirmResolver = null;
+    // 捕获本代开始前的 state 快照(此时 active_run 必为 null),供 terminate 回滚。
+    this.runStartSnapshot = JSON.parse(JSON.stringify(state)) as OrchestratorState;
     state.active_run = this.activeRun;
     this.stateStore.save(state);
     this.emitStatus();
@@ -365,6 +427,55 @@ export class OrchestratorService implements OnModuleInit {
     // 运行中 phase:stopRequested 由 runLoop 的 shouldStop 捕获 → settleStopped
   }
 
+  /**
+   * 终止活跃 run 并【回滚到本代开始前】:丢弃本次候选版本、恢复 champion/代数/失败记忆/
+   * 种群/评测集版本、清 active_run。与 stop()(优雅停止,保留 tried 记忆)不同 —— terminate
+   * 视本次 run 从未发生。terminating 旗让后台 runLoop 的 settleStopped/recordGameStatus 退避,
+   * 由本方法独占清理(非阻塞,in-flight 对局照常跑完但其回调被守卫忽略)。
+   */
+  async terminate(): Promise<void> {
+    const state = this.stateStore.load();
+    const run = state?.active_run;
+    if (!run || run.phase === "settled") return;
+
+    this.stopRequested = true;
+    this.terminating = true;
+    if (this.confirmResolver) {
+      // 唤醒 awaiting_confirmation,让 runLoop 走到 stopRequested 检查后退出。
+      this.confirmResolver("stop");
+      this.confirmResolver = null;
+    }
+
+    // 1) 回滚 orchestrator 状态到本代开始前(快照;无快照则就地清 active_run)。
+    const restored: OrchestratorState = this.runStartSnapshot
+      ? (JSON.parse(JSON.stringify(this.runStartSnapshot)) as OrchestratorState)
+      : state
+        ? { ...state, active_run: null }
+        : this.stateStore.seedBaseline();
+    restored.active_run = null;
+    restored.updatedAt = new Date().toISOString();
+    this.stateStore.save(restored);
+    await this.stateStore.flush();
+
+    // 2) 丢弃本次候选版本(optimizing/validating 阶段才存在)。
+    const childId = run.child?.version_id;
+    if (childId) {
+      this.promptStore.deleteVersion(childId);
+    }
+
+    // 3) 清理 run 镜像 + 通知前台(terminating 保持到下一代开始时才复位,
+    //    期间后台 runLoop 的 settleStopped/recordGameStatus 见旗退避)。
+    this.activeRun = null;
+    this.events.emit("done", {
+      run_id: run.run_id,
+      generation: run.generation,
+      decision: "terminated",
+      champion_after: restored.champion,
+    });
+    this.emitStatus();
+    this.logger.warn(`run 终止并回滚: ${run.run_id}`);
+  }
+
   // ===== run 内部辅助 =====
 
   private awaitConfirm(): Promise<ConfirmResult | "stop"> {
@@ -382,7 +493,9 @@ export class OrchestratorService implements OnModuleInit {
 
   /** 逐局状态就地 upsert(以 side×scenario×seed×run 为 key)+ 从 games 重算 done 计数 + emit game。 */
   private recordGameStatus(item: GameItem): void {
-    const run = this.activeRun!;
+    // terminate 后/无活跃 run:忽略后台 in-flight 对局的回调(回滚已发生,不再计入)。
+    if (!this.activeRun || this.terminating) return;
+    const run = this.activeRun;
     const games = run.progress.games;
     const idx = games.findIndex(
       (g) =>
@@ -518,6 +631,8 @@ export class OrchestratorService implements OnModuleInit {
 
   /** 异常/停止落定:记 tried(若有候选)+ 标 stopped + emit done。 */
   private async settleStopped(reason: string): Promise<void> {
+    // terminate 已接管清理并回滚:后台 runLoop 退到这里时直接退避,不再写 tried/状态。
+    if (this.terminating) return;
     const run = this.activeRun;
     const state = this.stateStore.load();
     if (run?.child && state) {

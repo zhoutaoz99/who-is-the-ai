@@ -87,6 +87,14 @@ export class PromptVersionStore {
     return true;
   }
 
+  /** 删除一个版本(terminate 回滚本次候选用;仅删缓存,DB 异步落). */
+  deleteVersion(id: string): void {
+    if (!this.cache.delete(id)) return;
+    void this.repo.deletePromptVersion(id).catch((err) => {
+      this.logger.warn(`prompt-version ${id} 删除失败: ${err instanceof Error ? err.message : err}`);
+    });
+  }
+
   /** 若 v0-baseline 不存在,用当前 ai-player/system-discussion.txt 播种为 champion。 */
   seedBaselineIfMissing(): PromptVersion {
     const existing = this.cache.get(BASELINE_VERSION_ID);

@@ -211,6 +211,59 @@
   margin-top: 18px;
 }
 
+/* 失败记忆入口按钮(状态行内,外观同 span) */
+.orch-tried-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.orch-tried-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.orch-tried-toggle strong {
+  color: var(--text);
+  margin-left: 2px;
+}
+
+/* 失败记忆 modal 列表 */
+.orch-tried-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.orch-tried-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.orch-tried-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.orch-tried-delete {
+  margin-left: auto;
+}
+.orch-tried-hyp,
+.orch-tried-reason {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
 /* 历史代 */
 .orch-gen-list {
   display: flex;
@@ -243,6 +296,16 @@
 .orch-gen-hyp {
   flex-basis: 100%;
   font-size: 12px;
+}
+.orch-gen-delete {
+  margin-left: auto;
+}
+
+/* 版本卡操作按钮 */
+.orch-version-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 /* 版本列表 */

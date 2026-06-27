@@ -112,6 +112,15 @@ export class SandboxRepository {
     return res.rows[0]?.data ?? null;
   }
 
+  /** 删除一条历史代记录(纯历史日志,删除不影响当前迭代状态)。 */
+  async deleteGeneration(id: string): Promise<void> {
+    await this.ready();
+    await this.postgres.query(
+      `DELETE FROM sandbox_generation_evals WHERE generation_id = $1`,
+      [id],
+    );
+  }
+
   // ===== OrchestratorState(单例 id=1)=====
 
   async loadState(): Promise<OrchestratorState | null> {
@@ -179,6 +188,15 @@ export class SandboxRepository {
     await this.postgres.query(
       `UPDATE sandbox_prompt_versions SET status = $2, meta = $3::jsonb WHERE version_id = $1`,
       [id, meta.status, JSON.stringify(meta)],
+    );
+  }
+
+  /** 删除一个提示词版本(terminate 回滚本次候选用)。 */
+  async deletePromptVersion(id: string): Promise<void> {
+    await this.ready();
+    await this.postgres.query(
+      `DELETE FROM sandbox_prompt_versions WHERE version_id = $1`,
+      [id],
     );
   }
 }

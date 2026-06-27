@@ -12,6 +12,7 @@ import type {
   OrchestratorGeneration,
   OrchestratorMetric,
   OrchestratorPhase,
+  OrchestratorTriedEntry,
   OrchestratorVerdict,
   OrchestratorVersion,
   OrchestratorVersionMeta,
@@ -147,6 +148,11 @@ export default function OrchestratorPage() {
     orchestratorRun,
     startOrchestratorAuto,
     stopOrchestrator,
+    terminateOrchestrator,
+    deleteOrchestratorGeneration,
+    deleteOrchestratorVersion,
+    deleteOrchestratorTried,
+    clearOrchestratorTried,
     confirmOrchestrator,
     refreshOrchestrator,
   } = useGameClient();
@@ -175,9 +181,25 @@ export default function OrchestratorPage() {
   // 打分详情回看:点击某局「打分详情」打开 modal(按 match_id 拉已落盘 ScoreRecord)。
   const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
 
+  // 失败记忆查看/删除 modal。
+  const [triedOpen, setTriedOpen] = useState(false);
+  const [triedBusy, setTriedBusy] = useState(false);
+
   const activeRun = orchestratorRun?.active_run ?? null;
   const isActive = !!activeRun && activeRun.phase !== "settled";
   const isAwaiting = activeRun?.phase === "awaiting_confirmation";
+
+  // 有活跃 run 时,参数回显从 active_run.plan_summary 读(刷新后表单 state 已重置,
+  // 必须以服务端持久化的 run 配置为准);否则用本地可编辑 state。
+  const summary = activeRun?.plan_summary;
+  const effSeeds = isActive ? summary?.seedsPerScenario ?? seeds : seeds;
+  const effRuns = isActive ? summary?.runsPerSeed ?? runs : runs;
+  const effMode = isActive ? activeRun!.mode : mode;
+  const effDiscussion = isActive ? summary?.discussionSeconds ?? discussionSeconds : discussionSeconds;
+  const effTarget = isActive ? summary?.assignedTarget ?? target : target;
+  const effOptimizer = isActive ? summary?.optimizerModelId ?? optimizerModel : optimizerModel;
+  const effJudge = isActive ? summary?.judgeModelId ?? judgeModel : judgeModel;
+  const effScenarios = isActive ? summary?.scenarios ?? selectedScenarios : selectedScenarios;
 
   const fetchExamples = useCallback(async () => {
     try {
@@ -268,6 +290,59 @@ export default function OrchestratorPage() {
     if (!res.ok) setPageError(res.error ?? "停止失败");
   };
 
+  const handleTerminate = async () => {
+    if (
+      !window.confirm(
+        "终止将放弃本次候选并回到本代开始前的状态(champion / 代数 / 失败记忆回滚,候选版本删除)。确认终止?",
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    const res = await terminateOrchestrator();
+    setBusy(false);
+    if (!res.ok) setPageError(res.error ?? "终止失败");
+  };
+
+  const handleDeleteGeneration = async (id: string, label: string) => {
+    if (!window.confirm(`确认删除历史代记录「${label}」?仅删除这条历史记录,不影响当前迭代状态。`)) {
+      return;
+    }
+    setPageError("");
+    const res = await deleteOrchestratorGeneration(id);
+    if (!res.ok) setPageError(res.error ?? "删除失败");
+    else void fetchGenerations();
+  };
+
+  const handleDeleteVersion = async (v: OrchestratorVersionMeta) => {
+    if (
+      !window.confirm(
+        `确认删除提示词版本「${v.version_id}」?该版本的提示词正文将被永久删除。`,
+      )
+    ) {
+      return;
+    }
+    setPageError("");
+    const res = await deleteOrchestratorVersion(v.version_id);
+    if (!res.ok) setPageError(res.error ?? "删除失败");
+    else void fetchVersions();
+  };
+
+  const handleDeleteTried = async (versionId: string) => {
+    setTriedBusy(true);
+    const res = await deleteOrchestratorTried(versionId);
+    setTriedBusy(false);
+    if (!res.ok) setPageError(res.error ?? "删除失败");
+  };
+
+  const handleClearTried = async () => {
+    if (!window.confirm("确认清空全部失败记忆?优化器将不再回避这些已被拒的改法。")) return;
+    setTriedBusy(true);
+    const res = await clearOrchestratorTried();
+    setTriedBusy(false);
+    if (!res.ok) setPageError(res.error ?? "清空失败");
+  };
+
   const handleConfirm = async (accept: boolean) => {
     setBusy(true);
     const edited = editing && accept ? editedPrompt : undefined;
@@ -345,7 +420,7 @@ export default function OrchestratorPage() {
               <label key={e.id} className="orch-scenario-chip">
                 <input
                   type="checkbox"
-                  checked={selectedScenarios.includes(e.id)}
+                  checked={effScenarios.includes(e.id)}
                   onChange={(ev) =>
                     setSelectedScenarios((cur) =>
                       ev.target.checked
@@ -353,6 +428,7 @@ export default function OrchestratorPage() {
                         : cur.filter((x) => x !== e.id),
                     )
                   }
+                  disabled={isActive}
                 />
                 <span>{e.label}</span>
               </label>
@@ -366,7 +442,7 @@ export default function OrchestratorPage() {
                 type="number"
                 min={1}
                 max={4}
-                value={seeds}
+                value={effSeeds}
                 onChange={(e) => setSeeds(Math.max(1, Number(e.target.value) || 1))}
                 disabled={isActive}
               />
@@ -377,7 +453,7 @@ export default function OrchestratorPage() {
                 type="number"
                 min={1}
                 max={6}
-                value={runs}
+                value={effRuns}
                 onChange={(e) => setRuns(Math.max(1, Number(e.target.value) || 1))}
                 disabled={isActive}
               />
@@ -385,7 +461,7 @@ export default function OrchestratorPage() {
             <label>
               模式
               <select
-                value={mode}
+                value={effMode}
                 onChange={(e) => setMode(e.target.value as "auto" | "confirm")}
                 disabled={isActive}
               >
@@ -399,7 +475,7 @@ export default function OrchestratorPage() {
                 type="number"
                 min={5}
                 max={120}
-                value={discussionSeconds}
+                value={effDiscussion}
                 onChange={(e) =>
                   setDiscussionSeconds(Number(e.target.value) || 30)
                 }
@@ -411,7 +487,7 @@ export default function OrchestratorPage() {
               <input
                 type="text"
                 placeholder="空=自动取最弱探测"
-                value={target}
+                value={effTarget}
                 onChange={(e) => setTarget(e.target.value)}
                 disabled={isActive}
               />
@@ -420,7 +496,7 @@ export default function OrchestratorPage() {
               优化器模型(可空)
               <input
                 type="text"
-                value={optimizerModel}
+                value={effOptimizer}
                 onChange={(e) => setOptimizerModel(e.target.value)}
                 disabled={isActive}
               />
@@ -429,7 +505,7 @@ export default function OrchestratorPage() {
               裁判模型(可空)
               <input
                 type="text"
-                value={judgeModel}
+                value={effJudge}
                 onChange={(e) => setJudgeModel(e.target.value)}
                 disabled={isActive}
               />
@@ -443,9 +519,19 @@ export default function OrchestratorPage() {
               </button>
             )}
             {isActive && !isAwaiting && (
-              <button className="secondary" onClick={handleStop} disabled={busy}>
-                停止
-              </button>
+              <>
+                <button className="secondary" onClick={handleStop} disabled={busy}>
+                  停止
+                </button>
+                <button
+                  className="secondary"
+                  onClick={handleTerminate}
+                  disabled={busy}
+                  title="终止并回滚到本代开始前(丢弃候选、恢复 champion/代数/失败记忆)"
+                >
+                  终止并重置
+                </button>
+              </>
             )}
             {isAwaiting && (
               <>
@@ -475,6 +561,14 @@ export default function OrchestratorPage() {
                 >
                   {editing ? "取消编辑" : "编辑后接受"}
                 </button>
+                <button
+                  className="secondary"
+                  onClick={handleTerminate}
+                  disabled={busy}
+                  title="终止并回滚到本代开始前(丢弃候选、恢复 champion/代数/失败记忆)"
+                >
+                  终止并重置
+                </button>
               </>
             )}
           </div>
@@ -496,9 +590,14 @@ export default function OrchestratorPage() {
             <span>
               champion<strong>{orchestratorRun?.champion ?? "—"}</strong>
             </span>
-            <span>
+            <button
+              type="button"
+              className="orch-tried-toggle"
+              onClick={() => setTriedOpen(true)}
+              title="查看 / 删除失败记忆"
+            >
               失败记忆<strong>{orchestratorRun?.tried_count ?? 0}</strong>
-            </span>
+            </button>
           </div>
         </section>
 
@@ -560,7 +659,9 @@ export default function OrchestratorPage() {
                   <GameRow
                     key={`${g.side}-${g.scenario_id}-${g.seed}-${g.run}`}
                     g={g}
-                    onViewLive={(roomId) => router.push(`/game/${roomId}`)}
+                    onViewLive={(roomId) =>
+                      window.open(`/game/${roomId}`, "_blank", "noopener,noreferrer")
+                    }
                     onViewScore={(matchId) => setScoreMatchId(matchId)}
                   />
                 ))}
@@ -659,6 +760,14 @@ export default function OrchestratorPage() {
                       )}
                     </>
                   )}
+                  <button
+                    className="compact-button orch-gen-delete"
+                    onClick={() =>
+                      handleDeleteGeneration(g.generation_id, `第 ${g.generation} 代`)
+                    }
+                  >
+                    删除
+                  </button>
                 </div>
               );
             })}
@@ -689,9 +798,25 @@ export default function OrchestratorPage() {
                 {v.edit_type && <span className="muted-text">{v.edit_type}</span>}
               </div>
               {v.hypothesis && <p className="orch-version-hyp">{v.hypothesis}</p>}
-              <button className="compact-button" onClick={() => openVersionDiff(v)}>
-                与父代对比
-              </button>
+              <div className="orch-version-actions">
+                <button className="compact-button" onClick={() => openVersionDiff(v)}>
+                  与父代对比
+                </button>
+                <button
+                  className="compact-button"
+                  disabled={v.status === "champion" || v.version_id === "v0-baseline"}
+                  title={
+                    v.status === "champion"
+                      ? "不能删除当前 champion"
+                      : v.version_id === "v0-baseline"
+                        ? "不能删除 baseline 种子"
+                        : "删除该版本"
+                  }
+                  onClick={() => handleDeleteVersion(v)}
+                >
+                  删除
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -738,6 +863,18 @@ export default function OrchestratorPage() {
           <ScoreDetailModal
             matchId={scoreMatchId}
             onClose={() => setScoreMatchId(null)}
+          />,
+          document.body,
+        )}
+
+      {triedOpen &&
+        createPortal(
+          <TriedMemoryModal
+            entries={orchestratorRun?.tried_and_rejected ?? []}
+            busy={triedBusy}
+            onClose={() => setTriedOpen(false)}
+            onDelete={handleDeleteTried}
+            onClear={handleClearTried}
           />,
           document.body,
         )}
@@ -920,6 +1057,93 @@ type ScoreDetail = {
     probe_pass_by_type?: Record<string, number>;
   };
 };
+
+function TriedMemoryModal({
+  entries,
+  busy,
+  onClose,
+  onDelete,
+  onClear,
+}: {
+  entries: OrchestratorTriedEntry[];
+  busy: boolean;
+  onClose: () => void;
+  onDelete: (versionId: string) => void;
+  onClear: () => void;
+}) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  return (
+    <div className="iteration-modal-overlay" onClick={onClose}>
+      <div
+        className="iteration-modal iter-score-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="iteration-modal-head">
+          <div>
+            <p className="eyebrow">失败记忆(tried_and_rejected)</p>
+            <h3>共 {entries.length} 条</h3>
+          </div>
+          <div className="iteration-modal-tools">
+            <button
+              className="compact-button"
+              disabled={busy || entries.length === 0}
+              onClick={onClear}
+              title="清空全部失败记忆"
+            >
+              清空全部
+            </button>
+            <button className="compact-button" onClick={onClose}>
+              关闭
+            </button>
+          </div>
+        </div>
+
+        <div className="iter-score-modal-body">
+          {entries.length === 0 ? (
+            <p className="muted-text">暂无失败记忆。</p>
+          ) : (
+            <div className="orch-tried-list">
+              {entries.map((e, i) => (
+                <div key={`${e.version_id}-${i}`} className="orch-tried-row">
+                  <div className="orch-tried-head">
+                    <strong>{e.version_id}</strong>
+                    <span className="muted-text">第 {e.generation} 代</span>
+                    {e.target_dimension && (
+                      <span className="room-tag muted-tag">{e.target_dimension}</span>
+                    )}
+                    {e.edit_type && (
+                      <span className="room-tag muted-tag">{e.edit_type}</span>
+                    )}
+                    <button
+                      className="compact-button orch-tried-delete"
+                      disabled={busy}
+                      onClick={() => onDelete(e.version_id)}
+                    >
+                      删除
+                    </button>
+                  </div>
+                  {e.hypothesis && (
+                    <p className="orch-tried-hyp">假设:{e.hypothesis}</p>
+                  )}
+                  <p className="orch-tried-reason muted-text">
+                    拒因:{e.reason}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ScoreDetailModal({
   matchId,

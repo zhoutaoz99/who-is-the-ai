@@ -3,14 +3,15 @@
 // - GET  /sandbox/orchestrator/state                快照(state + active_run + champion)
 // - POST /sandbox/orchestrator/run-generation       手动阻塞(传 child.prompt_text)
 // - POST /sandbox/orchestrator/run-generation-auto  非阻塞 kickoff → 返回 run_id(进度走 socket)
-// - POST /sandbox/orchestrator/stop                 中止活跃 run
+// - POST /sandbox/orchestrator/stop                 中止活跃 run(优雅,保留 tried 记忆)
+// - POST /sandbox/orchestrator/terminate            终止活跃 run 并回滚到本代开始前(丢弃候选)
 // - POST /sandbox/orchestrator/confirm              人机确认 {accept, edited_prompt_text?}
 // - GET  /sandbox/orchestrator/generations          历史代列表
 // - GET  /sandbox/orchestrator/generations/:id      单代详情
 // - GET  /sandbox/orchestrator/versions             PromptVersion 元数据列表
 // - GET  /sandbox/orchestrator/versions/:id         单版本(含 prompt_text,diff 用)
 
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
 import type { Scenario } from "../scenario/types";
 import { SandboxService } from "../sandbox.service";
 import type { EvalPlan } from "./paired-eval";
@@ -125,6 +126,17 @@ export class OrchestratorController {
     }
   }
 
+  /** 终止活跃 run 并回滚到本代开始前(丢弃候选版本、恢复 champion/代数/失败记忆)。 */
+  @Post("terminate")
+  async terminate(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.orchestrator.terminate();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: msg(err) };
+    }
+  }
+
   @Post("confirm")
   async confirm(
     @Body() body: { accept?: boolean; edited_prompt_text?: string },
@@ -150,6 +162,19 @@ export class OrchestratorController {
     return g ? { ok: true, generation: g } : { ok: false, error: "未找到该代" };
   }
 
+  /** 删除一条历史代记录。 */
+  @Delete("generations/:id")
+  async deleteGeneration(
+    @Param("id") id: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.orchestrator.deleteGeneration(id);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: msg(err) };
+    }
+  }
+
   @Get("versions")
   versions(): { ok: boolean; versions: PromptVersionMeta[] } {
     return { ok: true, versions: this.orchestrator.listVersions() };
@@ -159,6 +184,43 @@ export class OrchestratorController {
   version(@Param("id") id: string): { ok: boolean; version?: PromptVersion; error?: string } {
     const v = this.orchestrator.getVersion(id);
     return v ? { ok: true, version: v } : { ok: false, error: "未找到该版本" };
+  }
+
+  /** 删除一个提示词版本(禁止删 champion / baseline / 活跃候选;服务端再校验)。 */
+  @Delete("versions/:id")
+  async deleteVersion(
+    @Param("id") id: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      this.orchestrator.deleteVersion(id);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: msg(err) };
+    }
+  }
+
+  /** 清空全部失败记忆。 */
+  @Delete("tried")
+  async clearTried(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.orchestrator.clearTried();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: msg(err) };
+    }
+  }
+
+  /** 删除一条失败记忆(按 version_id)。 */
+  @Delete("tried/:versionId")
+  async removeTried(
+    @Param("versionId") versionId: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.orchestrator.removeTried(versionId);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: msg(err) };
+    }
   }
 
   private loadScenarios(ids?: string[]): Scenario[] {

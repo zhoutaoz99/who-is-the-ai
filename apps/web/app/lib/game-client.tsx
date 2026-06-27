@@ -77,6 +77,11 @@ type GameClientContextValue = {
     payload: OrchestratorStartPayload,
   ) => Promise<{ ok: boolean; error?: string; run_id?: string }>;
   stopOrchestrator: () => Promise<{ ok: boolean; error?: string }>;
+  terminateOrchestrator: () => Promise<{ ok: boolean; error?: string }>;
+  deleteOrchestratorGeneration: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  deleteOrchestratorVersion: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  deleteOrchestratorTried: (versionId: string) => Promise<{ ok: boolean; error?: string }>;
+  clearOrchestratorTried: () => Promise<{ ok: boolean; error?: string }>;
   confirmOrchestrator: (
     accept: boolean,
     edited?: string,
@@ -625,6 +630,25 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const orchestratorDelete = useCallback(
+    async (path: string): Promise<{ ok: boolean; error?: string }> => {
+      setError("");
+      try {
+        const res = await fetch(`${API_URL}/sandbox/orchestrator/${path}`, {
+          method: "DELETE",
+        });
+        const json = await res.json();
+        if (!json?.ok) setError(json?.error ?? "操作失败");
+        return json as { ok: boolean; error?: string };
+      } catch {
+        const fail = { ok: false, error: "请求失败,请确认 API 服务已启动" };
+        setError(fail.error);
+        return fail;
+      }
+    },
+    [],
+  );
+
   const value = useMemo<GameClientContextValue>(() => {
     const normalizedName = (user?.displayName ?? playerName).trim();
 
@@ -740,6 +764,15 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
         ) as Promise<{ ok: boolean; error?: string; run_id?: string }>,
       stopOrchestrator: () =>
         orchestratorRest("stop", {}) as Promise<{ ok: boolean; error?: string }>,
+      terminateOrchestrator: () =>
+        orchestratorRest("terminate", {}) as Promise<{ ok: boolean; error?: string }>,
+      deleteOrchestratorGeneration: (id: string) =>
+        orchestratorDelete(`generations/${encodeURIComponent(id)}`),
+      deleteOrchestratorVersion: (id: string) =>
+        orchestratorDelete(`versions/${encodeURIComponent(id)}`),
+      deleteOrchestratorTried: (versionId: string) =>
+        orchestratorDelete(`tried/${encodeURIComponent(versionId)}`),
+      clearOrchestratorTried: () => orchestratorDelete("tried"),
       confirmOrchestrator: (accept: boolean, edited?: string) =>
         orchestratorRest("confirm", {
           accept,

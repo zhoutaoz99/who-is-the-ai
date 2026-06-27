@@ -357,6 +357,10 @@ export type OrchestratorActiveRun = {
     seedsPerScenario: number;
     runsPerSeed: number;
     evalSetVersion: string;
+    discussionSeconds?: number;
+    judgeModelId?: string;
+    optimizerModelId?: string;
+    assignedTarget?: string;
   };
   child?: OrchestratorChild;
   validation?: OrchestratorValidation;
@@ -375,12 +379,22 @@ export type OrchestratorActiveRun = {
   error?: string;
 };
 
+export type OrchestratorTriedEntry = {
+  version_id: string;
+  hypothesis?: string;
+  target_dimension?: string;
+  edit_type?: string;
+  reason: string;
+  generation: number;
+};
+
 export type OrchestratorSnapshot = {
   champion: string;
   population: string[];
   generation: number;
   eval_set_version: string;
   tried_count: number;
+  tried_and_rejected: OrchestratorTriedEntry[];
   active_run: OrchestratorActiveRun | null;
 };
 

@@ -79,6 +79,11 @@ export interface ActiveRun {
     seedsPerScenario: number;
     runsPerSeed: number;
     evalSetVersion: string;
+    /** 本 run 的完整配置(刷新/重连后前台回显用;与上面计划字段一起持久化进 state)。 */
+    discussionSeconds?: number;
+    judgeModelId?: string;
+    optimizerModelId?: string;
+    assignedTarget?: string;
   };
   /** optimize+validate 后填充。 */
   child?: ActiveRunChild;
