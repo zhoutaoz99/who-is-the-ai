@@ -1,22 +1,19 @@
 import { RoomSnapshot } from "../game/game.types";
 
-export type AiCallType =
-  | "speech-strategy"
-  | "speech-expression"
-  | "vote"
-  | "sim-human-speech"
-  | "sim-human-vote";
-
 export interface AiCallLog {
   id: string;
   roomId: string;
   roundNo: number;
-  callType: AiCallType;
+  /** v4.0 单层对局:"discussion" | "vote"(DB 列为 text,兼容历史旧值)。 */
+  callType: string;
   aiPlayerId: string;
   aiPlayerName: string;
   aiPlayerSeatNo: number;
+  systemPrompt?: string;
   userPrompt: string;
   rawResponse: string;
+  /** 推理模型的思考内容(非推理模型为空)。 */
+  reasoning?: string;
   modelName: string;
   temperature: number;
   reasoningEffort: string;
@@ -29,10 +26,6 @@ export interface ReplayResponse {
   room: RoomSnapshot | null;
   aiCallLogs: AiCallLog[];
   error?: string;
-}
-
-export interface ReplayAnalyzeRequest {
-  replay?: unknown;
 }
 
 export interface ReplayExportRecord {

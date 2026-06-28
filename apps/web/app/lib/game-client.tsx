@@ -15,8 +15,6 @@ import { useAuth } from "./auth-client";
 import { applyRoundTickToRooms } from "./game-state";
 import {
   ActionResult,
-  IterationGameResult,
-  IterationRunStatus,
   OrchestratorChild,
   OrchestratorGame,
   OrchestratorGate,
@@ -29,7 +27,6 @@ import {
   ServerReadyPayload,
   SpeechDiscardedPayload,
   SpeechGeneratingPayload,
-  StartIterationPayload,
 } from "./game-types";
 
 type GameClientContextValue = {
@@ -64,12 +61,6 @@ type GameClientContextValue = {
   castVote: (roomId: string, targetPlayerId: string) => Promise<ActionResult>;
   stopGame: (roomId: string) => Promise<ActionResult>;
   fetchRoom: (roomId: string) => Promise<RoomSnapshot | null>;
-  iterationRun: IterationRunStatus | null;
-  startIteration: (payload: StartIterationPayload) => Promise<ActionResult>;
-  continueIteration: () => Promise<ActionResult>;
-  retryAutoOptimize: () => Promise<ActionResult>;
-  stopIteration: () => Promise<ActionResult>;
-  refreshIteration: () => Promise<void>;
   // ===== 编排器一代闭环(F) =====
   orchestratorRun: OrchestratorSnapshot | null;
   refreshOrchestrator: () => Promise<void>;
@@ -149,7 +140,6 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
   const [roomCode, setRoomCode] = useState("");
   const [speechGeneratings, setSpeechGeneratings] = useState<SpeechGeneratingPayload[]>([]);
   const [speechDiscarded, setSpeechDiscarded] = useState<SpeechDiscardedPayload | null>(null);
-  const [iterationRun, setIterationRun] = useState<IterationRunStatus | null>(null);
   const [orchestratorRun, setOrchestratorRun] =
     useState<OrchestratorSnapshot | null>(null);
   const speechGeneratingClearTimersRef = useRef<Record<string, number>>({});
@@ -273,7 +263,6 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
 
     socket.on("connect", () => {
       setConnected(true);
-      void refreshIteration();
       void refreshOrchestrator();
     });
     socket.on("disconnect", () => {
@@ -296,32 +285,6 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("vote.updated", syncRoom);
     socket.on("game.ended", syncRoom);
     socket.on("round.tick", applyRoundTick);
-
-    // 迭代 run 实时事件:status 全量快照;game 单局进度按 gameIndex/roomId 合并。
-    socket.on("iteration.status", (payload: IterationRunStatus) =>
-      // 合并而非替换:socket 状态快照不含 id/createdAt 等字段,
-      // 替换会丢失它们并使「自动优化已耗时」等依赖 updatedAt 的逻辑失效。
-      setIterationRun((current) => (current ? { ...current, ...payload } : payload)),
-    );
-    socket.on("iteration.game", (payload: IterationGameResult) =>
-      setIterationRun((current) =>
-        current && current.status === "running"
-          ? {
-              ...current,
-              currentRoundGames: upsertIterationGame(
-                current.currentRoundGames,
-                payload,
-              ),
-            }
-          : current,
-      ),
-    );
-    socket.on("iteration.round", () => {
-      /* round 聚合已包含在随后的 iteration.status 全量快照中 */
-    });
-    socket.on("iteration.done", () => {
-      /* completed 状态由随后的 iteration.status 全量快照携带 */
-    });
 
     // 编排器一代闭环(F):status 全量快照;match/proposal/gate 增量合并进 active_run。
     socket.on("orchestrator.status", (payload: OrchestratorSnapshot) =>
@@ -579,19 +542,6 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     [connected, rememberPlayer, upsertRoom],
   );
 
-  /** 拉取当前/最近一次迭代 run 的状态(首屏与断线重连兜底)。 */
-  const refreshIteration = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_URL}/debug/iterations`);
-      const json = await res.json();
-      if (json?.ok) {
-        setIterationRun(json.run ?? null);
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
   /** 拉取编排器快照(首屏与断线重连兜底)。 */
   const refreshOrchestrator = useCallback(async () => {
     try {
@@ -662,7 +612,6 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       roomCode,
       speechGeneratings,
       speechDiscarded,
-      iterationRun,
       setPlayerName,
       setRoomCode,
       setError,
@@ -749,12 +698,6 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           playerName: normalizedName,
         });
       },
-      startIteration: async (payload: StartIterationPayload) =>
-        emitAction<StartIterationPayload>("iteration.start", payload ?? {}),
-      continueIteration: async () => emitAction("iteration.continue", {}),
-      retryAutoOptimize: async () => emitAction("iteration.retryAutoOptimize", {}),
-      stopIteration: async () => emitAction("iteration.stop", {}),
-      refreshIteration,
       orchestratorRun,
       refreshOrchestrator,
       startOrchestratorAuto: (payload: OrchestratorStartPayload) =>
@@ -913,13 +856,11 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     emitAction,
     error,
     forgetPlayer,
-    iterationRun,
     orchestratorRest,
     orchestratorRun,
     pending,
     playerIds,
     playerName,
-    refreshIteration,
     refreshOrchestrator,
     roomCode,
     rooms,
@@ -942,21 +883,6 @@ export function useGameClient() {
     throw new Error("useGameClient must be used inside GameClientProvider");
   }
   return context;
-}
-
-function upsertIterationGame(
-  games: IterationGameResult[],
-  next: IterationGameResult,
-): IterationGameResult[] {
-  const idx = games.findIndex((game) =>
-    (next.roomId && game.roomId === next.roomId) ||
-    game.gameIndex === next.gameIndex,
-  );
-  const merged =
-    idx >= 0
-      ? games.map((game, i) => (i === idx ? { ...game, ...next } : game))
-      : [...games, next];
-  return merged.slice().sort((a, b) => (a.gameIndex ?? 0) - (b.gameIndex ?? 0));
 }
 
 /** 从 match 事件载荷中去掉 progress 字段(进度计数已合并到 active_run.progress)。 */

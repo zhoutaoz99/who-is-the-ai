@@ -253,17 +253,6 @@ export interface StartGamePayload {
   playerId?: string;
 }
 
-export interface StartIterationPayload {
-  rounds?: number;
-  gamesPerRound?: number;
-  discussionSeconds?: number;
-  sequentialSpeech?: boolean;
-  personaMode?: "random_each_game" | "fixed_per_run" | "fixed_schedule";
-  personaIds?: string[];
-  autoOptimize?: boolean;
-  postRoundMode?: "manual" | "auto_optimize_wait_confirm" | "auto_optimize_activate_continue";
-}
-
 export interface SendChatPayload {
   roomId?: string;
   playerId?: string;

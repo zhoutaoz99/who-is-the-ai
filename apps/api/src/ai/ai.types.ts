@@ -132,8 +132,10 @@ export interface AiCallRecord {
   aiPlayerId: string;
   aiPlayerName: string;
   aiPlayerSeatNo: number;
+  systemPrompt: string;
   userPrompt: string;
   rawResponse: string;
+  reasoning?: string;
   modelName: string;
   temperature: number;
   reasoningEffort: string;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   AiCallLog,
   DebugCallResponse,
@@ -93,160 +93,32 @@ function roleLabelFor(player?: RoomSnapshot["players"][number]): {
   };
 }
 
-function MarkdownContent({ content }: { content: string }) {
-  return (
-    <div className="replay-analysis-content">
-      {renderMarkdownBlocks(content)}
-    </div>
-  );
-}
-
-function renderMarkdownBlocks(content: string): ReactNode[] {
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
-  const blocks: ReactNode[] = [];
-  let paragraph: string[] = [];
-  let listItems: string[] = [];
-  let listType: "ul" | "ol" | null = null;
-  let codeLines: string[] | null = null;
-  let codeLanguage = "";
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return;
-    const text = paragraph.join(" ").trim();
-    if (text) {
-      blocks.push(
-        <p key={`p-${blocks.length}`}>{renderInlineMarkdown(text)}</p>,
-      );
-    }
-    paragraph = [];
-  };
-
-  const flushList = () => {
-    if (!listType || listItems.length === 0) return;
-    const Tag = listType;
-    blocks.push(
-      <Tag key={`list-${blocks.length}`}>
-        {listItems.map((item, index) => (
-          <li key={index}>{renderInlineMarkdown(item)}</li>
-        ))}
-      </Tag>,
-    );
-    listItems = [];
-    listType = null;
-  };
-
-  const flushCode = () => {
-    if (!codeLines) return;
-    blocks.push(
-      <pre key={`code-${blocks.length}`} className="replay-analysis-code">
-        <code data-language={codeLanguage}>{codeLines.join("\n")}</code>
-      </pre>,
-    );
-    codeLines = null;
-    codeLanguage = "";
-  };
-
-  for (const line of lines) {
-    const codeFence = line.match(/^```(\S*)\s*$/);
-    if (codeFence) {
-      if (codeLines) {
-        flushCode();
-      } else {
-        flushParagraph();
-        flushList();
-        codeLines = [];
-        codeLanguage = codeFence[1] ?? "";
-      }
-      continue;
-    }
-
-    if (codeLines) {
-      codeLines.push(line);
-      continue;
-    }
-
-    if (!line.trim()) {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,3})\s+(.+)$/);
-    if (heading) {
-      flushParagraph();
-      flushList();
-      const level = heading[1].length;
-      const text = heading[2].trim();
-      if (level === 1) {
-        blocks.push(<h3 key={`h-${blocks.length}`}>{renderInlineMarkdown(text)}</h3>);
-      } else if (level === 2) {
-        blocks.push(<h4 key={`h-${blocks.length}`}>{renderInlineMarkdown(text)}</h4>);
-      } else {
-        blocks.push(<h5 key={`h-${blocks.length}`}>{renderInlineMarkdown(text)}</h5>);
-      }
-      continue;
-    }
-
-    const unordered = line.match(/^\s*[-*]\s+(.+)$/);
-    const ordered = line.match(/^\s*\d+\.\s+(.+)$/);
-    if (unordered || ordered) {
-      flushParagraph();
-      const nextType = unordered ? "ul" : "ol";
-      if (listType && listType !== nextType) {
-        flushList();
-      }
-      listType = nextType;
-      listItems.push((unordered?.[1] ?? ordered?.[1] ?? "").trim());
-      continue;
-    }
-
-    flushList();
-    paragraph.push(line.trim());
-  }
-
-  flushParagraph();
-  flushList();
-  flushCode();
-  return blocks;
-}
-
-function renderInlineMarkdown(text: string): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
-    }
-
-    const token = match[0];
-    if (token.startsWith("`")) {
-      nodes.push(<code key={nodes.length}>{token.slice(1, -1)}</code>);
-    } else {
-      nodes.push(<strong key={nodes.length}>{token.slice(2, -2)}</strong>);
-    }
-    lastIndex = match.index + token.length;
-  }
-
-  if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
-  }
-
-  return nodes;
-}
-
 type TimelineItem =
   | { type: "message"; msg: PublicMessage; aiCalls: AiCallLog[] }
   | { type: "voteRound"; roundNo: number; votes: PublicVoteResult[]; aiCalls: AiCallLog[] }
   | { type: "skip"; call: AiCallLog };
 
 function isSkipCall(call: AiCallLog): boolean {
-  if (call.callType !== "speech-strategy" && call.callType !== "sim-human-speech") return false;
+  // 仅发言类可能是 skip;v4.0 单层 callType 为 "discussion"(兼容历史 speech-strategy/sim-human-speech)。
+  if (
+    call.callType !== "discussion" &&
+    call.callType !== "speech-strategy" &&
+    call.callType !== "sim-human-speech"
+  )
+    return false;
+  const raw = (call.rawResponse ?? "").trim();
+  if (!raw) return true;
+  // v4.0 沉默标记:正文归一化后为 skip/沉默/pass(与 AiService.isSilenceResponse 一致)。
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[[\]【】()（）「」<>《》\s]/g, "");
+  if (normalized === "skip" || normalized === "沉默" || normalized === "pass") {
+    return true;
+  }
+  // 兼容历史 JSON {type:"skip"} 格式。
   try {
     const parsed = JSON.parse(call.rawResponse);
-    return parsed.type === "skip";
+    return parsed?.type === "skip";
   } catch {
     return false;
   }
@@ -267,7 +139,10 @@ function buildTimeline(
   const simHumanSpeechCalls = new Map<string, AiCallLog[]>();
   for (const call of aiCalls) {
     const key = `${call.aiPlayerId}:${call.roundNo}`;
-    if (call.callType === "speech-strategy" && !isSkipCall(call)) {
+    if (
+      (call.callType === "discussion" || call.callType === "speech-strategy") &&
+      !isSkipCall(call)
+    ) {
       const list = strategyCalls.get(key) ?? [];
       list.push(call);
       strategyCalls.set(key, list);
@@ -323,14 +198,19 @@ function buildTimeline(
       const idx = aiMsgIndex.get(key) ?? 0;
       aiMsgIndex.set(key, idx + 1);
 
+      // v4.0 单层:所有模型驱动玩家(ai_under_test/detective/filler)的发言都是 "discussion"
+      // 调用,统一从 strategyCalls 按位匹配;历史 ai 两层的 expression 调用保留兼容。
+      const strat = strategyCalls.get(key)?.[idx];
+      if (strat) {
+        msgCalls.push(strat);
+        consumedCallIds.add(strat.id);
+      }
       if (isAi) {
         const expr = expressionCalls.get(key)?.[idx];
-        const strat = strategyCalls.get(key)?.[idx];
-        if (strat) { msgCalls.push(strat); consumedCallIds.add(strat.id); }
-        if (expr) { msgCalls.push(expr); consumedCallIds.add(expr.id); }
-      } else {
-        const speech = simHumanSpeechCalls.get(key)?.[idx];
-        if (speech) { msgCalls.push(speech); consumedCallIds.add(speech.id); }
+        if (expr) {
+          msgCalls.push(expr);
+          consumedCallIds.add(expr.id);
+        }
       }
     }
 
@@ -441,7 +321,7 @@ function AiCallGroup({ calls, systemPrompts }: { calls: AiCallLog[]; systemPromp
         <AiCallInline
           key={call.id}
           call={call}
-          systemPrompt={systemPrompts[call.callType] ?? ""}
+          systemPrompt={call.systemPrompt ?? systemPrompts[call.callType] ?? ""}
           onApplyStrategy={call.callType === "speech-strategy" ? applyStrategyToExpression : undefined}
           managedUserPrompt={call.callType === "speech-expression" ? expressionUserPrompt : undefined}
           onManagedUserPromptChange={call.callType === "speech-expression" ? setExpressionUserPrompt : undefined}
@@ -562,6 +442,12 @@ function AiCallInline({
           </div>
           <EditablePrompt label="系统提示词 (System Prompt)" value={systemPrompt} onChange={setSystemPrompt} />
           <EditablePrompt label="用户提示词 (User Prompt)" value={userPrompt} onChange={setUserPrompt} />
+          {call.reasoning && (
+            <div className="replay-original-response">
+              <div className="replay-prompt-label">思考过程 (Thinking)</div>
+              <pre className="replay-prompt-content">{call.reasoning}</pre>
+            </div>
+          )}
           <div className="replay-original-response">
             <div className="replay-prompt-label">原始响应 (Raw Response)</div>
             <pre className="replay-prompt-content">{call.rawResponse}</pre>
@@ -621,12 +507,6 @@ export default function ReplayPage() {
   const [localPrompts, setLocalPrompts] = useState<Record<string, string>>({});
   const [showSkips, setShowSkips] = useState(true);
   const [includeUserPrompt, setIncludeUserPrompt] = useState(false);
-  const [compactReplayData, setCompactReplayData] = useState(true);
-  const [analysisText, setAnalysisText] = useState<string | null>(null);
-  const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [analysisInterrupted, setAnalysisInterrupted] = useState(false);
-  const analysisAbortRef = useRef<AbortController | null>(null);
 
   const [showPreview, setShowPreview] = useState(false);
   const [previewData, setPreviewData] = useState<unknown | null>(null);
@@ -657,12 +537,7 @@ export default function ReplayPage() {
   }, []);
 
   useEffect(() => {
-    return () => {
-      analysisAbortRef.current?.abort();
-    };
-  }, []);
-
-  useEffect(() => {
+    if (!showPreview) return;
     if (!showPreview) return;
     const activeRoomId = data?.room?.id;
     if (!activeRoomId) return;
@@ -693,7 +568,7 @@ export default function ReplayPage() {
     return () => {
       cancelled = true;
     };
-  }, [showPreview, data?.room?.id, showSkips, includeUserPrompt, compactReplayData]);
+  }, [showPreview, data?.room?.id, showSkips, includeUserPrompt]);
 
   if (loading) {
     return (
@@ -740,7 +615,6 @@ export default function ReplayPage() {
     const params = new URLSearchParams({
       includeSkips: String(showSkips),
       includeUserPrompt: String(includeUserPrompt),
-      profile: compactReplayData ? "audit" : "full",
     });
     return `${API_URL}/replay/${targetRoomId}/export?${params.toString()}`;
   }
@@ -800,88 +674,6 @@ export default function ReplayPage() {
     }
   }
 
-  async function handleAnalyzeReplay() {
-    if (analysisLoading) {
-      analysisAbortRef.current?.abort();
-      return;
-    }
-
-    const abortController = new AbortController();
-    analysisAbortRef.current = abortController;
-
-    setAnalysisLoading(true);
-    setAnalysisError(null);
-    setAnalysisText(null);
-    setAnalysisInterrupted(false);
-
-    try {
-      const replay = await fetchReplayExport(room.id, abortController.signal);
-      const res = await fetch(`${API_URL}/replay/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ replay }),
-        signal: abortController.signal,
-      });
-
-      if (!res.ok) {
-        const message = await readErrorResponse(res);
-        setAnalysisError(message || "单局审计失败");
-        return;
-      }
-
-      if (!res.body) {
-        setAnalysisError("单局审计响应为空");
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        const chunk = decoder.decode(value, { stream: true });
-        if (chunk) {
-          setAnalysisText((prev) => `${prev ?? ""}${chunk}`);
-        }
-      }
-
-      const finalChunk = decoder.decode();
-      if (finalChunk) {
-        setAnalysisText((prev) => `${prev ?? ""}${finalChunk}`);
-      }
-    } catch (err) {
-      if (abortController.signal.aborted) {
-        setAnalysisInterrupted(true);
-        return;
-      }
-
-      setAnalysisError(err instanceof Error ? err.message : "网络错误");
-    } finally {
-      if (analysisAbortRef.current === abortController) {
-        analysisAbortRef.current = null;
-      }
-      setAnalysisLoading(false);
-    }
-  }
-
-  async function readErrorResponse(res: Response) {
-    const text = await res.text().catch(() => "");
-    if (!text) {
-      return "";
-    }
-
-    try {
-      const parsed = JSON.parse(text) as { error?: string };
-      return parsed.error ?? text;
-    } catch {
-      return text;
-    }
-  }
-
   return (
     <main className="replay-page">
       {/* Header */}
@@ -917,24 +709,6 @@ export default function ReplayPage() {
             <span className="replay-toggle-slider" />
             <span className="replay-toggle-label">导出用户提示词</span>
           </label>
-          <label className="replay-toggle-switch">
-            <input
-              type="checkbox"
-              checked={compactReplayData}
-              onChange={(e) => {
-                const v = e.target.checked;
-                setCompactReplayData(v);
-              }}
-            />
-            <span className="replay-toggle-slider" />
-            <span className="replay-toggle-label">精简数据</span>
-          </label>
-          <button
-            className="replay-analyze-btn"
-            onClick={handleAnalyzeReplay}
-          >
-            {analysisLoading ? "中断" : analysisText || analysisError || analysisInterrupted ? "重试审计" : "单局审计"}
-          </button>
           <button
             className={`secondary${showPreview ? " replay-preview-active" : ""}`}
             onClick={() => setShowPreview((v) => !v)}
@@ -950,24 +724,6 @@ export default function ReplayPage() {
         </div>
       </header>
 
-      {(analysisLoading || analysisText || analysisError || analysisInterrupted) && (
-        <section className="replay-section replay-analysis-section">
-          <h2>单局硬问题审计</h2>
-          {analysisLoading && (
-            <div className="replay-analysis-status">正在审计单局硬问题...</div>
-          )}
-          {analysisInterrupted && !analysisLoading && (
-            <div className="replay-analysis-status">已中断，可重试审计。</div>
-          )}
-          {analysisError && (
-            <div className="replay-debug-error">{analysisError}</div>
-          )}
-          {analysisText && (
-            <MarkdownContent content={analysisText} />
-          )}
-        </section>
-      )}
-
       {showPreview && (
         <section className="replay-section replay-preview-section">
           <div className="replay-preview-head">
@@ -979,8 +735,7 @@ export default function ReplayPage() {
             )}
             <span className="replay-preview-toggles-summary">
               Skip 记录：{showSkips ? "显示" : "隐藏"} · 用户提示词：
-              {includeUserPrompt ? "导出" : "不导出"} · 数据：
-              {compactReplayData ? "精简" : "完整"}
+              {includeUserPrompt ? "导出" : "不导出"}
             </span>
             <label className="replay-toggle-switch">
               <input

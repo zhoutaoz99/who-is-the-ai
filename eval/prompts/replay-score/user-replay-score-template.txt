@@ -1,8 +1,0 @@
-请基于以下两段材料对本局进行量化打分:① 本局复盘 JSON;② 本局 AI 人格定义。
-
-== 一、本局复盘 JSON ==
-{{replayJson}}
-
-== 二、本局 AI 人格定义 ==
-(用于判断 SAMPLE_LINE_COPY 是否照抄 sampleLines,以及 TEMPLATE_PHRASE 是否命中 avoidPhrases 或模板话术)
-{{personasJson}}

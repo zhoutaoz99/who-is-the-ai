@@ -133,7 +133,13 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
     `);
 
     await this.query(`
-      ALTER TABLE ai_call_logs DROP COLUMN IF EXISTS system_prompt
+      ALTER TABLE ai_call_logs
+      ADD COLUMN IF NOT EXISTS system_prompt text
+    `);
+
+    await this.query(`
+      ALTER TABLE ai_call_logs
+      ADD COLUMN IF NOT EXISTS reasoning text
     `);
 
     await this.query(`
@@ -217,37 +223,6 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
         active_generation_id text,
         CONSTRAINT eval_prompt_state_singleton CHECK (id = 1)
       )
-    `);
-
-    // --- 自动对局评估自迭代 run 记录 ---
-    await this.query(`
-      CREATE TABLE IF NOT EXISTS iteration_runs (
-        id uuid PRIMARY KEY,
-        status text NOT NULL,
-        current_round integer NOT NULL DEFAULT 0,
-        total_rounds integer NOT NULL,
-        games_per_round integer NOT NULL,
-        discussion_minutes integer NOT NULL DEFAULT 1,
-        active_generation_id text,
-        rounds jsonb NOT NULL DEFAULT '[]',
-        created_at timestamptz NOT NULL DEFAULT NOW(),
-        updated_at timestamptz NOT NULL DEFAULT NOW()
-      )
-    `);
-
-    await this.query(`
-      ALTER TABLE iteration_runs
-      ADD COLUMN IF NOT EXISTS discussion_seconds integer NOT NULL DEFAULT 60
-    `);
-
-    await this.query(`
-      ALTER TABLE iteration_runs
-      ADD COLUMN IF NOT EXISTS iteration_options jsonb NOT NULL DEFAULT '{}'
-    `);
-
-    await this.query(`
-      ALTER TABLE iteration_runs
-      ADD COLUMN IF NOT EXISTS pending_generation_id text
     `);
 
     // --- 离线优化沙盒产物(原 sandbox-out/ 文件存储,迁到 DB;jsonb 存完整文档)---

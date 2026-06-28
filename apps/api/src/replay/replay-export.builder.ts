@@ -49,11 +49,26 @@ function formatTimestampToSecond(value: unknown): string {
 }
 
 function isSkipCall(call: AiCallLog): boolean {
-  if (call.callType !== "speech-strategy" && call.callType !== "sim-human-speech")
+  // 仅发言类可能是 skip;v4.0 单层 callType 为 "discussion"(兼容历史 speech-strategy/sim-human-speech)。
+  if (
+    call.callType !== "discussion" &&
+    call.callType !== "speech-strategy" &&
+    call.callType !== "sim-human-speech"
+  )
     return false;
+  const raw = (call.rawResponse ?? "").trim();
+  if (!raw) return true;
+  // v4.0 沉默标记:正文归一化后为 skip/沉默/pass(与 AiService.isSilenceResponse 一致)。
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[[\]【】()（）「」<>《》\s]/g, "");
+  if (normalized === "skip" || normalized === "沉默" || normalized === "pass") {
+    return true;
+  }
+  // 兼容历史 JSON {type:"skip"} 格式。
   try {
     const parsed = JSON.parse(call.rawResponse);
-    return parsed.type === "skip";
+    return parsed?.type === "skip";
   } catch {
     return false;
   }
@@ -72,7 +87,10 @@ function buildTimeline(
   const simHumanSpeechCalls = new Map<string, AiCallLog[]>();
   for (const call of aiCalls) {
     const key = `${call.aiPlayerId}:${call.roundNo}`;
-    if (call.callType === "speech-strategy" && !isSkipCall(call)) {
+    if (
+      (call.callType === "discussion" || call.callType === "speech-strategy") &&
+      !isSkipCall(call)
+    ) {
       const list = strategyCalls.get(key) ?? [];
       list.push(call);
       strategyCalls.set(key, list);
@@ -123,22 +141,18 @@ function buildTimeline(
       const idx = aiMsgIndex.get(key) ?? 0;
       aiMsgIndex.set(key, idx + 1);
 
+      // v4.0 单层:所有模型驱动玩家(ai_under_test/detective/filler)的发言都是 "discussion"
+      // 调用,统一从 strategyCalls 按位匹配;历史 ai 两层的 expression 调用保留兼容。
+      const strat = strategyCalls.get(key)?.[idx];
+      if (strat) {
+        msgCalls.push(strat);
+        consumedCallIds.add(strat.id);
+      }
       if (isAi) {
         const expr = expressionCalls.get(key)?.[idx];
-        const strat = strategyCalls.get(key)?.[idx];
-        if (strat) {
-          msgCalls.push(strat);
-          consumedCallIds.add(strat.id);
-        }
         if (expr) {
           msgCalls.push(expr);
           consumedCallIds.add(expr.id);
-        }
-      } else {
-        const speech = simHumanSpeechCalls.get(key)?.[idx];
-        if (speech) {
-          msgCalls.push(speech);
-          consumedCallIds.add(speech.id);
         }
       }
     }
@@ -277,10 +291,14 @@ export function buildReplayExportData(
         ? { ...base, userPrompt: call.userPrompt }
         : base;
     }
-    return {
+    // 精简(audit)profile 也尊重「导出用户提示词」开关,否则开关在默认精简模式下失效。
+    const base = {
       callType: call.callType,
       rawResponse: call.rawResponse,
     };
+    return includeUserPrompt
+      ? { ...base, userPrompt: call.userPrompt }
+      : base;
   };
 
   const config = auditProfile

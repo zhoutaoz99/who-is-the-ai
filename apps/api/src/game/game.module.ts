@@ -7,8 +7,8 @@ import { AiModule } from "../ai/ai.module";
 import { AuthModule } from "../auth/auth.module";
 import { DataModule } from "../data/data.module";
 
-// 正常对局只接 AI / 鉴权 / 存储三块。IterationService/IterationController（旧自迭代工具链）
-// 与 ReplayModule（复盘）已从运行时模块图中摘除，文件保留；自动对局现走 SandboxModule。
+// 正常对局只接 AI / 鉴权 / 存储三块。旧自迭代工具链(iteration/)已删除;
+// 复盘(ReplayModule)与自动迭代(SandboxModule)在 AppModule 顶层挂载,不在此导入。
 @Module({
   imports: [AiModule, AuthModule, DataModule],
   controllers: [GameController],
