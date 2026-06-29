@@ -17,6 +17,7 @@ import type {
   OrchestratorVersion,
   OrchestratorVersionMeta,
   SandboxExample,
+  EvalSet,
 } from "../lib/game-types";
 
 const API_URL =
@@ -159,6 +160,10 @@ export default function OrchestratorPage() {
 
   const [examples, setExamples] = useState<SandboxExample[]>([]);
   const [selectedScenarios, setSelectedScenarios] = useState<string[]>([]);
+  // 评测场景选择模式:单个场景 vs 场景组合(评测集)。
+  const [selectionMode, setSelectionMode] = useState<"single" | "set">("single");
+  const [evalSets, setEvalSets] = useState<EvalSet[]>([]);
+  const [selectedSet, setSelectedSet] = useState("");
   const [seeds, setSeeds] = useState(1);
   const [runs, setRuns] = useState(3);
   const [mode, setMode] = useState<"auto" | "confirm">("confirm");
@@ -216,6 +221,19 @@ export default function OrchestratorPage() {
     }
   }, []);
 
+  const fetchEvalSets = useCallback(async () => {
+    try {
+      const r = await fetch(`${API_URL}/sandbox/orchestrator/eval-sets`);
+      const j = await r.json();
+      if (j?.ok && Array.isArray(j.sets)) {
+        setEvalSets(j.sets);
+        setSelectedSet((cur) => cur || (j.sets[0] as EvalSet | undefined)?.set_id || "");
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const fetchGenerations = useCallback(async () => {
     try {
       const r = await fetch(`${API_URL}/sandbox/orchestrator/generations`);
@@ -249,10 +267,11 @@ export default function OrchestratorPage() {
 
   useEffect(() => {
     void fetchExamples();
+    void fetchEvalSets();
     void fetchGenerations();
     void fetchVersions();
     void refreshOrchestrator();
-  }, [fetchExamples, fetchGenerations, fetchVersions, refreshOrchestrator]);
+  }, [fetchExamples, fetchEvalSets, fetchGenerations, fetchVersions, refreshOrchestrator]);
 
   // 一代落定后(active_run 变 null)刷新历史/版本。
   useEffect(() => {
@@ -264,13 +283,21 @@ export default function OrchestratorPage() {
 
   const handleStart = async () => {
     setPageError("");
-    if (selectedScenarios.length === 0) {
-      setPageError("请至少选择 1 个场景");
+    const selector =
+      selectionMode === "set"
+        ? selectedSet
+          ? { set_id: selectedSet }
+          : null
+        : selectedScenarios.length > 0
+          ? { scenario_ids: selectedScenarios }
+          : null;
+    if (!selector) {
+      setPageError(selectionMode === "set" ? "请选择 1 个评测集" : "请至少选择 1 个场景");
       return;
     }
     setBusy(true);
     const res = await startOrchestratorAuto({
-      scenario_ids: selectedScenarios,
+      ...selector,
       mode,
       seeds_per_scenario: seeds,
       runs_per_seed: runs,
@@ -415,24 +442,88 @@ export default function OrchestratorPage() {
           </p>
 
           <div className="orch-scenarios">
-            <p className="muted-text">评测场景</p>
-            {examples.map((e) => (
-              <label key={e.id} className="orch-scenario-chip">
-                <input
-                  type="checkbox"
-                  checked={effScenarios.includes(e.id)}
-                  onChange={(ev) =>
-                    setSelectedScenarios((cur) =>
-                      ev.target.checked
-                        ? [...cur, e.id]
-                        : cur.filter((x) => x !== e.id),
-                    )
-                  }
+            <div className="orch-scenario-modes">
+              <span className="muted-text">评测场景</span>
+              <div className="orch-mode-toggle">
+                <button
+                  type="button"
+                  className={`orch-mode-btn${selectionMode === "single" ? " active" : ""}`}
+                  onClick={() => setSelectionMode("single")}
                   disabled={isActive}
-                />
-                <span>{e.label}</span>
-              </label>
-            ))}
+                >
+                  单个场景
+                </button>
+                <button
+                  type="button"
+                  className={`orch-mode-btn${selectionMode === "set" ? " active" : ""}`}
+                  onClick={() => setSelectionMode("set")}
+                  disabled={isActive}
+                >
+                  场景组合
+                </button>
+              </div>
+            </div>
+
+            {isActive ? (
+              <div className="orch-scenario-list">
+                <span className="muted-text">正在评测 {effScenarios.length} 个场景:</span>
+                {effScenarios.map((id) => (
+                  <span key={id} className="orch-scenario-chip readonly">
+                    {id}
+                  </span>
+                ))}
+              </div>
+            ) : selectionMode === "single" ? (
+              <div className="orch-scenario-list">
+                {examples.map((e) => (
+                  <label key={e.id} className="orch-scenario-chip">
+                    <input
+                      type="checkbox"
+                      checked={selectedScenarios.includes(e.id)}
+                      onChange={(ev) =>
+                        setSelectedScenarios((cur) =>
+                          ev.target.checked
+                            ? [...cur, e.id]
+                            : cur.filter((x) => x !== e.id),
+                        )
+                      }
+                    />
+                    <span>{e.label}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="orch-evalset-list">
+                {evalSets.length === 0 && (
+                  <span className="muted-text">暂无评测集</span>
+                )}
+                {evalSets.map((s) => (
+                  <label key={s.set_id} className="orch-evalset-chip">
+                    <input
+                      type="radio"
+                      name="evalset"
+                      checked={selectedSet === s.set_id}
+                      onChange={() => setSelectedSet(s.set_id)}
+                    />
+                    <span className="orch-evalset-body">
+                      <span className="orch-evalset-title">
+                        <strong>{s.set_id}</strong>
+                        <span className="muted-text">
+                          {" "}
+                          @{s.version} · optimize {s.optimize_count} / holdout{" "}
+                          {s.holdout_count}
+                        </span>
+                      </span>
+                      {s.description && (
+                        <span className="orch-evalset-desc muted-text">
+                          {s.description}
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="iteration-controls">

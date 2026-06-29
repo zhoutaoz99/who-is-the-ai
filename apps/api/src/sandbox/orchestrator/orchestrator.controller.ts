@@ -14,6 +14,7 @@
 import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
 import type { Scenario } from "../scenario/types";
 import { SandboxService } from "../sandbox.service";
+import type { EvalSetSummary } from "../sandbox.service";
 import type { EvalPlan } from "./paired-eval";
 import { OrchestratorService } from "./orchestrator.service";
 import { toMeta } from "./prompt-version";
@@ -47,6 +48,7 @@ export class OrchestratorController {
     @Body()
     body: {
       child: Partial<PromptVersion> & { version_id: string; prompt_text: string };
+      set_id?: string;
       scenario_ids?: string[];
       seeds_per_scenario?: number;
       runs_per_seed?: number;
@@ -59,8 +61,8 @@ export class OrchestratorController {
       if (!body?.child?.version_id || !body?.child?.prompt_text) {
         return { ok: false, error: "缺少 child.version_id / child.prompt_text" };
       }
-      const scenarios = this.loadScenarios(body.scenario_ids);
-      if (scenarios.length === 0) return { ok: false, error: "缺少 scenario_ids 或无可加载的内置场景" };
+      const { scenarios, evalSetVersion } = this.resolveEvalInputs(body);
+      if (scenarios.length === 0) return { ok: false, error: "缺少 set_id/scenario_ids 或无可加载的场景" };
       const state = this.orchestrator.getState();
       const child: PromptVersion = {
         version_id: body.child.version_id,
@@ -73,7 +75,7 @@ export class OrchestratorController {
         edit_type: body.child.edit_type,
         created_at: new Date().toISOString(),
       };
-      const plan: EvalPlan = this.buildPlan(scenarios, body);
+      const plan: EvalPlan = this.buildPlan(scenarios, body, evalSetVersion);
       const generation = await this.orchestrator.runGeneration(child, plan);
       return { ok: true, generation };
     } catch (err) {
@@ -86,6 +88,7 @@ export class OrchestratorController {
   async runGenerationAuto(
     @Body()
     body: {
+      set_id?: string;
       scenario_ids?: string[];
       mode?: string;
       assigned_target?: string;
@@ -99,11 +102,11 @@ export class OrchestratorController {
     },
   ): Promise<{ ok: boolean; run_id?: string; error?: string }> {
     try {
-      const scenarios = this.loadScenarios(body?.scenario_ids);
+      const { scenarios, evalSetVersion } = this.resolveEvalInputs(body ?? {});
       if (scenarios.length === 0) {
-        return { ok: false, error: "缺少 scenario_ids 或无可加载的内置场景" };
+        return { ok: false, error: "缺少 set_id/scenario_ids 或无可加载的场景" };
       }
-      const plan: EvalPlan = this.buildPlan(scenarios, body ?? {});
+      const plan: EvalPlan = this.buildPlan(scenarios, body ?? {}, evalSetVersion);
       const { run_id } = await this.orchestrator.startGenerationAuto(plan, {
         mode: body?.mode === "auto" ? "auto" : "confirm",
         assignedTarget: body?.assigned_target,
@@ -175,6 +178,12 @@ export class OrchestratorController {
     }
   }
 
+  /** 内置评测集清单(前台选 set_id 用)。 */
+  @Get("eval-sets")
+  evalSets(): { ok: boolean; sets: EvalSetSummary[] } {
+    return { ok: true, sets: this.sandbox.getEvalSetList() };
+  }
+
   @Get("versions")
   versions(): { ok: boolean; versions: PromptVersionMeta[] } {
     return { ok: true, versions: this.orchestrator.listVersions() };
@@ -229,6 +238,28 @@ export class OrchestratorController {
       .filter((s): s is Scenario => s != null);
   }
 
+  /**
+   * 解析待评测场景与绑定的 eval_set_version:
+   * - 传 set_id → 用冻结评测集的 optimize 半驱动本环(accept gate),version 取自清单(set_id@version);
+   *   holdout 半留作第二道闸(留出复核),本环不跑。
+   * - 否则回退到裸 scenario_ids + 自由 eval_set_version(默认 optimize_v1)。
+   */
+  private resolveEvalInputs(body: {
+    set_id?: string;
+    scenario_ids?: string[];
+    eval_set_version?: string;
+  }): { scenarios: Scenario[]; evalSetVersion: string } {
+    if (body?.set_id) {
+      const set = this.sandbox.loadEvalSet(body.set_id);
+      if (!set) throw new Error(`未找到评测集 ${body.set_id}`);
+      return { scenarios: set.optimize, evalSetVersion: set.eval_set_version };
+    }
+    return {
+      scenarios: this.loadScenarios(body?.scenario_ids),
+      evalSetVersion: body?.eval_set_version ?? "optimize_v1",
+    };
+  }
+
   private buildPlan(
     scenarios: Scenario[],
     body: {
@@ -236,8 +267,8 @@ export class OrchestratorController {
       runs_per_seed?: number;
       judge_model_id?: string;
       discussion_seconds?: number;
-      eval_set_version?: string;
     },
+    evalSetVersion: string,
   ): EvalPlan {
     return {
       scenarios,
@@ -245,7 +276,7 @@ export class OrchestratorController {
       runsPerSeed: body.runs_per_seed ?? 3,
       judgeModelId: body.judge_model_id,
       discussionSeconds: body.discussion_seconds,
-      evalSetVersion: body.eval_set_version ?? "optimize_v1",
+      evalSetVersion,
     };
   }
 }

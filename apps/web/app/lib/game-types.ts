@@ -299,7 +299,10 @@ export type OrchestratorVersionMeta = {
 export type OrchestratorVersion = OrchestratorVersionMeta & { prompt_text: string };
 
 export type OrchestratorStartPayload = {
-  scenario_ids: string[];
+  /** 单个场景模式:显式场景 id 列表。与 set_id 二选一。 */
+  scenario_ids?: string[];
+  /** 场景组合模式:冻结评测集 id。传了就用它的 optimize 半,忽略 scenario_ids。 */
+  set_id?: string;
   mode?: "auto" | "confirm";
   seeds_per_scenario?: number;
   runs_per_seed?: number;
@@ -315,5 +318,15 @@ export type SandboxExample = {
   id: string;
   label: string;
   form: string;
+};
+
+/** 评测集摘要(GET /sandbox/orchestrator/eval-sets)。 */
+export type EvalSet = {
+  set_id: string;
+  version: string;
+  eval_set_version: string;
+  description?: string;
+  optimize_count: number;
+  holdout_count: number;
 };
 

@@ -1,12 +1,48 @@
 /* ===== 编排器一代闭环(/orchestrator) =====
    复用 iteration.css 的 iter-* / lobby-* / panel 等;此处只补 orchestrator 专属结构。 */
 
-/* 场景多选 */
+/* 场景选择(单个场景 / 场景组合 两模式) */
 .orch-scenarios {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   margin: 10px 0 4px;
+}
+.orch-scenario-modes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.orch-mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.orch-mode-btn {
+  padding: 5px 14px;
+  font-size: 13px;
+  border: none;
+  background: var(--surface);
+  color: var(--text-muted, inherit);
+  cursor: pointer;
+}
+.orch-mode-btn + .orch-mode-btn {
+  border-left: 1px solid var(--line);
+}
+.orch-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.orch-mode-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.orch-scenario-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 .orch-scenario-chip {
   display: inline-flex;
@@ -19,10 +55,47 @@
   cursor: pointer;
   background: var(--surface);
 }
+.orch-scenario-chip.readonly {
+  cursor: default;
+  opacity: 0.85;
+}
 .orch-scenario-chip input {
   width: 16px;
   height: 16px;
   accent-color: var(--accent);
+}
+
+/* 场景组合(评测集)列表 */
+.orch-evalset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.orch-evalset-chip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--surface);
+}
+.orch-evalset-chip input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.orch-evalset-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.orch-evalset-title {
+  font-size: 14px;
+}
+.orch-evalset-desc {
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* 对局列表 */

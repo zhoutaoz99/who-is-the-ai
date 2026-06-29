@@ -27,7 +27,50 @@ const EXAMPLE_SCENARIOS = [
   { id: "sc_example_scripted_0003", label: "整局 · scripted 集火", form: "full_match", file: "example-full-match-scripted.json" },
   { id: "sc_example_probe_0004", label: "整局 · 探测注入", form: "full_match", file: "example-full-match-probe.json" },
   { id: "sc_example_spotlight_0005", label: "切片 · spotlight+探测", form: "spotlight", file: "example-spotlight.json" },
+  // 基线场景库 baseline_v1 首批(见 docs《N.2.基线场景库》)。
+  { id: "bsl_007", label: "基线 · HL-2 风格指纹(纯社交·阿条)", form: "full_match", file: "baseline/bsl_007.json" },
+  { id: "bsl_008", label: "基线 · HL-2 风格指纹(3人·酸梅)", form: "full_match", file: "baseline/bsl_008.json" },
+  { id: "bsl_023", label: "基线 · HL-5 人格一致(整局·探长)", form: "full_match", file: "baseline/bsl_023.json" },
+  { id: "bsl_001", label: "基线 · HL-1 抗测试(算术·阿条)", form: "full_match", file: "baseline/bsl_001.json" },
+  { id: "bsl_002", label: "基线 · HL-1 抗测试(表演·酸梅)", form: "full_match", file: "baseline/bsl_002.json" },
+  { id: "bsl_003", label: "基线 · HL-1 抗测试(实时信息·布丁)", form: "full_match", file: "baseline/bsl_003.json" },
 ] as const;
+
+/** 内置评测集清单(冻结的场景集合,驱动优化环;成员只引用 scenario_id,不复制场景)。 */
+const EVAL_SETS = [
+  { id: "baseline_smoke_v1", file: "baseline_smoke_v1.json" },
+] as const;
+
+/** 评测集清单文件(magnet:set_id/version + optimize/holdout 成员 id)。 */
+interface EvalSetManifest {
+  schema_version?: string;
+  set_id: string;
+  version: string;
+  description?: string;
+  optimize: string[];
+  holdout: string[];
+}
+
+/** 解析后的评测集:成员 id 已还原为 Scenario,并算出绑定指标用的 eval_set_version。 */
+export interface ResolvedEvalSet {
+  set_id: string;
+  version: string;
+  /** 指标绑定标识(set_id@version):跨此值不可直接比。 */
+  eval_set_version: string;
+  description?: string;
+  optimize: Scenario[];
+  holdout: Scenario[];
+}
+
+/** 前台/发现用的评测集摘要。 */
+export interface EvalSetSummary {
+  set_id: string;
+  version: string;
+  eval_set_version: string;
+  description?: string;
+  optimize_count: number;
+  holdout_count: number;
+}
 
 /** 前台配置页展示用的场景元信息(静态部分,不含实时模型/时长)。 */
 export interface SandboxConfig {
@@ -95,6 +138,68 @@ export class SandboxService implements OnModuleInit {
     if (!entry) return null;
     const file = join(__dirname, "scenario", entry.file);
     return JSON.parse(readFileSync(file, "utf-8")) as Scenario;
+  }
+
+  /** 内置评测集清单(前台下拉/发现用)。 */
+  getEvalSetList(): EvalSetSummary[] {
+    const out: EvalSetSummary[] = [];
+    for (const entry of EVAL_SETS) {
+      const m = this.readEvalSetManifest(entry.file);
+      if (!m) continue;
+      out.push({
+        set_id: m.set_id,
+        version: m.version,
+        eval_set_version: `${m.set_id}@${m.version}`,
+        description: m.description,
+        optimize_count: m.optimize?.length ?? 0,
+        holdout_count: m.holdout?.length ?? 0,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * 按 set_id 加载评测集,把成员 id 还原成 Scenario。
+   * 任一成员不可解析即抛错(冻结集缺成员是真问题,不静默丢)。
+   * @returns 解析后的集合;set_id 不存在 → null。
+   */
+  loadEvalSet(setId: string): ResolvedEvalSet | null {
+    const entry = EVAL_SETS.find((e) => e.id === setId);
+    if (!entry) return null;
+    const m = this.readEvalSetManifest(entry.file);
+    if (!m) throw new Error(`评测集清单读取失败:${entry.file}`);
+
+    const resolve = (ids: string[], half: string): Scenario[] => {
+      const scenarios: Scenario[] = [];
+      const missing: string[] = [];
+      for (const id of ids ?? []) {
+        const s = this.loadExampleScenario(id);
+        if (s) scenarios.push(s);
+        else missing.push(id);
+      }
+      if (missing.length) {
+        throw new Error(`评测集 ${m.set_id} 的 ${half} 成员无法解析:${missing.join(", ")}`);
+      }
+      return scenarios;
+    };
+
+    return {
+      set_id: m.set_id,
+      version: m.version,
+      eval_set_version: `${m.set_id}@${m.version}`,
+      description: m.description,
+      optimize: resolve(m.optimize, "optimize"),
+      holdout: resolve(m.holdout, "holdout"),
+    };
+  }
+
+  private readEvalSetManifest(file: string): EvalSetManifest | null {
+    try {
+      const path = join(__dirname, "scenario", "sets", file);
+      return JSON.parse(readFileSync(path, "utf-8")) as EvalSetManifest;
+    } catch {
+      return null;
+    }
   }
 
   /** 把场景 probe_schedule 解析成不透明 fire 计划(probe_ref → 具体实例,带 split 隔离)。 */

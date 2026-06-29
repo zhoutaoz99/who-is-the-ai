@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0.0",
+  "set_id": "baseline_smoke_v1",
+  "version": "2026-06-29",
+  "description": "基线场景库首批冒烟集:HL-1 抗测试 / HL-2 风格指纹 / HL-5 人格一致,共 6 条,全 optimize、全 full_match。仅用于验证优化流水线机器(负/正/空对照),不含 holdout,因而不能验第二道闸(泛化)。成员冻结;改动须出新版本。",
+  "optimize": ["bsl_001", "bsl_002", "bsl_003", "bsl_007", "bsl_008", "bsl_023"],
+  "holdout": []
+}
