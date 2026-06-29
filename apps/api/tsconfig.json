@@ -18,15 +18,8 @@
   "include": [
     "src/**/*.ts"
   ],
-  "//exclude": "复盘/迭代工具链（PromptRegistry 版本控制、Eval、replay/、iteration/）仍依赖旧两段式设计，单层迁移后暂不编译；文件保留待后续按单层方案重做。",
   "exclude": [
     "node_modules",
-    "dist",
-    "src/ai/prompt-registry.ts",
-    "src/ai/prompt-version.controller.ts",
-    "src/ai/eval-prompt-registry.ts",
-    "src/ai/eval-prompt-version.controller.ts",
-    "src/replay/**/*",
-    "src/iteration/**/*"
+    "dist"
   ]
 }
