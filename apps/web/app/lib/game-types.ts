@@ -330,3 +330,136 @@ export type EvalSet = {
   holdout_count: number;
 };
 
+// ===== 对照测试(control-test:负/正/空三对照验流水线机器)=====
+
+export type ControlKind = "null" | "negative" | "positive";
+
+export type ControlTestPhase = "evaluating_parent" | "running_controls" | "settled";
+
+export type ControlMetric = {
+  key: string;
+  point: number | null;
+  ci95: [number, number] | null;
+  verdict: OrchestratorVerdict;
+};
+
+export type ControlBucket = {
+  form: string;
+  nScenarios: number;
+  margin: ControlMetric | null;
+  rounds_survived: ControlMetric | null;
+  plurality_rate: ControlMetric | null;
+  veto_rate: ControlMetric | null;
+  probe_pass: ControlMetric[];
+};
+
+export type ControlResult = {
+  kind: ControlKind;
+  label: string;
+  child_version_id: string;
+  expectation: string;
+  gate: OrchestratorGate;
+  buckets: ControlBucket[];
+  pass: boolean;
+  notes: string[];
+};
+
+/** 逐局进度(side="parent" | 对照 kind)。 */
+export type ControlGame = {
+  side: string;
+  scenario_id: string;
+  seed: number;
+  run: number;
+  status: OrchestratorGameStatus;
+  room_id?: string;
+  match_id?: string;
+  error?: string;
+  phase?: string;
+  current_round?: number;
+  ai_alive?: number;
+  ai_total?: number;
+  margin?: number | null;
+  veto?: boolean;
+};
+
+export type ControlTestRun = {
+  run_id: string;
+  phase: ControlTestPhase;
+  set_id: string;
+  eval_set_version: string;
+  parent_version_id: string;
+  plan: { scenarios: string[]; seedsPerScenario: number; runsPerSeed: number };
+  kinds: ControlKind[];
+  current_kind?: ControlKind;
+  games: ControlGame[];
+  controls: ControlResult[];
+  caveats: string[];
+  overall_pass?: boolean;
+  decision?: "done" | "stopped";
+  error?: string;
+  started_at: string;
+  settled_at?: string;
+};
+
+export type ControlPreview = { kind: ControlKind; label: string; expectation: string };
+
+export type ControlTestStartPayload = {
+  set_id?: string;
+  kinds?: ControlKind[];
+  seeds_per_scenario?: number;
+  runs_per_seed?: number;
+  judge_model_id?: string;
+  discussion_seconds?: number;
+};
+
+// ===== 优化器自检(零对局:挖坑→真优化器→子代是否恢复)=====
+
+export type OptHoleStatus = "pending" | "proposing" | "judging" | "done" | "failed";
+
+export type OptCoverage = {
+  covered: boolean;
+  quote?: string;
+  method: "judge" | "keyword";
+};
+
+export type OptHoleResult = {
+  hole_id: string;
+  target: string;
+  probe_type: string;
+  status: OptHoleStatus;
+  child_version_id?: string;
+  validate?: { ok: boolean; reasons: string[] };
+  target_hit?: boolean;
+  seed_covered?: boolean;
+  coverage?: OptCoverage;
+  hypothesis?: string;
+  edit_type?: string;
+  diff_summary?: string;
+  pass: boolean;
+  notes: string[];
+  error?: string;
+};
+
+export type OptimizerCheckRun = {
+  run_id: string;
+  phase: "running" | "settled";
+  base_version_id: string;
+  optimizer_model_id?: string;
+  judge_model_id?: string;
+  current_hole?: string;
+  holes: OptHoleResult[];
+  overall_pass?: boolean;
+  decision?: "done" | "stopped";
+  error?: string;
+  started_at: string;
+  settled_at?: string;
+};
+
+export type OptHolePreview = { id: string; target: string; probe_type: string; reference: string };
+
+export type OptCheckStartPayload = {
+  hole_ids?: string[];
+  optimizer_model_id?: string;
+  judge_model_id?: string;
+};
+

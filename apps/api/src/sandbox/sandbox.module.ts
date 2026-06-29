@@ -1,5 +1,9 @@
 import { Module } from "@nestjs/common";
 import { GameModule } from "../game/game.module";
+import { ControlTestController } from "./control-test/control-test.controller";
+import { ControlTestGateway } from "./control-test/control-test.gateway";
+import { ControlTestService } from "./control-test/control-test.service";
+import { OptimizerCheckService } from "./control-test/optimizer-check.service";
 import { BlindSuspicionScorer } from "./score/blind-suspicion";
 import { ScoreService } from "./score/score.service";
 import { OrchestratorController } from "./orchestrator/orchestrator.controller";
@@ -18,7 +22,7 @@ import { SandboxService } from "./sandbox.service";
 // 持久化统一走 SandboxRepository(Postgres,jsonb 文档列);PostgresService 由全局 DataModule 提供。
 @Module({
   imports: [GameModule],
-  controllers: [SandboxController, OrchestratorController],
+  controllers: [SandboxController, OrchestratorController, ControlTestController],
   providers: [
     SandboxRepository,
     SandboxService,
@@ -30,6 +34,9 @@ import { SandboxService } from "./sandbox.service";
     OptimizerService,
     OrchestratorService,
     OrchestratorGateway,
+    ControlTestService,
+    OptimizerCheckService,
+    ControlTestGateway,
   ],
 })
 export class SandboxModule {}

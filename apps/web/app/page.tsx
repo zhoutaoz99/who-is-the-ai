@@ -570,6 +570,13 @@ export default function Home() {
               >
                 进入自动迭代
               </button>
+              <button
+                className="secondary"
+                onClick={() => router.push("/control-test")}
+                title="负/正/空三对照验证优化流水线是否正常"
+              >
+                对照测试
+              </button>
             </div>
           )}
 

@@ -416,6 +416,9 @@ export default function OrchestratorPage() {
             <span className={`status-dot ${connected ? "online" : "offline"}`} />
             {connected ? "已连接" : "未连接"}
           </div>
+          <button className="action-pill" onClick={() => router.push("/control-test")}>
+            对照测试
+          </button>
           <button className="action-pill" onClick={() => router.push("/")}>
             返回首页
           </button>

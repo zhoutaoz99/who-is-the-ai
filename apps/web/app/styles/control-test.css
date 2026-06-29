@@ -1,0 +1,132 @@
+/* 对照测试页:复用 orchestrator.css / iteration.css 的多数类,仅补对照专属样式。 */
+
+/* 对照选择 chips */
+.ctl-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.ctl-kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border, #d7dbe3);
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--surface, #fff);
+}
+.ctl-kind-chip input {
+  margin: 0;
+}
+.ctl-kind-chip.ctl-null {
+  border-color: #7a8699;
+}
+.ctl-kind-chip.ctl-negative {
+  border-color: #b42318;
+}
+.ctl-kind-chip.ctl-positive {
+  border-color: #2e7d32;
+}
+
+/* 对照结果卡片 */
+.ctl-results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+.ctl-result-card {
+  border: 1px solid var(--border, #d7dbe3);
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--surface, #fff);
+}
+.ctl-result-card.pass {
+  border-left-color: #2e7d32;
+}
+.ctl-result-card.fail {
+  border-left-color: #b42318;
+}
+.ctl-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.ctl-kind-tag {
+  font-weight: 600;
+  font-size: 14px;
+}
+.ctl-kind-tag.ctl-null {
+  color: #4a5568;
+}
+.ctl-kind-tag.ctl-negative {
+  color: #b42318;
+}
+.ctl-kind-tag.ctl-positive {
+  color: #2e7d32;
+}
+.ctl-pass-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.ctl-pass-badge.pass {
+  color: #1b5e20;
+  background: rgba(46, 125, 50, 0.12);
+}
+.ctl-pass-badge.fail {
+  color: #8a1c12;
+  background: rgba(180, 35, 24, 0.12);
+}
+.ctl-gate {
+  margin-left: auto;
+  font-size: 13px;
+}
+.ctl-expectation {
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+.ctl-bucket-form {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.ctl-notes {
+  margin-top: 8px;
+}
+.ctl-caveats {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border, #d7dbe3);
+}
+
+/* 优化器自检:L0/L1/L2 检查小徽章 */
+.opt-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+.opt-chk {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #d7dbe3);
+}
+.opt-chk.ok {
+  color: #1b5e20;
+  background: rgba(46, 125, 50, 0.1);
+  border-color: rgba(46, 125, 50, 0.3);
+}
+.opt-chk.bad {
+  color: #8a1c12;
+  background: rgba(180, 35, 24, 0.1);
+  border-color: rgba(180, 35, 24, 0.3);
+}

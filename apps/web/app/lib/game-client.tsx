@@ -15,6 +15,13 @@ import { useAuth } from "./auth-client";
 import { applyRoundTickToRooms } from "./game-state";
 import {
   ActionResult,
+  ControlGame,
+  ControlResult,
+  ControlTestRun,
+  ControlTestStartPayload,
+  OptCheckStartPayload,
+  OptHoleResult,
+  OptimizerCheckRun,
   OrchestratorChild,
   OrchestratorGame,
   OrchestratorGate,
@@ -77,6 +84,20 @@ type GameClientContextValue = {
     accept: boolean,
     edited?: string,
   ) => Promise<{ ok: boolean; error?: string }>;
+  // ===== 对照测试(负/正/空三对照验流水线机器)=====
+  controlTestRun: ControlTestRun | null;
+  refreshControlTest: () => Promise<void>;
+  startControlTest: (
+    payload: ControlTestStartPayload,
+  ) => Promise<{ ok: boolean; error?: string; run_id?: string }>;
+  stopControlTest: () => Promise<{ ok: boolean; error?: string }>;
+  // ===== 优化器自检(零对局)=====
+  optimizerCheckRun: OptimizerCheckRun | null;
+  refreshOptimizerCheck: () => Promise<void>;
+  startOptimizerCheck: (
+    payload: OptCheckStartPayload,
+  ) => Promise<{ ok: boolean; error?: string; run_id?: string }>;
+  stopOptimizerCheck: () => Promise<{ ok: boolean; error?: string }>;
 };
 
 const API_URL =
@@ -142,6 +163,8 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
   const [speechDiscarded, setSpeechDiscarded] = useState<SpeechDiscardedPayload | null>(null);
   const [orchestratorRun, setOrchestratorRun] =
     useState<OrchestratorSnapshot | null>(null);
+  const [controlTestRun, setControlTestRun] = useState<ControlTestRun | null>(null);
+  const [optimizerCheckRun, setOptimizerCheckRun] = useState<OptimizerCheckRun | null>(null);
   const speechGeneratingClearTimersRef = useRef<Record<string, number>>({});
   const speechDiscardedClearTimerRef = useRef<number | null>(null);
 
@@ -264,6 +287,8 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     socket.on("connect", () => {
       setConnected(true);
       void refreshOrchestrator();
+      void refreshControlTest();
+      void refreshOptimizerCheck();
     });
     socket.on("disconnect", () => {
       setConnected(false);
@@ -351,6 +376,41 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     );
     socket.on("orchestrator.done", () => {
       /* settled 由随后的 orchestrator.status(active_run=null) 携带 */
+    });
+
+    // 对照测试:status 全量快照;game 逐局 upsert;control 单条结果合并;done 由随后 status 携带。
+    socket.on("controltest.status", (payload: ControlTestRun | null) =>
+      setControlTestRun(payload),
+    );
+    socket.on("controltest.game", (payload: ControlGame) =>
+      setControlTestRun((cur) =>
+        cur ? { ...cur, games: upsertControlGame(cur.games, payload) } : cur,
+      ),
+    );
+    socket.on("controltest.control", (payload: ControlResult) =>
+      setControlTestRun((cur) => {
+        if (!cur) return cur;
+        const controls = cur.controls.filter((c) => c.kind !== payload.kind);
+        return { ...cur, controls: [...controls, payload] };
+      }),
+    );
+    socket.on("controltest.done", () => {
+      /* settled 由随后的 controltest.status 携带 */
+    });
+
+    // 优化器自检:status 全量快照;hole 单坑结果合并;done 由随后 status 携带。
+    socket.on("optcheck.status", (payload: OptimizerCheckRun | null) =>
+      setOptimizerCheckRun(payload),
+    );
+    socket.on("optcheck.hole", (payload: OptHoleResult) =>
+      setOptimizerCheckRun((cur) => {
+        if (!cur) return cur;
+        const holes = cur.holes.map((h) => (h.hole_id === payload.hole_id ? payload : h));
+        return { ...cur, holes };
+      }),
+    );
+    socket.on("optcheck.done", () => {
+      /* settled 由随后的 optcheck.status 携带 */
     });
 
     socket.on("player.speech.generating", (payload: SpeechGeneratingPayload) => {
@@ -555,6 +615,53 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /** 拉取对照测试快照(首屏与断线重连兜底)。 */
+  const refreshControlTest = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/sandbox/control-test/state`);
+      const json = await res.json();
+      if (json?.ok) setControlTestRun(json.run ?? null);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /** 拉取优化器自检快照(首屏与断线重连兜底)。 */
+  const refreshOptimizerCheck = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/sandbox/control-test/optimizer/state`);
+      const json = await res.json();
+      if (json?.ok) setOptimizerCheckRun(json.run ?? null);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /** 对照测试 REST 动作(kickoff/stop)。 */
+  const controlTestRest = useCallback(
+    async (
+      path: string,
+      body: Record<string, unknown>,
+    ): Promise<{ ok: boolean; error?: string; [key: string]: unknown }> => {
+      setError("");
+      try {
+        const res = await fetch(`${API_URL}/sandbox/control-test/${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = await res.json();
+        if (!json?.ok) setError(json?.error ?? "操作失败");
+        return json as { ok: boolean; error?: string; [key: string]: unknown };
+      } catch {
+        const fail = { ok: false, error: "请求失败,请确认 API 服务已启动" };
+        setError(fail.error);
+        return fail;
+      }
+    },
+    [],
+  );
+
   /** 编排器 REST 动作统一封装(kickoff/stop/confirm)。 */
   const orchestratorRest = useCallback(
     async (
@@ -721,6 +828,24 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
           accept,
           edited_prompt_text: edited,
         }) as Promise<{ ok: boolean; error?: string }>,
+      controlTestRun,
+      refreshControlTest,
+      startControlTest: (payload: ControlTestStartPayload) =>
+        controlTestRest(
+          "run",
+          payload as unknown as Record<string, unknown>,
+        ) as Promise<{ ok: boolean; error?: string; run_id?: string }>,
+      stopControlTest: () =>
+        controlTestRest("stop", {}) as Promise<{ ok: boolean; error?: string }>,
+      optimizerCheckRun,
+      refreshOptimizerCheck,
+      startOptimizerCheck: (payload: OptCheckStartPayload) =>
+        controlTestRest(
+          "optimizer/run",
+          payload as unknown as Record<string, unknown>,
+        ) as Promise<{ ok: boolean; error?: string; run_id?: string }>,
+      stopOptimizerCheck: () =>
+        controlTestRest("optimizer/stop", {}) as Promise<{ ok: boolean; error?: string }>,
       joinRoom: async (roomId?: string) => {
         const targetRoomId = (roomId ?? roomCode).trim().toUpperCase();
         if (!normalizedName) {
@@ -852,15 +977,20 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
     };
   }, [
     connected,
+    controlTestRest,
+    controlTestRun,
     debug,
     emitAction,
     error,
     forgetPlayer,
+    optimizerCheckRun,
     orchestratorRest,
     orchestratorRun,
     pending,
     playerIds,
     playerName,
+    refreshControlTest,
+    refreshOptimizerCheck,
     refreshOrchestrator,
     roomCode,
     rooms,
@@ -890,6 +1020,21 @@ function upsertOrchestratorGame(
   games: OrchestratorGame[],
   g: OrchestratorGame,
 ): OrchestratorGame[] {
+  const idx = games.findIndex(
+    (x) =>
+      x.side === g.side &&
+      x.scenario_id === g.scenario_id &&
+      x.seed === g.seed &&
+      x.run === g.run,
+  );
+  if (idx < 0) return [...games, g];
+  const next = games.slice();
+  next[idx] = { ...next[idx], ...g };
+  return next;
+}
+
+/** 对照测试逐局 upsert(side×scenario×seed×run 为 key)。 */
+function upsertControlGame(games: ControlGame[], g: ControlGame): ControlGame[] {
   const idx = games.findIndex(
     (x) =>
       x.side === g.side &&
