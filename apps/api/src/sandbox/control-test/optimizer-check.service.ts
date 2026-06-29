@@ -213,10 +213,14 @@ export class OptimizerCheckService {
         {
           metric: hole.target,
           point: hole.plantedPassRate,
+          severity: Math.max(0, Math.min(1, 1 - hole.plantedPassRate)),
           reliability: "high",
+          rank_score: Math.max(0, Math.min(1, 1 - hole.plantedPassRate)),
+          n: 1,
           note: `${hole.probe_type} 通过率 ${hole.plantedPassRate.toFixed(2)}(最弱 = 挖的坑)`,
         },
       ],
+      failureClusters: [],
     };
   }
 

@@ -13,6 +13,7 @@ import { buildAnonymizedView } from "./anonymize";
 import { buildScoreRecord } from "./builder";
 import type { DiagnosticParts } from "./builder";
 import { BlindSuspicionScorer } from "./blind-suspicion";
+import { MultiJudgeScorer } from "./multi-judge";
 import { computeOutcomeMetrics } from "./objective-metrics";
 import { PerRoundTrajectoryScorer } from "./per-round-trajectory";
 import { RubricDiagnosticScorer, mergeProbePassByType } from "./rubric-diagnostic";
@@ -22,6 +23,8 @@ import type { BlindSuspicion, ScoreRecord, ScoreStatus } from "./types";
 export interface ScoreOptions {
   /** 裁判模型 id;缺省用默认模型。 */
   judgeModelId?: string;
+  /** 多裁判集成(M2.11):≥2 个模型 id 时启用截尾均值聚合 + judge_agreement;否则单裁判。 */
+  judgeModelIds?: string[];
   /** 是否落库(默认 true)。 */
   persist?: boolean;
   /**
@@ -38,6 +41,7 @@ export class ScoreService {
   constructor(
     private readonly ai: AiService,
     private readonly blind: BlindSuspicionScorer,
+    private readonly multiJudge: MultiJudgeScorer,
     private readonly trajectory: PerRoundTrajectoryScorer,
     private readonly diagnostic: RubricDiagnosticScorer,
     private readonly repo: SandboxRepository,
@@ -53,7 +57,8 @@ export class ScoreService {
     let veto = computeVeto(match);
 
     let suspicion: BlindSuspicion;
-    let judgeModel: string;
+    let judges: string[] = [];
+    let judgeAgreement: number | null = null;
     let blindOk: boolean;
     let diagnostic: DiagnosticParts | undefined;
     let diagPartial = false;
@@ -69,7 +74,7 @@ export class ScoreService {
         traj.failureRound,
         opts.judgeModelId,
       );
-      judgeModel = diag.judgeModel;
+      if (blindOk) judges = [diag.judgeModel];
       if (diag.ok) {
         diagnostic = {
           rubric: diag.rubric,
@@ -84,10 +89,17 @@ export class ScoreService {
       } else {
         diagPartial = true;
       }
+    } else if (opts.judgeModelIds && opts.judgeModelIds.length >= 2) {
+      // M2.11 多裁判:截尾均值聚合 + judge_agreement。
+      const res = await this.multiJudge.score(match, view, opts.judgeModelIds);
+      suspicion = res.suspicion;
+      judges = res.judges;
+      judgeAgreement = res.judge_agreement;
+      blindOk = res.ok;
     } else {
       const res = await this.blind.score(match, view, opts.judgeModelId);
       suspicion = res.suspicion;
-      judgeModel = res.judgeModel;
+      if (res.ok) judges = [res.judgeModel];
       blindOk = res.ok;
     }
 
@@ -101,7 +113,8 @@ export class ScoreService {
     const record = buildScoreRecord(match, {
       outcome,
       blind: suspicion,
-      judges: blindOk ? [judgeModel] : [],
+      judges,
+      judgeAgreement,
       veto,
       status,
       errors: errors.length > 0 ? errors : undefined,

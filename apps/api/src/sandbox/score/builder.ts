@@ -24,6 +24,8 @@ export interface ScoreRecordParts {
   outcome: OutcomeMetrics;
   blind: BlindSuspicion;
   judges: string[];
+  /** 多裁判一致度(M2.11);单裁判 → null。 */
+  judgeAgreement?: number | null;
   veto: boolean;
   status: ScoreStatus;
   errors?: string[];
@@ -45,7 +47,7 @@ export function buildScoreRecord(
     seed: match.seed,
     run_index: match.run_index,
     judges: parts.judges,
-    judge_agreement: null, // MVP 单裁判
+    judge_agreement: parts.judgeAgreement ?? null,
     outcome_metrics: parts.outcome,
     blind_suspicion: parts.blind,
     rubric: parts.diagnostic?.rubric,

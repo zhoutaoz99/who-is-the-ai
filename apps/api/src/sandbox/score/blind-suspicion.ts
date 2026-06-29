@@ -115,16 +115,28 @@ function relativize(
   const byLabel = new Map(
     assessments.map((a) => [a.player, a.ai_probability] as const),
   );
-  const aiScore = byLabel.get(aiLabel);
   const scores: Record<string, number> = {};
   for (const l of aliveLabels) {
     scores[l] = byLabel.get(l) ?? 50; // 裁判漏打的存活玩家按中性 50
   }
-  const others = aliveLabels.filter((l) => l !== aiLabel).map((l) => scores[l]);
+  return relativizeFromScores(scores, aiLabel, aliveLabels, round);
+}
+
+/**
+ * 由【已聚合的每标签可疑度】算相对量(单裁判与多裁判共用;多裁判先截尾均值聚合 scores 再调此)。
+ * margin = AI 分 − 其余存活玩家最高分;rank = AI 在存活集里的可疑度位次(1=最可疑,并列取并列)。
+ */
+export function relativizeFromScores(
+  scores: Record<string, number>,
+  aiLabel: string,
+  aliveLabels: string[],
+  round: number,
+): BlindSuspicion {
+  const aiScore = aiLabel in scores ? scores[aiLabel] : undefined;
+  const others = aliveLabels.filter((l) => l !== aiLabel).map((l) => scores[l] ?? 50);
   const margin =
     aiScore != null ? aiScore - (others.length > 0 ? Math.max(...others) : 0) : null;
-  // rank:按可疑度从高到低,AI 的位次(1 = 最可疑)。
-  const sorted = [...aliveLabels].sort((a, b) => scores[b] - scores[a]);
+  const sorted = [...aliveLabels].sort((a, b) => (scores[b] ?? 50) - (scores[a] ?? 50));
   const rank = aiScore != null ? sorted.indexOf(aiLabel) + 1 : null;
   return {
     per_round: [{ round, scores, ai_score: aiScore ?? null }],

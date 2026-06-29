@@ -8,6 +8,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { ActiveRun } from "./active-run";
 import { BASELINE_VERSION_ID } from "./prompt-version";
+import { emptyScoreboard, type OperatorScoreboard } from "../optimizer/scoreboard";
 import { SandboxRepository } from "../sandbox.repository";
 
 export interface TriedAndRejectedEntry {
@@ -25,6 +26,8 @@ export interface OrchestratorState {
   generation: number;
   eval_set_version: string;
   tried_and_rejected: TriedAndRejectedEntry[];
+  /** M4.9 算子战绩表(跨代累积,供 assign_targets 排序)。 */
+  operator_scoreboard: OperatorScoreboard;
   /** 活跃的一代 run(后台运行/待确认);无则 null。 */
   active_run: ActiveRun | null;
   updatedAt: string;
@@ -44,6 +47,10 @@ export class OrchestratorStateStore {
   async init(): Promise<void> {
     if (this.initialized) return;
     this.cache = await this.repo.loadState();
+    // 向后兼容:旧状态无 operator_scoreboard / tried_and_rejected → 补默认。
+    if (this.cache && !this.cache.operator_scoreboard) {
+      this.cache.operator_scoreboard = emptyScoreboard();
+    }
     this.initialized = true;
   }
 
@@ -71,6 +78,7 @@ export class OrchestratorStateStore {
       generation: 0,
       eval_set_version: "optimize_v1",
       tried_and_rejected: [],
+      operator_scoreboard: emptyScoreboard(),
       active_run: null,
       updatedAt: new Date().toISOString(),
     };

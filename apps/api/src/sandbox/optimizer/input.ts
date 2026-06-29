@@ -1,12 +1,18 @@
 // M4.1 优化器输入契约组装器。
-// 喂精选诊断(不喂原始转录):当前提示词 + 指定靶子 + champion 弱点画像 + 失败记忆 + 长度预算。
-// 依据《优化器模块·方案设计》§2。champion 弱点画像用 M3 的 aggregateCells 算(绝对聚合)。
+// 喂精选诊断(不喂原始转录):当前提示词 + 指定靶子 + champion 弱点画像 + 失败聚类 + 失败记忆 + 长度预算。
+// 依据《优化器模块·方案设计》§2。弱点画像用 M3.9 computeWeakDimensions(可靠度加权排序),
+// 失败聚类用 M3.10 clusterFailures,失败记忆用 M4.10 compressTried(按死路类别压缩)。
 
+import { clusterFailures, type FailureCluster } from "../aggregate/failures";
 import { aggregateCells, toLeaf } from "../aggregate/run-aggregate";
 import { mean } from "../aggregate/stats";
+import { computeWeakDimensions, type WeakDimension } from "../aggregate/weak-dims";
 import type { PromptVersion } from "../orchestrator/prompt-version";
 import type { TriedAndRejectedEntry } from "../orchestrator/state";
 import type { ScoreRecord } from "../score/types";
+import { compressTried } from "./tried-and-rejected";
+
+export type { WeakDimension } from "../aggregate/weak-dims";
 
 /** AI 玩家提示词里不许动的核心段(优化器须保留,validate 强校验 {{persona}})。 */
 export const LOCKED_SECTIONS: string[] = [
@@ -14,20 +20,16 @@ export const LOCKED_SECTIONS: string[] = [
   "【规则】段与【绝对禁止】段的核心约束(可加强,不可削弱或删除)",
 ];
 
-export interface WeakDimension {
-  metric: string; // 如 "probe:realtime_info"、"blind_suspicion_margin"
-  point: number;
-  reliability: "high" | "medium" | "low";
-  note: string;
-}
-
-/** champion 在 eval 集上的绝对弱点画像(简化版 weak_dimensions)。 */
+/** champion 在 eval 集上的绝对弱点画像 + 失败聚类(瞄准信号)。 */
 export interface ChampionProfile {
   nScenarios: number;
   meanMargin: number | null;
   vetoRate: number;
   probePassByType: Record<string, number>;
+  /** 可靠度加权排序的弱点(M3.9);供 assign_targets 派靶。 */
   weakDimensions: WeakDimension[];
+  /** 跨局失败聚类(M3.10);仅诊断过的局有。 */
+  failureClusters: FailureCluster[];
 }
 
 export interface OptimizerInput {
@@ -49,7 +51,7 @@ export interface OptimizerInput {
   constraints: string[];
 }
 
-/** 从 champion 的 ScoreRecords 算绝对弱点画像(probe 通过率低的排前;margin 高也弱)。 */
+/** 从 champion 的 ScoreRecords 算绝对弱点画像 + 失败聚类(瞄准信号)。 */
 export function championProfile(scores: ScoreRecord[]): ChampionProfile {
   const leaves = scores.map(toLeaf).filter((l) => l.status === "ok");
   const cells = aggregateCells(leaves, 1);
@@ -67,24 +69,15 @@ export function championProfile(scores: ScoreRecord[]): ChampionProfile {
     if (vals.length > 0) probePassByType[t] = mean(vals);
   }
 
-  // 弱点画像只放【可操作的探测级】弱点(具体破绽,优化器能定向攻);
-  // margin 是后果(症状)不是成因,留作 aggregate_metrics 上下文,不当靶子。
-  // 无探测弱点时 weakDimensions 为空,runGenerationAuto 回退到 blind_suspicion_margin。
-  const weakDimensions: WeakDimension[] = Object.entries(probePassByType)
-    .map(([t, r]) => ({
-      metric: `probe:${t}`,
-      point: r,
-      reliability: "high" as const,
-      note: `${t} 通过率 ${r.toFixed(2)}(越低越弱)`,
-    }))
-    .sort((a, b) => a.point - b.point);
-
+  // M3.9 可靠度加权排序的弱点(探测 + 八维 rubric);M3.10 跨局失败聚类。
+  // 无可定向弱点时 weakDimensions 为空,assignTargets 回退自由名额 / 上层用 margin。
   return {
     nScenarios: scenarioSet.size,
     meanMargin,
     vetoRate,
     probePassByType,
-    weakDimensions,
+    weakDimensions: computeWeakDimensions(scores),
+    failureClusters: clusterFailures(scores),
   };
 }
 
@@ -112,12 +105,14 @@ export function buildOptimizerInput(
       veto_rate: profile.vetoRate,
       probe_pass_by_type: profile.probePassByType,
     },
-    failure_clusters: [],
-    tried_and_rejected: triedAndRejected.map((t) => ({
+    // M3.10 与本靶子相关优先(此处全量喂,优化器自行聚焦;§2 每簇 1–2 代表)。
+    failure_clusters: profile.failureClusters,
+    // M4.10 按死路类别压缩(非逐条原文),防上下文膨胀。
+    tried_and_rejected: compressTried(triedAndRejected).map((t) => ({
       edit_type: t.edit_type,
-      target: t.target_dimension,
-      result: t.reason,
-      gen: t.generation,
+      target: t.target,
+      result: `${t.result}(此类已被否 ${t.count} 次)`,
+      gen: t.last_gen,
     })),
     persona_scope: champion.persona_scope,
     length_budget: `不超过当前长度 +15%(当前约 ${champion.prompt_text.length} 字)`,

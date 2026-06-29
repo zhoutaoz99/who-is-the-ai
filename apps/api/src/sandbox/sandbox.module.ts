@@ -5,6 +5,7 @@ import { ControlTestGateway } from "./control-test/control-test.gateway";
 import { ControlTestService } from "./control-test/control-test.service";
 import { OptimizerCheckService } from "./control-test/optimizer-check.service";
 import { BlindSuspicionScorer } from "./score/blind-suspicion";
+import { MultiJudgeScorer } from "./score/multi-judge";
 import { PerRoundTrajectoryScorer } from "./score/per-round-trajectory";
 import { RubricDiagnosticScorer } from "./score/rubric-diagnostic";
 import { ScoreService } from "./score/score.service";
@@ -29,6 +30,7 @@ import { SandboxService } from "./sandbox.service";
     SandboxRepository,
     SandboxService,
     BlindSuspicionScorer,
+    MultiJudgeScorer,
     PerRoundTrajectoryScorer,
     RubricDiagnosticScorer,
     ScoreService,

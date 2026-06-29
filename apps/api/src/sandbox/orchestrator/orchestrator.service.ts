@@ -10,8 +10,13 @@ import { EventEmitter } from "node:events";
 import { buildValidation } from "../aggregate/validation";
 import { DEFAULT_AGG_CONFIG } from "../aggregate/types";
 import type { ValidationReport } from "../aggregate/validation";
+import { assignTargets } from "../optimizer/assign-targets";
 import { buildOptimizerInput, championProfile } from "../optimizer/input";
+import { typeOfTarget } from "../optimizer/operators";
 import { OptimizerService } from "../optimizer/propose";
+import { marginScore, updatePopulation } from "./population";
+import { emptyScoreboard, updateScoreboard } from "../optimizer/scoreboard";
+import { evaluateHypothesis } from "../optimizer/tried-and-rejected";
 import { validatePrompt } from "../optimizer/validate-prompt";
 import type { PromptValidation } from "../optimizer/validate-prompt";
 import { SandboxRepository } from "../sandbox.repository";
@@ -37,6 +42,8 @@ import type {
 } from "./active-run";
 
 const POPULATION_CAP = 5;
+/** 每代靶子预算(assign_targets 取前 N 弱点配算子;单线贪心取首个,多子并行待后续)。 */
+const K_CHILDREN = 4;
 
 export interface OrchestratorSnapshot {
   champion: string;
@@ -301,13 +308,18 @@ export class OrchestratorService implements OnModuleInit {
     });
     if (this.stopRequested) return this.settleStopped("用户停止");
 
-    // 2) 优化器提案
+    // 2) 优化器提案:assign_targets(覆盖 top-N 弱点 + 战绩排序)。
+    //    单线贪心取首个可定向靶子(K 并行待后续);手动 opts 可覆盖靶子/算子。
     this.setPhase("optimizing");
     const profile = championProfile(championScores);
-    const target =
-      opts.assignedTarget ?? profile.weakDimensions[0]?.metric ?? "blind_suspicion_margin";
     const state = this.stateStore.load()!;
-    const input = buildOptimizerInput(champion, profile, target, opts.assignedEditType, state.tried_and_rejected);
+    const board = state.operator_scoreboard ?? emptyScoreboard();
+    const assigned = assignTargets(profile.weakDimensions, K_CHILDREN, board);
+    const topAssigned = assigned.find((a) => a.assigned_target != null);
+    const target =
+      opts.assignedTarget ?? topAssigned?.assigned_target ?? profile.weakDimensions[0]?.metric ?? "blind_suspicion_margin";
+    const editType = opts.assignedEditType ?? topAssigned?.assigned_edit_type ?? undefined;
+    const input = buildOptimizerInput(champion, profile, target, editType, state.tried_and_rejected);
     const proposal = await this.optimizer.propose(input, {
       basedOn: champion.version_id,
       optimizerModelId: opts.optimizerModelId,
@@ -664,19 +676,26 @@ export class OrchestratorService implements OnModuleInit {
       if (state.champion !== finalChild.version_id) {
         this.promptStore.patchStatus(state.champion, { status: "accepted" });
       }
-      state.population = [
-        finalChild.version_id,
-        ...state.population.filter((id) => id !== finalChild.version_id),
-      ].slice(0, POPULATION_CAP);
       state.champion = finalChild.version_id;
+      // M5.10 种群:按 validated margin 排名 + 精英保留(champion 恒在)+ 截到 cap。
+      state.population = updatePopulation(
+        state.population,
+        finalChild.version_id,
+        finalChild.version_id,
+        POPULATION_CAP,
+        (id) => marginScore(this.promptStore.loadMeta(id) ?? finalChild),
+      );
       this.logger.log(`晋升:${finalChild.version_id} 成为新 champion`);
     } else {
       this.promptStore.patchStatus(child.version_id, { status: "rejected" });
-      // 拒绝理由合并优化集闸 + 留出闸(背答案常表现为优化集过、holdout 不过)。
+      // 拒绝理由合并:优化集闸 + 留出闸(背答案常表现为优化集过、holdout 不过)+ M4.11 假设回环。
       const reasonParts = [...gate.reasons];
       if (holdout && !holdout.holds) {
         reasonParts.push(...holdout.reasons.map((r) => `[holdout] ${r}`));
       }
+      // M4.11 假设验证:目标维度是否真按预测改善?推翻则显式记入(优化器下次换思路)。
+      const hypo = evaluateHypothesis(child.target_dimension, validation);
+      if (!hypo.held) reasonParts.push(`[假设推翻] ${hypo.note}`);
       state.tried_and_rejected.push({
         version_id: child.version_id,
         hypothesis: child.hypothesis,
@@ -686,6 +705,17 @@ export class OrchestratorService implements OnModuleInit {
         generation: state.generation + 1,
       });
       this.logger.log(`拒绝:${child.version_id}`);
+    }
+
+    // M4.9 战绩表更新:(破绽类型, edit_type) 这一格记一次(accepted=晋升)。自由名额无类型 → 跳过。
+    const tType = typeOfTarget(child.target_dimension ?? "");
+    if (tType && child.edit_type) {
+      state.operator_scoreboard = updateScoreboard(
+        state.operator_scoreboard ?? emptyScoreboard(),
+        tType,
+        child.edit_type,
+        decision === "promoted",
+      );
     }
 
     state.generation += 1;
