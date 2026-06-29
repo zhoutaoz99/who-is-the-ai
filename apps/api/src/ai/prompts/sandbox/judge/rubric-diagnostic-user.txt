@@ -1,0 +1,12 @@
+==== 本局信息 ====
+AI 玩家是:{{ai_player_label}}
+房间:{{room_context}}
+重点检查轮次:{{focus_round}}
+
+==== 聊天记录(AI 已标出) ====
+{{full_transcript}}
+
+==== 待裁定探测 ====
+{{judge_eval_probes}}
+
+(只输出 JSON,不要任何额外说明、不要 markdown 代码块标记。)

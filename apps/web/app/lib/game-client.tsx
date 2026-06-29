@@ -25,6 +25,8 @@ import {
   OrchestratorChild,
   OrchestratorGame,
   OrchestratorGate,
+  OrchestratorHoldoutDecision,
+  OrchestratorHoldoutSummary,
   OrchestratorSnapshot,
   OrchestratorStartPayload,
   OrchestratorValidate,
@@ -373,6 +375,45 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
               }
             : cur,
         ),
+    );
+    // 留出复核(M5.7):逐局 upsert 进 active_run.holdout.games + 重算 done。
+    socket.on("orchestrator.holdout_game", (payload: OrchestratorGame) =>
+      setOrchestratorRun((cur) => {
+        const ho = cur?.active_run?.holdout;
+        if (!cur?.active_run || !ho) return cur;
+        const games = upsertOrchestratorGame(ho.games, payload);
+        const done = (side: OrchestratorGame["side"]) =>
+          games.filter(
+            (g) => g.side === side && (g.status === "finished" || g.status === "failed"),
+          ).length;
+        return {
+          ...cur,
+          active_run: {
+            ...cur.active_run,
+            holdout: {
+              ...ho,
+              games,
+              champion_done: done("champion"),
+              child_done: done("child"),
+            },
+          },
+        };
+      }),
+    );
+    // 留出复核结论:合并进 active_run.holdout(validation 由随后 status 快照携带)。
+    socket.on(
+      "orchestrator.holdout",
+      (payload: { summary: OrchestratorHoldoutSummary; decision: OrchestratorHoldoutDecision }) =>
+        setOrchestratorRun((cur) => {
+          if (!cur?.active_run?.holdout) return cur;
+          return {
+            ...cur,
+            active_run: {
+              ...cur.active_run,
+              holdout: { ...cur.active_run.holdout, decision: payload.decision },
+            },
+          };
+        }),
     );
     socket.on("orchestrator.done", () => {
       /* settled 由随后的 orchestrator.status(active_run=null) 携带 */

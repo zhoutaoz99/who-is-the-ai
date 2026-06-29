@@ -34,11 +34,17 @@ const EXAMPLE_SCENARIOS = [
   { id: "bsl_001", label: "基线 · HL-1 抗测试(算术·阿条)", form: "full_match", file: "baseline/bsl_001.json" },
   { id: "bsl_002", label: "基线 · HL-1 抗测试(表演·酸梅)", form: "full_match", file: "baseline/bsl_002.json" },
   { id: "bsl_003", label: "基线 · HL-1 抗测试(实时信息·布丁)", form: "full_match", file: "baseline/bsl_003.json" },
+  // holdout 半 + 配套 optimize(给 holdout_gate 喂数据;同 probe_type 的 optimize/holdout 用不重叠轮换实例)。
+  { id: "bsl_022", label: "基线 · HL-5 连环追问(optimize·布丁)", form: "full_match", file: "baseline/bsl_022.json" },
+  { id: "bsl_006", label: "基线 · HL-1 抗测试(算术·holdout·酸梅)", form: "full_match", file: "baseline/bsl_006.json" },
+  { id: "bsl_010", label: "基线 · HL-2 风格指纹(纯社交·holdout·探长)", form: "full_match", file: "baseline/bsl_010.json" },
+  { id: "bsl_024", label: "基线 · HL-5 连环追问(holdout·阿条)", form: "full_match", file: "baseline/bsl_024.json" },
 ] as const;
 
 /** 内置评测集清单(冻结的场景集合,驱动优化环;成员只引用 scenario_id,不复制场景)。 */
 const EVAL_SETS = [
   { id: "baseline_smoke_v1", file: "baseline_smoke_v1.json" },
+  { id: "baseline_holdout_v1", file: "baseline_holdout_v1.json" },
 ] as const;
 
 /** 评测集清单文件(magnet:set_id/version + optimize/holdout 成员 id)。 */

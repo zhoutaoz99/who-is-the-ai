@@ -3,6 +3,7 @@
 // 在 confirm 模式下于 awaiting_confirmation 暂停等人 confirm。active_run 持久化进 state,重启可续(仅 awaiting 可续)。
 
 import type { GateDecision } from "./gate";
+import type { HoldoutDecision } from "./holdout-eval";
 import type { PromptValidation } from "../optimizer/validate-prompt";
 import type { ValidationReport } from "../aggregate/validation";
 
@@ -12,6 +13,7 @@ export type RunPhase =
   | "validating"
   | "evaluating_child"
   | "gating"
+  | "evaluating_holdout"
   | "awaiting_confirmation"
   | "settled";
 
@@ -87,9 +89,11 @@ export interface ActiveRun {
   };
   /** optimize+validate 后填充。 */
   child?: ActiveRunChild;
-  /** gating 后填充。 */
+  /** gating 后填充(优化集闸门)。 */
   validation?: ValidationReport;
   gate?: GateDecision;
+  /** 留出集复核(M5.7);仅过优化集闸时填充。null 表示未配置 holdout(跳过)。 */
+  holdout?: HoldoutRun;
   /** validate_prompt 结果。 */
   validate?: PromptValidation;
   progress: {
@@ -103,6 +107,20 @@ export interface ActiveRun {
   started_at: string;
   settled_at?: string;
   error?: string;
+}
+
+/** 留出集复核进度 + 结论(过程可视化 + 落定决策用)。 */
+export interface HoldoutRun {
+  eval_set: string;
+  /** 留出集逐局进度(独立于优化集 games[],side 同样区分 champion/child)。 */
+  champion_total: number;
+  champion_done: number;
+  child_total: number;
+  child_done: number;
+  games: GameItem[];
+  /** 复核完成后填充。 */
+  validation?: ValidationReport;
+  decision?: HoldoutDecision;
 }
 
 /** 人机确认结果(accept=晋升 / reject=拒绝;edited=编辑后接受的改后提示词)。 */

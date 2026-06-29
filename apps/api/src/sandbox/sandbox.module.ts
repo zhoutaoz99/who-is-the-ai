@@ -5,6 +5,8 @@ import { ControlTestGateway } from "./control-test/control-test.gateway";
 import { ControlTestService } from "./control-test/control-test.service";
 import { OptimizerCheckService } from "./control-test/optimizer-check.service";
 import { BlindSuspicionScorer } from "./score/blind-suspicion";
+import { PerRoundTrajectoryScorer } from "./score/per-round-trajectory";
+import { RubricDiagnosticScorer } from "./score/rubric-diagnostic";
 import { ScoreService } from "./score/score.service";
 import { OrchestratorController } from "./orchestrator/orchestrator.controller";
 import { OrchestratorGateway } from "./orchestrator/orchestrator.gateway";
@@ -27,6 +29,8 @@ import { SandboxService } from "./sandbox.service";
     SandboxRepository,
     SandboxService,
     BlindSuspicionScorer,
+    PerRoundTrajectoryScorer,
+    RubricDiagnosticScorer,
     ScoreService,
     PromptVersionStore,
     OrchestratorStateStore,

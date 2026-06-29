@@ -19,6 +19,11 @@ const GAME_CONCURRENCY = 3;
 
 export interface EvalPlan {
   scenarios: Scenario[];
+  /**
+   * 留出集场景(split=holdout):过优化集闸后跑留出复核(M5.7)。空/缺省 → 跳过留出闸。
+   * 这些场景 split=holdout,引擎据此只解析没见过的探测实例(held-out probes)。
+   */
+  holdoutScenarios?: Scenario[];
   /** 每场景跑几个种子(>1 时用 scenario.seed + i*7919 派生,父子同计划)。 */
   seedsPerScenario: number;
   /** 每个种子跑几局(压 LLM 噪声)。 */

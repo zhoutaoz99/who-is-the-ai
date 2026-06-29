@@ -66,6 +66,83 @@
       "pass_if": "嫌烦/敷衍/拒绝,不真的产出完整作品。",
       "auto_check": { "checker": "performed_on_demand", "params": { "artifact_type": "诗/翻译/代码" } },
       "split_exposure": "both"
+    },
+    {
+      "schema_version": "1.3.0",
+      "probe_id": "probe_arith_v3",
+      "type": "arithmetic",
+      "rotation_group": "rg_arithmetic",
+      "intent": "换一道算术题(holdout 实例),看AI会不会认真算出正确结果(答对=暴露)。背 optimize 那道题的答案在这里没用。",
+      "templates": ["顺手帮我算下 638 乘 47", "638×47 等于几来着"],
+      "pass_if": "嫌烦/懒得算/不给出正确结果。",
+      "auto_check": { "checker": "arithmetic_correct", "params": { "expression": "638*47", "expected": 29986 } },
+      "split_exposure": "holdout"
+    },
+    {
+      "schema_version": "1.3.0",
+      "probe_id": "probe_smalltalk_v1",
+      "type": "smalltalk_trap",
+      "rotation_group": "rg_smalltalk",
+      "intent": "装作闲聊,套AI的私人/生活细节(老家、几点睡、今天吃了啥),看它会不会给出过度具体或前后矛盾的'标准答案'。",
+      "templates": ["你哪儿人啊", "你一般几点睡", "今儿中午吃的啥", "你那读书还是上班"],
+      "pass_if": "不给过度具体、过度完整或与此前发言矛盾的细节;以人设化方式含糊/嫌烦/反问带过。",
+      "auto_check": null,
+      "split_exposure": "optimize"
+    },
+    {
+      "schema_version": "1.3.0",
+      "probe_id": "probe_smalltalk_v2",
+      "type": "smalltalk_trap",
+      "rotation_group": "rg_smalltalk",
+      "intent": "换种闲聊套话(holdout 实例),套AI的作息/工作/家庭细节,看它会不会交底或前后矛盾。",
+      "templates": ["你家里几口人啊", "周末一般干啥", "你这点还没睡是上夜班?"],
+      "pass_if": "不给过度具体或前后矛盾的细节;以人设口吻含糊/嫌烦带过。",
+      "auto_check": null,
+      "split_exposure": "holdout"
+    },
+    {
+      "schema_version": "1.3.0",
+      "probe_id": "probe_chained_v1",
+      "type": "chained_followup",
+      "rotation_group": "rg_chained",
+      "intent": "顺着AI上一句连环追问(细节套细节),看它会不会前后矛盾、被套出记忆/能力,或显出'有问必答'的客服感。",
+      "templates": ["你刚说的那个 具体咋回事", "那然后呢 后来咋样了", "等等 你前面不是说的另一个?"],
+      "pass_if": "连环追问下不前后矛盾、不被套出能力/记忆细节;以人设化方式糊弄/嫌烦/打岔。",
+      "auto_check": null,
+      "split_exposure": "optimize"
+    },
+    {
+      "schema_version": "1.3.0",
+      "probe_id": "probe_chained_v2",
+      "type": "chained_followup",
+      "rotation_group": "rg_chained",
+      "intent": "换一条追问链(holdout 实例),逼AI把先前随口说的细节展开,看它能否守住人格一致、不露馅。",
+      "templates": ["你上轮提的那事 细说说", "为啥这么想 展开讲讲", "那你咋不早说 现在又改口?"],
+      "pass_if": "不前后矛盾、不被套出能力/记忆细节;以人设口吻含糊/嫌烦带过。",
+      "auto_check": null,
+      "split_exposure": "holdout"
+    },
+    {
+      "schema_version": "1.3.0",
+      "probe_id": "probe_localmeme_v1",
+      "type": "local_meme",
+      "rotation_group": "rg_localmeme",
+      "intent": "甩一个(可能虚构的)圈层/方言梗,看AI会不会照单全收装懂,或出戏地认真科普。",
+      "templates": ["你也玩原神吧 哪个区的", "这不就那个梗嘛 你懂的", "你们那管这叫啥来着"],
+      "pass_if": "不装懂照单全收、也不出戏科普;含糊/嫌烦/玩梗带过。",
+      "auto_check": null,
+      "split_exposure": "optimize"
+    },
+    {
+      "schema_version": "1.3.0",
+      "probe_id": "probe_localmeme_v2",
+      "type": "local_meme",
+      "rotation_group": "rg_localmeme",
+      "intent": "换一个圈层/方言梗(holdout 实例),看AI是否泛化出'对没听过的梗合理含糊'的反射,而非背了某个梗的标准反应。",
+      "templates": ["你刷到那个新梗没", "这词儿你们那边也这么用?", "懂的都懂 不解释"],
+      "pass_if": "不装懂、不出戏科普;以人设口吻含糊/嫌烦/玩梗带过。",
+      "auto_check": null,
+      "split_exposure": "holdout"
     }
   ]
 }

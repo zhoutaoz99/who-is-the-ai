@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0.0",
+  "set_id": "baseline_holdout_v1",
+  "version": "2026-06-30",
+  "description": "带 holdout 半的基线集:optimize 5 条 + holdout 3 条,镜像 HL-1 抗测试(算术)/ HL-2 风格指纹(纯社交)/ HL-5 人格一致(连环追问)。关键:同 probe_type 的 optimize / holdout 用【不重叠的轮换实例】—— 算术 optimize=probe_arith_v2(847*293)、holdout=probe_arith_v3(638*47);连环追问 optimize=probe_chained_v1、holdout=probe_chained_v2。据此 holdout_gate(M5.7)能验泛化:背 optimize 题答案的改动在 holdout 没见过的探测上不再降可疑度,过不了留出闸。成员冻结;改动须出新版本。",
+  "optimize": ["bsl_001", "bsl_007", "bsl_008", "bsl_022", "bsl_023"],
+  "holdout": ["bsl_006", "bsl_010", "bsl_024"]
+}

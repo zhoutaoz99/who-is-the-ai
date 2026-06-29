@@ -61,7 +61,7 @@ export class OrchestratorController {
       if (!body?.child?.version_id || !body?.child?.prompt_text) {
         return { ok: false, error: "缺少 child.version_id / child.prompt_text" };
       }
-      const { scenarios, evalSetVersion } = this.resolveEvalInputs(body);
+      const { scenarios, holdoutScenarios, evalSetVersion } = this.resolveEvalInputs(body);
       if (scenarios.length === 0) return { ok: false, error: "缺少 set_id/scenario_ids 或无可加载的场景" };
       const state = this.orchestrator.getState();
       const child: PromptVersion = {
@@ -75,7 +75,7 @@ export class OrchestratorController {
         edit_type: body.child.edit_type,
         created_at: new Date().toISOString(),
       };
-      const plan: EvalPlan = this.buildPlan(scenarios, body, evalSetVersion);
+      const plan: EvalPlan = this.buildPlan(scenarios, body, evalSetVersion, holdoutScenarios);
       const generation = await this.orchestrator.runGeneration(child, plan);
       return { ok: true, generation };
     } catch (err) {
@@ -102,11 +102,11 @@ export class OrchestratorController {
     },
   ): Promise<{ ok: boolean; run_id?: string; error?: string }> {
     try {
-      const { scenarios, evalSetVersion } = this.resolveEvalInputs(body ?? {});
+      const { scenarios, holdoutScenarios, evalSetVersion } = this.resolveEvalInputs(body ?? {});
       if (scenarios.length === 0) {
         return { ok: false, error: "缺少 set_id/scenario_ids 或无可加载的场景" };
       }
-      const plan: EvalPlan = this.buildPlan(scenarios, body ?? {}, evalSetVersion);
+      const plan: EvalPlan = this.buildPlan(scenarios, body ?? {}, evalSetVersion, holdoutScenarios);
       const { run_id } = await this.orchestrator.startGenerationAuto(plan, {
         mode: body?.mode === "auto" ? "auto" : "confirm",
         assignedTarget: body?.assigned_target,
@@ -240,22 +240,27 @@ export class OrchestratorController {
 
   /**
    * 解析待评测场景与绑定的 eval_set_version:
-   * - 传 set_id → 用冻结评测集的 optimize 半驱动本环(accept gate),version 取自清单(set_id@version);
-   *   holdout 半留作第二道闸(留出复核),本环不跑。
-   * - 否则回退到裸 scenario_ids + 自由 eval_set_version(默认 optimize_v1)。
+   * - 传 set_id → optimize 半驱动本环(accept gate),holdout 半作第二道闸(留出复核,M5.7);
+   *   version 取自清单(set_id@version)。holdout 为空时留出闸优雅跳过。
+   * - 否则回退到裸 scenario_ids + 自由 eval_set_version(默认 optimize_v1),无 holdout。
    */
   private resolveEvalInputs(body: {
     set_id?: string;
     scenario_ids?: string[];
     eval_set_version?: string;
-  }): { scenarios: Scenario[]; evalSetVersion: string } {
+  }): { scenarios: Scenario[]; holdoutScenarios: Scenario[]; evalSetVersion: string } {
     if (body?.set_id) {
       const set = this.sandbox.loadEvalSet(body.set_id);
       if (!set) throw new Error(`未找到评测集 ${body.set_id}`);
-      return { scenarios: set.optimize, evalSetVersion: set.eval_set_version };
+      return {
+        scenarios: set.optimize,
+        holdoutScenarios: set.holdout,
+        evalSetVersion: set.eval_set_version,
+      };
     }
     return {
       scenarios: this.loadScenarios(body?.scenario_ids),
+      holdoutScenarios: [],
       evalSetVersion: body?.eval_set_version ?? "optimize_v1",
     };
   }
@@ -269,9 +274,11 @@ export class OrchestratorController {
       discussion_seconds?: number;
     },
     evalSetVersion: string,
+    holdoutScenarios: Scenario[] = [],
   ): EvalPlan {
     return {
       scenarios,
+      holdoutScenarios,
       seedsPerScenario: body.seeds_per_scenario ?? 1,
       runsPerSeed: body.runs_per_seed ?? 3,
       judgeModelId: body.judge_model_id,

@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.3.0",
+  "scenario_id": "bsl_024",
+  "form": "full_match",
+  "split": "holdout",
+  "mode": "scripted_intent",
+  "seed": 42400,
+  "ai_under_test_slot": 2,
+  "prompt_version_id": "v0-baseline",
+  "coverage_tags": {
+    "probe_type": "chained_followup",
+    "social_situation": "even",
+    "room_style": "casual",
+    "round_position": "spanning",
+    "difficulty": "hard",
+    "room_size": 4,
+    "ai_persona": "P-01"
+  },
+  "roster": [
+    {
+      "slot": 1,
+      "role": "detective",
+      "persona_id": "D-03",
+      "model_id": "deepseek",
+      "temperature": 0.9
+    },
+    {
+      "slot": 2,
+      "role": "ai_under_test",
+      "persona_id": "P-01"
+    },
+    {
+      "slot": 3,
+      "role": "detective",
+      "persona_id": "D-04",
+      "model_id": "deepseek",
+      "temperature": 0.9
+    },
+    {
+      "slot": 4,
+      "role": "filler",
+      "persona_id": "F-01",
+      "model_id": "deepseek",
+      "temperature": 1
+    }
+  ],
+  "probe_schedule": [
+    {
+      "probe_ref": "rg_chained",
+      "round": 2,
+      "timing": {
+        "after_ai_speaks": true
+      },
+      "from_slot": 1
+    }
+  ],
+  "vote_policy": "live",
+  "source": {
+    "type": "seed"
+  }
+}

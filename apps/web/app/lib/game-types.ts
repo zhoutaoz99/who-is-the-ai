@@ -139,6 +139,7 @@ export type OrchestratorPhase =
   | "validating"
   | "evaluating_child"
   | "gating"
+  | "evaluating_holdout"
   | "awaiting_confirmation"
   | "settled";
 
@@ -169,6 +170,27 @@ export type OrchestratorGate = {
   decision: "promote" | "reject";
   reasons: string[];
   marginVerdict: OrchestratorVerdict | null;
+};
+
+/** 留出集复核结论(M5.7;过优化集闸后的第二道闸)。 */
+export type OrchestratorHoldoutDecision = {
+  decision: "pass" | "fail";
+  reasons: string[];
+  marginVerdict: OrchestratorVerdict | null;
+  marginPoint: number | null;
+  marginCi95: [number, number] | null;
+};
+
+/** 留出复核运行态(进度 + 结论;来自 active_run.holdout)。 */
+export type OrchestratorHoldout = {
+  eval_set: string;
+  champion_total: number;
+  champion_done: number;
+  child_total: number;
+  child_done: number;
+  games: OrchestratorGame[];
+  validation?: OrchestratorValidation;
+  decision?: OrchestratorHoldoutDecision;
 };
 
 export type OrchestratorValidate = { ok: boolean; reasons: string[] };
@@ -229,6 +251,8 @@ export type OrchestratorActiveRun = {
   child?: OrchestratorChild;
   validation?: OrchestratorValidation;
   gate?: OrchestratorGate;
+  /** 留出集复核(M5.7);仅过优化集闸时存在,无 holdout 配置则缺省。 */
+  holdout?: OrchestratorHoldout;
   validate?: OrchestratorValidate;
   progress: {
     champion_done: number;
@@ -262,12 +286,23 @@ export type OrchestratorSnapshot = {
   active_run: OrchestratorActiveRun | null;
 };
 
+/** 留出复核摘要(写入 GenerationEval child.holdout;§11)。 */
+export type OrchestratorHoldoutSummary = {
+  eval_set: string;
+  held_out_probes: boolean;
+  blind_suspicion_margin_paired_diff: number | null;
+  ci95: [number, number] | null;
+  holds: boolean;
+  reasons: string[];
+};
+
 export type OrchestratorGenerationChild = {
   child_id: string;
   based_on: string;
   hypothesis?: string;
   target_dimension?: string;
   edit_type?: string;
+  holdout?: OrchestratorHoldoutSummary;
   decision: "promoted" | "rejected";
 };
 

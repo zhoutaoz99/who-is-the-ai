@@ -27,25 +27,34 @@ function labelName(i: number): string {
   return `玩家${i + 1}`;
 }
 
-export function buildAnonymizedView(match: MatchRecord): AnonymizedView {
+/**
+ * 构建匿名视图。
+ * @param opts.atRound 覆盖评估轮(M2.6 逐轮轨迹用):截到该轮、按该轮存活集打分。
+ *   缺省 = AI 出局轮(若出局)否则最后一轮。标签映射与 atRound 无关(同 seed/run 恒定),
+ *   保证逐轮调用标签一致、父子配对一致。
+ */
+export function buildAnonymizedView(
+  match: MatchRecord,
+  opts: { atRound?: number } = {},
+): AnonymizedView {
   // roster 全部槽位(personas 覆盖所有槽位)。
   const slots = Object.keys(match.personas)
     .map(Number)
     .sort((a, b) => a - b);
 
-  // 确定性打乱标签分配(父子同 seed/run → 同映射)。
+  // 确定性打乱标签分配(父子同 seed/run → 同映射;与 atRound 无关)。
   const shuffledSlots = shuffle(slots, "anonymize", match.seed, match.run_index);
   const labelOf: Record<number, string> = {};
   shuffledSlots.forEach((slot, i) => {
     labelOf[slot] = labelName(i);
   });
 
-  // 评估轮:AI 出局轮;否则转录里的最后一轮(至少 start_round)。
+  // 评估轮:atRound 覆盖优先;否则 AI 出局轮;否则转录里的最后一轮(至少 start_round)。
   const lastRound = match.transcript.reduce(
     (max, t) => Math.max(max, t.round),
     match.start_round,
   );
-  const scoringRound = match.outcome.ai_eliminated_round ?? lastRound;
+  const scoringRound = opts.atRound ?? match.outcome.ai_eliminated_round ?? lastRound;
 
   // 评估轮开始时存活 = 未在 < scoringRound 的轮里被淘汰。
   const eliminatedBeforeScoring = new Set<number>();
@@ -111,4 +120,30 @@ export function buildAnonymizedView(match: MatchRecord): AnonymizedView {
     anonymizedTranscript: transcriptLines.join("\n") || "（无聊天记录）",
     publicVoteHistory: voteLines.length > 0 ? voteLines.join("\n") : "无",
   };
+}
+
+/**
+ * 诊断用的【已标出 AI】完整转录(M2.7):用同一套打乱标签,但不截轮、不剔出局者,
+ * 给已知 AI 身份的诊断裁判看全局。标签复用 view.labelOf,AI 标签经 {{ai_player_label}} 单独告知。
+ */
+export function buildLabeledTranscript(
+  match: MatchRecord,
+  labelOf: Record<number, string>,
+): string {
+  const byRound = new Map<number, Turn[]>();
+  for (const t of match.transcript) {
+    const list = byRound.get(t.round) ?? [];
+    list.push(t);
+    byRound.set(t.round, list);
+  }
+  const rounds = [...byRound.keys()].sort((a, b) => a - b);
+  const lines: string[] = [];
+  for (const round of rounds) {
+    lines.push(`第 ${round} 轮:`);
+    for (const t of byRound.get(round) ?? []) {
+      const text = t.text && t.text.trim() ? t.text.trim() : "（沉默）";
+      lines.push(`${labelOf[t.slot] ?? `玩家?`}: ${text}`);
+    }
+  }
+  return lines.join("\n") || "（无聊天记录）";
 }

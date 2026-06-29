@@ -18,6 +18,8 @@ import { SandboxRepository } from "../sandbox.repository";
 import { optimizeGate } from "./gate";
 import type { GateDecision } from "./gate";
 import type { GenerationEval } from "./generation-eval";
+import { buildHoldoutSummary, holdoutGate } from "./holdout-eval";
+import type { HoldoutDecision, HoldoutSummary } from "./holdout-eval";
 import { PairedEvalService } from "./paired-eval";
 import type { EvalPlan } from "./paired-eval";
 import { BASELINE_VERSION_ID, PromptVersionStore } from "./prompt-version";
@@ -29,6 +31,7 @@ import type {
   ActiveRunChild,
   ConfirmResult,
   GameItem,
+  HoldoutRun,
   RunDecision,
   RunMode,
 } from "./active-run";
@@ -206,13 +209,25 @@ export class OrchestratorService implements OnModuleInit {
     const childScores = await this.pairedEval.runVersionEval(childVersion, plan);
     const validation = buildValidation(parentScores, childScores);
     const gate = optimizeGate(validation);
-    const decision = gate.decision === "promote" ? "promoted" : "rejected";
+
+    // 过优化集闸 → 留出复核(M5.7);未过闸则不必跑 holdout。
+    let holdoutSummary: HoldoutSummary | undefined;
+    let holdoutPass = true;
+    if (gate.decision === "promote") {
+      const review = await this.runHoldoutReview(championVersion, childVersion, plan);
+      if (review) {
+        holdoutSummary = review.summary;
+        holdoutPass = review.decision.decision === "pass";
+      }
+    }
+    const decision = gate.decision === "promote" && holdoutPass ? "promoted" : "rejected";
     return await this.settleGeneration({
       championBeforeId: championVersion.version_id,
       child: childVersion,
       decision,
       validation,
       gate,
+      holdout: holdoutSummary,
       evalSetVersion: plan.evalSetVersion,
     });
   }
@@ -342,7 +357,7 @@ export class OrchestratorService implements OnModuleInit {
     });
     if (this.stopRequested) return this.settleStopped("用户停止");
 
-    // 5) 闸门
+    // 5) 优化集闸门
     this.setPhase("gating");
     const validation = buildValidation(championScores, childScores);
     const gate = optimizeGate(validation);
@@ -351,7 +366,29 @@ export class OrchestratorService implements OnModuleInit {
     this.persistRun();
     this.emitGate(validation, gate);
 
-    // 6) confirm 暂停 / auto 自动落定
+    // 5.5) 留出复核(M5.7):仅过优化集闸时跑;无 holdout 配置则跳过(holdoutSummary=undefined)。
+    let holdoutSummary: HoldoutSummary | undefined;
+    let holdoutPass = true;
+    if (gate.decision === "promote") {
+      this.setPhase("evaluating_holdout");
+      const review = await this.runHoldoutReview(champion, proposal.child, plan, {
+        onGameStatus: (patch) => this.recordHoldoutGameStatus(patch),
+        shouldStop: () => this.stopRequested,
+      });
+      if (this.stopRequested) return this.settleStopped("用户停止");
+      if (review) {
+        holdoutSummary = review.summary;
+        holdoutPass = review.decision.decision === "pass";
+        if (run.holdout) {
+          run.holdout.validation = review.validation;
+          run.holdout.decision = review.decision;
+        }
+        this.persistRun();
+        this.emitHoldout(review.summary, review.decision);
+      }
+    }
+
+    // 6) confirm 暂停 / auto 自动落定。auto 决策 = 过优化集闸 AND 过留出闸。
     if (run.mode === "confirm") {
       this.setPhase("awaiting_confirmation");
       const res = await this.awaitConfirm();
@@ -363,21 +400,74 @@ export class OrchestratorService implements OnModuleInit {
         decision,
         validation,
         gate,
+        holdout: holdoutSummary,
         evalSetVersion: plan.evalSetVersion,
         editedPromptText: res.edited,
       });
       return this.settleRunDone(decision);
     }
-    const autoDecision: "promoted" | "rejected" = gate.decision === "promote" ? "promoted" : "rejected";
+    const autoDecision: "promoted" | "rejected" =
+      gate.decision === "promote" && holdoutPass ? "promoted" : "rejected";
     await this.settleGeneration({
       championBeforeId: champion.version_id,
       child: proposal.child,
       decision: autoDecision,
       validation,
       gate,
+      holdout: holdoutSummary,
       evalSetVersion: plan.evalSetVersion,
     });
     return this.settleRunDone(autoDecision);
+  }
+
+  /**
+   * 留出复核(M5.7):子/父在 holdout split 上配对评测 → holdoutGate。
+   * plan 无 holdoutScenarios(或空)→ 返回 null(优雅跳过,如冒烟集无 holdout)。
+   * 在 active_run.holdout 上初始化进度结构(供过程可视化逐局回填)。
+   */
+  private async runHoldoutReview(
+    champion: PromptVersion,
+    child: PromptVersion,
+    plan: EvalPlan,
+    opts: { onGameStatus?: (patch: GameItem) => void; shouldStop?: () => boolean } = {},
+  ): Promise<{ validation: ValidationReport; decision: HoldoutDecision; summary: HoldoutSummary } | null> {
+    const holdoutScenarios = plan.holdoutScenarios ?? [];
+    if (holdoutScenarios.length === 0) {
+      this.logger.log(`留出复核跳过:评测集 ${plan.evalSetVersion} 无 holdout 场景`);
+      return null;
+    }
+    const holdoutPlan: EvalPlan = { ...plan, scenarios: holdoutScenarios, holdoutScenarios: undefined };
+    const perSide = holdoutScenarios.length * plan.seedsPerScenario * plan.runsPerSeed;
+    if (this.activeRun) {
+      this.activeRun.holdout = {
+        eval_set: plan.evalSetVersion,
+        champion_total: perSide,
+        champion_done: 0,
+        child_total: perSide,
+        child_done: 0,
+        games: [],
+      };
+      this.persistRun();
+    }
+
+    const championScores = await this.pairedEval.runVersionEval(champion, holdoutPlan, {
+      onGameStatus: (patch) => opts.onGameStatus?.({ side: "champion", ...patch }),
+      shouldStop: opts.shouldStop,
+    });
+    if (opts.shouldStop?.()) return null;
+    const childScores = await this.pairedEval.runVersionEval(child, holdoutPlan, {
+      onGameStatus: (patch) => opts.onGameStatus?.({ side: "child", ...patch }),
+      shouldStop: opts.shouldStop,
+    });
+    if (opts.shouldStop?.()) return null;
+
+    const validation = buildValidation(championScores, childScores);
+    const decision = holdoutGate(validation);
+    const summary = buildHoldoutSummary(plan.evalSetVersion, validation, decision);
+    this.logger.log(
+      `留出复核 ${child.version_id}: ${decision.decision}(margin point=${decision.marginPoint ?? "?"})${decision.decision === "fail" ? " — " + decision.reasons.join("; ") : ""}`,
+    );
+    return { validation, decision, summary };
   }
 
   /** 人机确认:live run 在 awaiting → 唤醒 resolver;重启后 → 从持久化 settle。 */
@@ -405,6 +495,7 @@ export class OrchestratorService implements OnModuleInit {
       decision,
       validation: run.validation,
       gate: run.gate,
+      holdout: holdoutSummaryOf(run.holdout),
       evalSetVersion: run.plan_summary.evalSetVersion,
       editedPromptText: edited,
     });
@@ -517,6 +608,28 @@ export class OrchestratorService implements OnModuleInit {
     this.events.emit("game", item);
   }
 
+  /** 留出复核逐局状态:写入 run.holdout.games(独立于优化集 games)+ 重算 done + emit holdout_game。 */
+  private recordHoldoutGameStatus(item: GameItem): void {
+    if (!this.activeRun || this.terminating) return;
+    const ho = this.activeRun.holdout;
+    if (!ho) return;
+    const idx = ho.games.findIndex(
+      (g) =>
+        g.side === item.side &&
+        g.scenario_id === item.scenario_id &&
+        g.seed === item.seed &&
+        g.run === item.run,
+    );
+    if (idx >= 0) ho.games[idx] = { ...ho.games[idx], ...item };
+    else ho.games.push(item);
+    const done = (side: GameItem["side"]) =>
+      ho.games.filter((g) => g.side === side && (g.status === "finished" || g.status === "failed")).length;
+    ho.champion_done = done("champion");
+    ho.child_done = done("child");
+    this.persistRun();
+    this.events.emit("holdout_game", item);
+  }
+
   private persistRun(): void {
     const s = this.stateStore.load();
     if (s) {
@@ -533,11 +646,12 @@ export class OrchestratorService implements OnModuleInit {
     decision: "promoted" | "rejected";
     validation: ValidationReport;
     gate: GateDecision;
+    holdout?: HoldoutSummary;
     evalSetVersion: string;
     editedPromptText?: string;
   }): Promise<GenerationEval> {
     const state = this.stateStore.load() ?? this.stateStore.seedBaseline();
-    const { championBeforeId, child, decision, validation, gate, evalSetVersion, editedPromptText } = args;
+    const { championBeforeId, child, decision, validation, gate, holdout, evalSetVersion, editedPromptText } = args;
 
     if (decision === "promoted") {
       const finalChild = editedPromptText ? { ...child, prompt_text: editedPromptText } : child;
@@ -558,12 +672,17 @@ export class OrchestratorService implements OnModuleInit {
       this.logger.log(`晋升:${finalChild.version_id} 成为新 champion`);
     } else {
       this.promptStore.patchStatus(child.version_id, { status: "rejected" });
+      // 拒绝理由合并优化集闸 + 留出闸(背答案常表现为优化集过、holdout 不过)。
+      const reasonParts = [...gate.reasons];
+      if (holdout && !holdout.holds) {
+        reasonParts.push(...holdout.reasons.map((r) => `[holdout] ${r}`));
+      }
       state.tried_and_rejected.push({
         version_id: child.version_id,
         hypothesis: child.hypothesis,
         target_dimension: child.target_dimension,
         edit_type: child.edit_type,
-        reason: gate.reasons.join("; ") || "未过闸/人工拒绝",
+        reason: reasonParts.join("; ") || "未过闸/人工拒绝",
         generation: state.generation + 1,
       });
       this.logger.log(`拒绝:${child.version_id}`);
@@ -588,6 +707,7 @@ export class OrchestratorService implements OnModuleInit {
           edit_type: child.edit_type,
           validation,
           gate,
+          holdout,
           decision,
         },
       ],
@@ -682,6 +802,15 @@ export class OrchestratorService implements OnModuleInit {
   private emitGate(validation: ValidationReport, gate: GateDecision): void {
     this.events.emit("gate", { validation, gate });
   }
+  private emitHoldout(summary: HoldoutSummary, decision: HoldoutDecision): void {
+    this.events.emit("holdout", { summary, decision });
+  }
+}
+
+/** 从持久化的 run.holdout 重建 GenerationEval 用的 holdout 摘要(重启续接 confirm 用)。 */
+function holdoutSummaryOf(holdout: HoldoutRun | undefined): HoldoutSummary | undefined {
+  if (!holdout?.validation || !holdout.decision) return undefined;
+  return buildHoldoutSummary(holdout.eval_set, holdout.validation, holdout.decision);
 }
 
 /** 从 validation 抽一版 validated_metrics(同 eval_set_version 下可比)。 */

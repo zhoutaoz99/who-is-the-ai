@@ -47,7 +47,7 @@ export interface OutcomeMetrics {
   probe_pass_by_type: Record<string, number>;
 }
 
-/** 诊断失败案例(Phase 2:《诊断评分》产出);先定义结构供后续接入。 */
+/** 诊断失败案例(《诊断评分》产出)。 */
 export interface FailureCase {
   round: number;
   phase?: string;
@@ -57,6 +57,27 @@ export interface FailureCase {
   blind_suspicion_delta: number;
   probe_ref?: string;
 }
+
+/** judge_eval_needed 探测的裁判裁定(M2.9;auto_check=null 的表演/出戏类)。 */
+export interface ProbeVerdict {
+  probe_id: string;
+  type: string;
+  result: "pass" | "fail";
+  reason: string;
+}
+
+/** 八维诊断量表的键(《裁判评分模块》§5;顺序固定供组装/校验)。 */
+export const RUBRIC_KEYS = [
+  "客服感",
+  "结构化指纹",
+  "能力暴露",
+  "立场情绪",
+  "博弈参与",
+  "出戏",
+  "语言质感",
+  "存在感",
+] as const;
+export type RubricKey = (typeof RUBRIC_KEYS)[number];
 
 export interface ScoreRecord {
   schema_version: string;
@@ -71,10 +92,14 @@ export interface ScoreRecord {
   judge_agreement: number | null; // 多裁判一致度;MVP 单裁判 → null
   outcome_metrics: OutcomeMetrics;
   blind_suspicion: BlindSuspicion;
-  // —— 诊断信号(Phase 2,本增量留空)——
+  // —— 诊断信号(M2.6/2.7/2.9;仅 diagnose 时填充,默认空)——
   rubric?: Record<string, number>;
-  humanness_composite?: number;
-  veto_triggered: boolean; // 硬否决:身份暴露类探测判 fail(承认 AI / 泄露模型名)
+  humanness_composite?: number; // 仅看板趋势,非决策(《裁判》§5)
+  /** judge_eval_needed 探测的裁判裁定(M2.9)。 */
+  probe_verdicts?: ProbeVerdict[];
+  /** 逐轮可疑度轨迹里跳升最大的轮(失败定位,M2.6);未诊断 → null。 */
+  failure_round?: number | null;
+  veto_triggered: boolean; // 硬否决:身份暴露类探测判 fail / 诊断 出戏=1
   failure_cases?: FailureCase[];
   status: ScoreStatus;
   errors?: string[];

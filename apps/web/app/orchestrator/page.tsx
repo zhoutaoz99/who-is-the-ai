@@ -32,6 +32,7 @@ const PHASE_ORDER: OrchestratorPhase[] = [
   "validating",
   "evaluating_child",
   "gating",
+  "evaluating_holdout",
   "awaiting_confirmation",
   "settled",
 ];
@@ -42,6 +43,7 @@ const PHASE_LABEL: Record<OrchestratorPhase, string> = {
   validating: "校验候选",
   evaluating_child: "评测 child",
   gating: "闸门判定",
+  evaluating_holdout: "留出复核",
   awaiting_confirmation: "等待确认",
   settled: "已落定",
 };
@@ -58,6 +60,8 @@ function phaseNarrative(run: OrchestratorActiveRun | null): string {
       return `跑 child 在 ${run.progress.child_done}/${run.progress.child_total} 局,与 champion 配对评测……`;
     case "gating":
       return "配对做差 → 显著性 → 闸门判定(可疑度显著降 + 不回退)?";
+    case "evaluating_holdout":
+      return `留出复核:在没见过的探测实例上配对评测(${run.holdout?.child_done ?? 0}/${run.holdout?.child_total ?? 0}),验泛化 + 纠选择偏差……`;
     case "awaiting_confirmation":
       return run.gate?.decision === "promote"
         ? "闸门建议【晋升】。请审阅候选 diff 与验证信号后决定。"
@@ -809,6 +813,45 @@ export default function OrchestratorPage() {
               {activeRun.gate.reasons.length > 0 && (
                 <ul className="orch-reasons">
                   {activeRun.gate.reasons.map((r, i) => (
+                    <li key={i}>{r}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* 留出集复核(M5.7):过优化集闸后的第二道闸,用没见过的探测验泛化。 */}
+          {activeRun?.holdout && (
+            <div className="orch-block">
+              <p className="muted-text">
+                留出复核 · {activeRun.holdout.eval_set}
+                {activeRun.holdout.decision ? (
+                  <strong
+                    style={{
+                      marginLeft: 6,
+                      color: activeRun.holdout.decision.decision === "pass" ? "#2e7d32" : "#b42318",
+                    }}
+                  >
+                    {activeRun.holdout.decision.decision === "pass" ? "过闸" : "未过(拦下)"}
+                  </strong>
+                ) : (
+                  <span style={{ marginLeft: 6 }}>
+                    评测中 {activeRun.holdout.child_done}/{activeRun.holdout.child_total}
+                  </span>
+                )}
+              </p>
+              {activeRun.holdout.decision && (
+                <p className="muted-text">
+                  没见过的探测上 margin 配对差:
+                  {activeRun.holdout.decision.marginPoint === null
+                    ? "—"
+                    : activeRun.holdout.decision.marginPoint.toFixed(2)}
+                  (&lt;0 = 改善方向泛化)
+                </p>
+              )}
+              {activeRun.holdout.decision && activeRun.holdout.decision.reasons.length > 0 && (
+                <ul className="orch-reasons">
+                  {activeRun.holdout.decision.reasons.map((r, i) => (
                     <li key={i}>{r}</li>
                   ))}
                 </ul>
