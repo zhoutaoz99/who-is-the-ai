@@ -414,12 +414,25 @@ export class AiService {
     }
   }
 
+  /** 当前 champion 提示词版本号(读沙盒 orchestrator 状态),用于产品灰度部署;无/异常则 undefined。 */
+  async getActiveChampionVersionId(): Promise<string | undefined> {
+    try {
+      await this.postgres.ready;
+      const res = await this.postgres.query<{ champion: string | null }>(
+        `SELECT data->>'champion' AS champion FROM sandbox_orchestrator_state WHERE id = 1`,
+      );
+      return res.rows[0]?.champion ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async buildDiscussionSystemPrompt(
     persona: PersonaCard,
     seatNo: number,
     versionId?: string,
   ): Promise<string> {
-    // ai_under_test 优先用指定版本提示词(配对评测用),缺省走产品默认。
+    // ai_under_test/产品灰度优先用指定版本提示词,缺省走产品默认文件。
     const template =
       (await this.loadPromptVersionText(versionId)) ||
       loadPrompt("ai-player/system-discussion.txt");

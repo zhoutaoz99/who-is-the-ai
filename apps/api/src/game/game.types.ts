@@ -170,6 +170,8 @@ export interface Room {
   };
   /** 被测 AI 使用的提示词版本代号(编排器配对评测用);缺省走产品默认 AI 提示词。 */
   sandboxAiPromptVersionId?: string;
+  /** 产品对局灰度部署命中的 champion 提示词版本号(CHAMPION_DEPLOY_RATIO);用于真人局版本归因。 */
+  aiPromptVersionId?: string;
   createdAt: string;
   updatedAt: string;
 }

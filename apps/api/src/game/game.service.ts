@@ -130,6 +130,19 @@ export class GameService {
     this.server = server;
   }
 
+  /**
+   * 产品对局 AI 玩家统一使用当前 champion 优化版提示词(读沙盒 orchestrator 状态)。
+   * champion 仅在编排器晋升/确认时变更,所以这等于"产品始终跟随最新已确认 champion"。
+   * 命中则返回版本号,落 room_data.aiPromptVersionId 做真人局版本归因;无/异常则走文件默认。
+   */
+  private async resolveProductChampionVersion(): Promise<string | undefined> {
+    try {
+      return (await this.aiService.getActiveChampionVersionId()) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async createRoom(
     socketId: string,
     payload: CreateRoomPayload,
@@ -159,6 +172,12 @@ export class GameService {
       createdAt: now,
       updatedAt: now,
     };
+
+    const championVersionId = await this.resolveProductChampionVersion();
+    if (championVersionId) {
+      room.aiPromptVersionId = championVersionId;
+      this.logger.log(`房间 ${room.id} 部署 champion 提示词版本: ${championVersionId}`);
+    }
 
     await this.roomRepository.save(room);
     return {
@@ -2503,7 +2522,7 @@ export class GameService {
       voteHistory,
       shortMemory: room.aiMemories?.[aiPlayer.id] ?? null,
       myRole: aiPlayer.sandboxRole,
-      myPromptVersionId: room.sandboxAiPromptVersionId,
+      myPromptVersionId: room.sandboxAiPromptVersionId ?? room.aiPromptVersionId,
     };
   }
 
