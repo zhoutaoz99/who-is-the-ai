@@ -2,20 +2,19 @@
 
 | 字段 | 内容 |
 | --- | --- |
-| 适用范围 | `docs/` 下所有正式文档；**不包括** `docs/ImplementationPlan/` 历史归档 |
+| 适用范围 | `docs/` 下所有正式文档；**不包括** `docs/ImplementationPlan/` 历史归档与 `docs/design/` 草稿 |
 | 文档状态 | Active |
 | 目标读者 | 项目维护者、开发、测试、评审者 |
-| 最近核对日期 | 2026-06-19 |
+| 最近核对日期 | 2026-06-30 |
 | 目的 | 将当前文档统一到软件开发通用的、可审查、可追溯、可维护的标准格式 |
 
 ## 1. 现状诊断
 
-本规范基于对当前 `docs/` 目录 13 篇正式文档的审阅得出，范围如下：
+本规范基于对当前 `docs/` 目录 8 篇正式文档（不含本文）的审阅得出，范围如下：
 
 - `README.md`
 - `Roadmap.md`
 - `gameplay/*.md`
-- `ai-iteration/*.md`
 
 当前主要问题不是“内容不够多”，而是**文档类型、元数据和结构边界不够标准化**：
 
@@ -89,8 +88,8 @@
 | `Overview` | 导航、索引、阅读路径 | 所有读者 | `README.md` |
 | `Player Guide` | 面向玩家的玩法说明、教程、UI 帮助 | 玩家 | `gameplay/Player-Guide.md` |
 | `Spec` | 规则、约束、功能定义 | 产品、开发、测试 | `gameplay/Gameplay.md` |
-| `Design` | 架构、流程、数据、实现取舍 | 开发、评审者 | `gameplay/AI-Interaction-Flow.md`、`gameplay/AI-Human-Likeness-Design.md`、`AI-Scheduling.md`、`AI-Prompt-Cache-Optimization.md`、`ai-iteration/Replay-Analysis.md`、`AI-Prompt-Eval-*.md`、`AI-Auto-Adversarial-Match.md` |
-| `Iteration Report` | 迭代记录、实验结论、经验沉淀 | 开发、评审者 | `ai-iteration/AI-Human-Likeness.md` |
+| `Design` | 架构、流程、数据、实现取舍 | 开发、评审者 | `gameplay/AI-Interaction-Flow.md`、`gameplay/AI-Human-Likeness-Design.md`、`gameplay/AI-Scheduling.md`、`gameplay/AI-Prompt-Cache-Optimization.md` |
+| `Iteration Report` | 迭代记录、实验结论、经验沉淀 | 开发、评审者 | 当前暂无正式文档 |
 | `Roadmap` | 分阶段目标、状态、依赖、优先级 | 维护者、协作者 | `Roadmap.md` |
 | `Reference` | 接口、字段、配置、常量的查阅型资料 | 开发、测试、运维 | 当前暂无独立标准文档 |
 | `Runbook` | 操作步骤、发布、排障、回滚 | 开发、运维 | 当前暂无独立标准文档 |
@@ -120,8 +119,8 @@ Topic-Subtopic.md
 
 ```text
 AI-Interaction-Flow.md
-AI-Prompt-Eval-Flow.md
-Replay-Analysis.md
+AI-Human-Likeness-Design.md
+AI-Prompt-Cache-Optimization.md
 ```
 
 ### 5.2 H1 标题
@@ -135,8 +134,8 @@ Replay-Analysis.md
 
 ```text
 # AI 玩家交互流程
-# AI 提示词自动对局评估自迭代：整体流程
-# AI 提示词自动对局评估自迭代：详细逻辑
+# AI 拟人化设计
+# AI 提示词缓存优化
 ```
 
 ## 6. 通用头部元数据
@@ -439,11 +438,6 @@ Replay-Analysis.md
 | `gameplay/AI-Human-Likeness-Design.md` | `Design` | 聚焦策略层、表达层、记忆、人格与版本化 |
 | `gameplay/AI-Scheduling.md` | `Design` | 明确已实现/设想边界与验证方式 |
 | `gameplay/AI-Prompt-Cache-Optimization.md` | `Design` | 增加约束、风险、度量方法 |
-| `ai-iteration/Replay-Analysis.md` | `Design` | 强化接口/流程/失败模式边界 |
-| `ai-iteration/AI-Prompt-Eval-Flow.md` | `Design` | 保持整体流程，补风险与验证 |
-| `ai-iteration/AI-Prompt-Eval-Details.md` | `Design` | 保持详细逻辑，补取舍与验证 |
-| `ai-iteration/AI-Auto-Adversarial-Match.md` | `Design` | 增加约束、风险、验证方式 |
-| `ai-iteration/AI-Human-Likeness.md` | `Iteration Report` | 按假设、改动、结果、结论重排 |
 
 ## 12. 维护流程
 

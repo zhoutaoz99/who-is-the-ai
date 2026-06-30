@@ -7,7 +7,7 @@
 | 适用范围 | 项目未来交付路径、优先级、依赖与里程碑 |
 | 目标读者 | 维护者、协作者、评审者 |
 | 责任人 | 项目维护者 |
-| 最近核对日期 | 2026-06-15 |
+| 最近核对日期 | 2026-06-30 |
 | 关联代码 | `docs/README.md`、`apps/api`、`apps/web` |
 | 关联文档 | [README.md](./README.md)、[Doc-Style-Guide.md](./Doc-Style-Guide.md) |
 
@@ -44,7 +44,7 @@
 | --- | --- | --- |
 | 平票处理规则 | ✅ | 平票本轮无人出局(`resolveElimination` 的 `isTie` 分支)。 |
 | 超时未投票规则 | ✅ | 无人投票(含全体超时)本轮无人出局。 |
-| AI 对抗可信度 | ✅ | 已补跨轮次记忆与上下文(历史对话、历史投票、短期记忆)。见 [`AI-Human-Likeness.md`](ai-iteration/AI-Human-Likeness.md)。 |
+| AI 对抗可信度 | ✅ | 已补跨轮次记忆与上下文(历史对话、历史投票、短期记忆)。见 [`AI-Human-Likeness-Design.md`](gameplay/AI-Human-Likeness-Design.md)。 |
 | 掉线与异常重连 | ⏳ | 已有重连(`room.reconnect`)、`DISCONNECT_GRACE_MS=30s` 宽限、断线清理。**未做**:掉线真人由 AI 托管。 |
 | 无意义消息与作弊/刷屏判定 | ⬜ | 暂无发言内容校验、刷屏/作弊检测与限流。 |
 
@@ -63,7 +63,7 @@
 | 接入真实 AI Core | ✅ | 见 [`AI-Interaction-Flow.md`](gameplay/AI-Interaction-Flow.md)。 |
 | 账号与积分系统 | ✅ | `accounts` 表 + JWT 鉴权(`auth` 模块)。 |
 | 积分结算 | ⏳ | 真人获胜平分 `REWARD_POOL=2000`;**未做**:积分流水账本(目前只维护余额)、结算事务化。 |
-| 赛后复盘 | ✅ | 见 [`Replay-Analysis.md`](ai-iteration/Replay-Analysis.md)。 |
+| 赛后复盘 | ✅ | 对局结束后支持复盘页与 replay 导出。 |
 | 出局后上帝视角(观战) | ⬜ | 出局玩家目前不能以上帝视角继续观战。 |
 | 房间规则配置 | ⏳ | 普通房可配讨论时长(`ROUND_DURATION_MS`)与轮数;**未做**:AI 数量、真人数量、奖励池配置(普通房 AI 数固定为 `AI_PLAYER_COUNT=2`)。调试自动对抗房阵容可配。 |
 
@@ -95,7 +95,7 @@
 | 事项 | 状态 | 说明 |
 | --- | --- | --- |
 | AI 人格系统 | ✅ | 8 个人格,见 [`AI-Interaction-Flow.md`](gameplay/AI-Interaction-Flow.md)。 |
-| AI 表现评分 | ✅ | 批量对局 + 冻结尺子 scorecard,见 [`AI-Prompt-Eval-Details.md`](ai-iteration/AI-Prompt-Eval-Details.md) / [`AI-Prompt-Eval-Flow.md`](ai-iteration/AI-Prompt-Eval-Flow.md)。 |
+| AI 表现评分 | ✅ | 批量对局、冻结评分尺子与自动优化闭环已具备。 |
 | AI 难度分级 | ⏳ | 已有 `normal`/`high` 模拟真人强度 + 8 人格;更细档位(fair/strong/expert)未做。 |
 | 日志回放(提升 AI 胜率) | ✅ | 版本感知复盘 + 自动评估闭环已承担此角色。 |
 | 复盘页 | ✅ | |

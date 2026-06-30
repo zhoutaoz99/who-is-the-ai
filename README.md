@@ -28,7 +28,7 @@
 - 4 轮后仍有 AI 玩家存活则人类玩家失败
 - AI 玩家全部出局则真人胜利，存活真人玩家平分 2000 积分
 - 游戏结束后揭示玩家身份
-- 单局审计：用独立模型排查本局内高置信硬问题（见 [docs/ai-iteration/Replay-Analysis.md](docs/ai-iteration/Replay-Analysis.md)）
+- 单局审计：用独立模型排查本局内高置信硬问题
 
 账号数据持久化在 PostgreSQL。登录会话写入 Redis；房间和对局状态写入 PostgreSQL 的 `jsonb` 字段，并通过 Redis 缓存热房间数据。
 
@@ -48,7 +48,7 @@ npm run dev
 
 启动 API 前需先准备 PostgreSQL 和 Redis。项目 PostgreSQL 使用宿主机 `5432`，Redis 使用 `6379`。
 
-对局 AI 的模型与密钥配置在根目录 `ai-models.json`（从 `ai-models.example.json` 复制并填入每个模型条目的 `apiKey`）；未配置时 AI 会跳过发言。单局审计使用独立的 `REPLAY_ANALYSIS_*` 配置，详见 [docs/ai-iteration/Replay-Analysis.md](docs/ai-iteration/Replay-Analysis.md)。
+对局 AI 的模型与密钥配置在根目录 `ai-models.json`（从 `ai-models.example.json` 复制并填入每个模型条目的 `apiKey`）；未配置时 AI 会跳过发言。单局审计使用独立的 `REPLAY_ANALYSIS_*` 配置。
 
 ```bash
 docker run -d \

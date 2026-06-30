@@ -4,25 +4,26 @@
 | --- | --- |
 | 文档类型 | Overview |
 | 文档状态 | Active |
-| 适用范围 | `docs/` 下的正式文档，不包括 `docs/ImplementationPlan/` |
+| 适用范围 | `docs/` 下的正式文档，不包括 `docs/ImplementationPlan/` 与 `docs/design/` 草稿 |
 | 目标读者 | 项目维护者、开发、测试、评审者 |
 | 责任人 | 项目维护者 |
-| 最近核对日期 | 2026-06-19 |
+| 最近核对日期 | 2026-06-30 |
 | 关联代码 | `docs/`、`apps/api`、`apps/web` |
 | 关联文档 | [Doc-Style-Guide.md](./Doc-Style-Guide.md)、[Roadmap.md](./Roadmap.md) |
 
 ## 目的与范围
 
-本目录整理「谁是AI」项目的正式文档，按「真实对局」与「迭代 AI 玩家」两类分开存放。各文档通过统一元数据表说明自身类型、范围和关联文档，避免内容重叠。
+本目录整理「谁是AI」项目的正式文档。当前主线文档聚焦真实对局与项目级索引/规范；`docs/design/` 保留专题设计草稿，`docs/ImplementationPlan/` 保留早期实施计划归档。各文档通过统一元数据表说明自身类型、范围和关联文档，避免内容重叠。
 
 ## 目录结构
 
 ```text
 docs/
   gameplay/        真实对局相关:运行的对局本体与其中 AI 的行为
-  ai-iteration/    用于迭代 AI 玩家:离线评估/双版本库工具与迭代记录
+  design/          专题设计草稿与补充材料(不在本清单)
   README.md        本索引
   Roadmap.md       项目路线图(前瞻规划)
+  Doc-Style-Guide.md  文档写作规范
   ImplementationPlan/  早期分阶段实现计划归档(历史参考)
 ```
 
@@ -35,9 +36,8 @@ docs/
 3. [gameplay/AI-Interaction-Flow.md](./gameplay/AI-Interaction-Flow.md) — AI 玩家在普通对局里如何发言、投票、调模型。
 4. [gameplay/AI-Human-Likeness-Design.md](./gameplay/AI-Human-Likeness-Design.md) — 当前 AI 拟人化设计主文档：策略层、表达层、短期记忆与人格库。
 5. [gameplay/AI-Scheduling.md](./gameplay/AI-Scheduling.md) — 发言调度的设计动机(为什么不像机器人)。
-6. [ai-iteration/AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) — 拟人化迭代的中间过程、问题拆解与阶段性结论。
-7. [ai-iteration/AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) — 自动评估闭环入口，先看这个再进 Flow / Auto-Optimize / Details。
-8. 再按需进入「自动对抗调试房」「复盘」「缓存优化」等专题。
+6. [gameplay/AI-Prompt-Cache-Optimization.md](./gameplay/AI-Prompt-Cache-Optimization.md) — 提示词缓存的设计与模板组织。
+7. 再按需进入 [Roadmap.md](./Roadmap.md) 和 [Doc-Style-Guide.md](./Doc-Style-Guide.md) 查看规划与写作约定。
 
 ---
 
@@ -56,24 +56,6 @@ docs/
 | [AI-Scheduling.md](./gameplay/AI-Scheduling.md) | 发言调度的设计动机与第一版方案(为何不用固定概率、策略层输出什么)。 |
 | [AI-Prompt-Cache-Optimization.md](./gameplay/AI-Prompt-Cache-Optimization.md) | OpenAI 自动前缀缓存 + Claude 显式多层 `cache_control` 的优化方案与模板字段顺序。 |
 
-### ai-iteration/ — 用于迭代 AI 玩家
-
-离线工具与迭代记录:批量跑无头对局、按评估尺子代量化打分、AI 提示词版本库 / 评估尺子版本库、自动对抗调试房,以及单局硬问题审计(使用 replay JSON 排查单局内高置信问题)。
-
-| 文档 | 内容 |
-| --- | --- |
-| [AI-Human-Likeness.md](./ai-iteration/AI-Human-Likeness.md) | AI 拟人化优化的中间迭代过程、问题拆解与阶段性结论。 |
-| [AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) | 自动对局评估自迭代的入口索引,说明 Flow / Auto-Optimize / Details 的分工与阅读路径。 |
-| [AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) | 自动对局评估自迭代的**整体流程**(「步骤之间怎么连」),含组件图、主循环、实时事件、数据模型。 |
-| [AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) | 单局打分、scorecard 聚合和自动优化器的单独维护点。 |
-| [AI-Auto-Adversarial-Match.md](./ai-iteration/AI-Auto-Adversarial-Match.md) | 调试用的「AI 自动对抗」调试房:玩家建模、模拟真人强度(normal/high)、快速/普通两套发言调度、投票兜底、前端展示。 |
-| [AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) | AI 提示词版本库 + 评估尺子版本库 + 手动优化面板与版本感知单局审计。 |
-| [Replay-Analysis.md](./ai-iteration/Replay-Analysis.md) | 单局硬问题审计的前后端实现、流式输出、版本感知审计、Prompt 文件、前端展示，以及它与自动对局评估自迭代的边界。 |
-
-> [AI-Prompt-Eval.md](./ai-iteration/AI-Prompt-Eval.md) 是这条主题线的入口;[AI-Prompt-Eval-Flow.md](./ai-iteration/AI-Prompt-Eval-Flow.md) 讲步骤间串联;[AI-Prompt-Eval-Auto-Optimize.md](./ai-iteration/AI-Prompt-Eval-Auto-Optimize.md) 讲单局打分、scorecard 和自动优化器;[AI-Prompt-Eval-Details.md](./ai-iteration/AI-Prompt-Eval-Details.md) 讲版本管理和手动优化面板。
-
----
-
 ### 项目级文档
 
 | 文档 | 内容 |
@@ -91,26 +73,17 @@ gameplay/
   Gameplay.md
     └─ AI-Interaction-Flow.md ─┬─ AI-Scheduling.md
                                ├─ AI-Human-Likeness-Design.md
-                               ├─ AI-Prompt-Cache-Optimization.md
-                               └─ (跨目录)→ ai-iteration/*
-
-ai-iteration/
-  AI-Human-Likeness.md ── AI-Human-Likeness-Design.md、AI-Prompt-Eval-Details.md
-  AI-Prompt-Eval.md ──┬─ AI-Prompt-Eval-Flow.md
-                      ├─ AI-Prompt-Eval-Auto-Optimize.md
-                      └─ AI-Prompt-Eval-Details.md
-  AI-Auto-Adversarial-Match.md ── AI-Prompt-Eval-Details.md
-  Replay-Analysis.md ── AI-Prompt-Eval-Details.md
-  (跨目录)→ gameplay/AI-Interaction-Flow.md、AI-Scheduling.md
+                               └─ AI-Prompt-Cache-Optimization.md
 
 项目级:
-  Roadmap.md (指向以上各功能文档)
+  README.md ── gameplay/*、Roadmap.md、Doc-Style-Guide.md
+  Roadmap.md (指向以上主线功能文档)
 ```
 
 ## 维护约定
 
-- 新增文档请放进 `gameplay/` 或 `ai-iteration/`(真实对局 vs 迭代 AI),并在本索引登记。
+- 新增正式文档请放进 `gameplay/` 或 `docs/` 根目录的项目级文档；专题设计草稿放进 `design/`。
 - 写作遵循 [Doc-Style-Guide.md](./Doc-Style-Guide.md) 的标题与结构规范。
 - 每篇正式文档开头使用统一元数据表说明文档类型、范围与关联文档。
-- 跨目录引用用相对路径(`../gameplay/X.md` / `../ai-iteration/X.md`)。
+- 跨目录引用用相对路径(例如 `../gameplay/X.md` / `../design/Y.md`)。
 - 涉及代码路径、常量、人格清单、接口的内容改动后,记得回核对齐;在文档顶部记录最近核对日期。

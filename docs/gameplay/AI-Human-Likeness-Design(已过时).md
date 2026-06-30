@@ -7,9 +7,9 @@
 | 适用范围 | 普通对局中 AI 玩家的人格、发言、投票、短期记忆与 prompt 版本化设计 |
 | 目标读者 | 后端开发、评审者 |
 | 责任人 | AI / Gameplay 维护者 |
-| 最近核对日期 | 2026-06-19 |
+| 最近核对日期 | 2026-06-30 |
 | 关联代码 | `apps/api/src/ai/`、`apps/api/src/game/`、`apps/api/src/ai/prompts/ai-player/` |
-| 关联文档 | [AI-Interaction-Flow.md](./AI-Interaction-Flow.md)、[AI-Scheduling.md](./AI-Scheduling.md)、[AI-Human-Likeness.md](../ai-iteration/AI-Human-Likeness.md)、[AI-Auto-Adversarial-Match.md](../ai-iteration/AI-Auto-Adversarial-Match.md)、[AI-Prompt-Eval-Details.md](../ai-iteration/AI-Prompt-Eval-Details.md)、[AI-Prompt-Cache-Optimization.md](./AI-Prompt-Cache-Optimization.md) |
+| 关联文档 | [AI-Interaction-Flow.md](./AI-Interaction-Flow.md)、[AI-Scheduling.md](./AI-Scheduling.md)、[AI-Prompt-Cache-Optimization.md](./AI-Prompt-Cache-Optimization.md) |
 
 ## 1. 背景
 
@@ -23,7 +23,7 @@
 - 人格库让不同 AI 在口吻和参与度上有差异。
 - Prompt 版本化和缓存分层保证这些设计能稳定演进。
 
-本文记录的是这套“拟人化设计”的当前实现，不记录具体迭代过程；迭代轨迹见 [AI 拟人化优化](../ai-iteration/AI-Human-Likeness.md)。
+本文记录的是这套“拟人化设计”的当前实现，不展开历史迭代过程。
 
 ## 2. 目标
 

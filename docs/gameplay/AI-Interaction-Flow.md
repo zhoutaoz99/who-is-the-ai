@@ -7,9 +7,9 @@
 | 适用范围 | 普通对局中的 AI 玩家交互流程，以及同一实现中的模拟真人分支设计 |
 | 目标读者 | 后端开发、评审者 |
 | 责任人 | AI / Gameplay 维护者 |
-| 最近核对日期 | 2026-06-19 |
+| 最近核对日期 | 2026-06-30 |
 | 关联代码 | `apps/api/src/game/game.service.ts`、`apps/api/src/ai/ai.service.ts`、`apps/api/src/ai/ai.types.ts`、`apps/api/src/ai/ai.personas.ts`、`apps/api/src/ai/prompts/` |
-| 关联文档 | [游戏玩法](./Gameplay.md)、[AI 拟人化设计](./AI-Human-Likeness-Design.md)、[AI 发言调度](./AI-Scheduling.md)、[AI 提示词缓存优化](./AI-Prompt-Cache-Optimization.md)、[AI 自动对抗调试房](../ai-iteration/AI-Auto-Adversarial-Match.md)、[AI 提示词自动对局评估自迭代：详细逻辑](../ai-iteration/AI-Prompt-Eval-Details.md) |
+| 关联文档 | [游戏玩法](./Gameplay.md)、[AI 拟人化设计](./AI-Human-Likeness-Design.md)、[AI 拟人化 v4.0 方案](./AI-Human-Likeness-Design-v4.0.md)、[AI 发言调度](./AI-Scheduling.md)、[AI 提示词缓存优化](./AI-Prompt-Cache-Optimization.md) |
 
 ## 1. 背景
 
@@ -24,7 +24,7 @@
 
 - 让普通对局中的 AI 玩家按游戏阶段自动发言和投票。
 - 保持房间级行为稳定，避免多个模型同时基于同一上下文抢话。
-- 将“是否说、什么时候说、说什么”拆分为更可控的两层调用。
+- 让讨论阶段采用单次模型调用直接产出最终发言，减少链路长度和失败点。
 - 保证投票阶段符合同时盲投规则。
 - 为复盘、评估闭环和缓存优化提供结构化上下文与调用日志。
 
@@ -55,7 +55,7 @@ flowchart LR
   GS -->|voting| VOTE["AiService.generateVote()"]
   SPEECH --> MODEL["LLM API"]
   VOTE --> MODEL
-  SPEECH --> PROMPTS["PromptRegistry / prompt templates"]
+  SPEECH --> PROMPTS["prompt-loader / prompt version override"]
   VOTE --> PROMPTS
 ```
 
@@ -65,9 +65,9 @@ flowchart LR
 | --- | --- |
 | `GameService` | 触发阶段切换、选择候选玩家、构建 `GameContext`、写入发言和投票结果 |
 | `AiService` | 构造 Prompt、调用模型、解析结果、记录调用日志、执行格式兜底 |
-| `PromptRegistry` | 读取当前 active 代的 AI 提示词与人格库 |
-| `ai.personas.ts` | 维护当前生效的人格集合与默认人格库 |
-| `ai.types.ts` | 定义 `GameContext`、`AiSpeechStrategy`、`AiVoteAction` 等类型 |
+| `prompt-loader.ts` | 读取文件版 Prompt 并渲染模板；沙盒被测 AI 的讨论 system prompt 可被数据库版本覆盖 |
+| `ai.personas.ts` | 维护产品四张人格卡、格式化 persona 文本，并支持沙盒额外人格注册 |
+| `ai.types.ts` | 定义 `GameContext`、`PersonaCard`、`AiSpeechAction`、`AiVoteAction` 等类型 |
 
 ## 6. 详细设计
 
@@ -148,53 +148,34 @@ startModelSpeech(room, schedulerKind, initialDelayMs)
 
 普通 AI 的默认 backoff 为 `8_000ms`；模拟真人使用独立的更短退避常量。
 
-### 6.2 发言生成：双层模型调用
+### 6.2 发言生成：单层模型调用
 
-普通 AI 发言采用两次模型调用：
-
-1. **策略层**：决定是否发言、目标反应时间、下次观察时间和结构化策略。
-2. **表达层**：把结构化策略转换为最终聊天文本。
+普通 AI 讨论阶段现在只做一次模型调用。模型直接产出最终聊天文本，不再经过“策略层 JSON -> 表达层造句”的两段式链路。
 
 流程如下：
 
 ```text
 generateSpeech(context)
-  -> buildSpeechStrategyPrompt()
-  -> callModel(system-speech-strategy, user-speech-strategy-template)
-  -> parseSpeechStrategyResult()
-  -> 若 skip 则返回
-  -> buildSpeechExpressionPrompt()
-  -> callModel(system-speech-expression, user-speech-expression-template)
-  -> parseSpeechResult()
+  -> buildSpeechSystemPrompt()
+  -> buildDiscussionUserPrompt()
+  -> callModel(system-discussion, user-discussion-template)
+  -> 若输出仅为 skip / 沉默 / pass，则返回 skip
+  -> cleanSpeech() 清理引号、自报座号前缀和多余空白
+  -> typingDelayForContent() 估算打字耗时
   -> speak 或 skip
 ```
 
-策略层输出示例：
+实现要点：
 
-```json
-{
-  "type": "speak",
-  "targetResponseDelayMs": 2500,
-  "nextCheckAfterMs": 10000,
-  "strategy": {
-    "replyTo": "3号说我机械",
-    "speechAct": "防守反问",
-    "publicPoint": "我只是催2号说句话，不足以说明机械",
-    "tone": "有点不服，但别长篇解释",
-    "maxSentences": 2,
-    "constraints": ["不要同时点评多人"],
-    "avoidPhrases": ["先看看大家反应", "带节奏"]
-  }
-}
-```
+- 普通对局默认使用 `ai-player/system-discussion.txt` + `ai-player/user-discussion-template.txt`。
+- 沙盒中 `myRole=ai_under_test` 时，讨论 system prompt 可由 `myPromptVersionId` 指向的数据库版本覆盖；缺失时回退到文件版模板。
+- 沙盒中 `myRole=detective` / `filler` 时，分别使用 `sandbox/detective-discussion.txt` / `sandbox/filler-discussion.txt`。
+- 讨论阶段不要求模型返回 JSON；模型只需要返回一条聊天文本，或返回沉默标记表示“这轮先看着”。
 
-表达层输出示例：
+讨论输出示例：
 
-```json
-{
-  "type": "speak",
-  "content": "啊？我就催一下2号，这也算机械吗"
-}
+```text
+啊？我就催一下2号，这也算机械吗
 ```
 
 ### 6.3 投票流程
@@ -224,6 +205,14 @@ castAiVote(roomId, aiPlayerId)
 - 不能投自己
 - 每轮每人只能投一次
 
+`generateVote()` 当前要求模型优先返回一行 JSON：
+
+```json
+{"vote":"3号","reason":"我就觉得怪"}
+```
+
+若模型没有严格按 JSON 输出，实现会退回到宽松解析，直接从整段文本中提取座号；最终仍要经过“目标存活且非自己”的工程层校验。
+
 ### 6.4 投票兜底
 
 模型投票失败时，服务端使用兜底逻辑：
@@ -247,7 +236,7 @@ castAiVote(roomId, aiPlayerId)
 | `myPlayerType` | `"ai"` 或 `"human"` |
 | `mySimulated` | 是否模拟真人 |
 | `myModelId` | 模型配置条目 ID |
-| `myPersona` | 当前 AI 人格；模拟真人为 `null` |
+| `myPersona` | 当前人格卡；普通对局 AI 为产品人格，沙盒角色可为额外注册的人格；无 personaId 的旧模拟玩家为 `null` |
 | `alivePlayers` | 存活玩家的 `{ id, seatNo }` 列表 |
 | `recentMessages` | 当前轮全部公开聊天 |
 | `historicalMessages` | 历史轮次聊天 |
@@ -255,32 +244,34 @@ castAiVote(roomId, aiPlayerId)
 | `currentVoteCounts` | 当前轮投票计数 |
 | `voteHistory` | 历史轮次投票摘要 |
 | `shortMemory` | 当前玩家自己的投票短期记忆 |
+| `myRole` | 沙盒角色：`ai_under_test` / `detective` / `filler`；普通对局为空 |
+| `myPromptVersionId` | 沙盒被测 AI 的讨论 prompt 版本；普通对局为空 |
 
 设计约束：
 
-- 除自己昵称外，其他玩家统一显示为“X号位”。
+- 聊天记录里的玩家标签统一渲染为 `N号`，不暴露昵称。
 - `recentMessages` 使用当前轮全量消息，不使用滑动窗口。
 - 投票 Prompt 中虽然存在 `currentVoteCounts`，但渲染为“同时盲投，当前票数不可见”。
 - `shortMemory` 仅给自己看，不进入公开快照。
 
 ### 6.6 人格系统
 
-更完整的人格、短期记忆与 prompt 版本化拆解见 [AI 拟人化设计](./AI-Human-Likeness-Design.md)。
+更完整的人格卡文本见 [AI-Human-Likeness-Design-v4.0.md](./AI-Human-Likeness-Design-v4.0.md)；设计总览见 [AI-Human-Likeness-Design.md](./AI-Human-Likeness-Design.md)。
 
-当前默认人格库定义在 `apps/api/src/ai/ai.personas.ts`，包含 8 个默认人格：
+当前产品人格库定义在 `apps/api/src/ai/ai.personas.ts`，固定为 4 张 `PersonaCard`：
 
 | ID | 名称 | 摘要 |
 | --- | --- | --- |
-| `active_icebreaker` | 热心话痨型 | 冷场时更可能先开口 |
-| `lazy_floater` | 划水摸鱼型 | 少说、敷衍、保守 |
-| `snarky_joker` | 贫嘴玩笑型 | 爱玩梗和调侃 |
-| `blunt_grumpy` | 暴躁直球型 | 说话直接、偏冲 |
-| `emoji_fan` | 表情语气型 | 情绪外放、口头语多 |
-| `shy_quiet` | 社恐慢热型 | 被动、慢热、惜字 |
-| `serious_analyst` | 认真分析型 | 有信息时更愿意给具体判断 |
-| `contrarian` | 杠精抬杠型 | 爱唱反调和反问 |
+| `P-01` | 阿条 | 摆烂躺平型，少说、敷衍、随大流 |
+| `P-02` | 酸梅 | 杠精毒舌型，爱反问、爱挑刺 |
+| `P-03` | 布丁 | 玩梗乐子人，话多但信息密度低 |
+| `P-04` | 探长 | 疑神疑鬼戏精型，爱凭感觉点人 |
 
-人格不是硬编码常量集合。运行时真实生效的是由 `PromptRegistry` 注入的 active 集合；`DEFAULT_AI_PERSONAS` 仅是播种内容和失败兜底。
+实现约束：
+
+- `getActivePersonas()` 当前直接返回固定的 `PERSONA_POOL`。
+- `formatPersonaCard(card, seatNo)` 会把人格卡渲染成 system prompt 末尾的 `{{persona}}` 文本。
+- `registerExtraPersonas()` 允许 `SandboxModule` 注册侦探/填充人格，但这些额外人格不进入产品对局的抽卡池。
 
 ### 6.7 Prompt 结构
 
@@ -290,32 +281,27 @@ castAiVote(roomId, aiPlayerId)
 
 | 文件 | 作用 |
 | --- | --- |
-| `system-speech-strategy.txt` | 发言策略层系统提示词 |
-| `user-speech-strategy-template.txt` | 发言策略层用户模板 |
-| `system-speech-expression.txt` | 发言表达层系统提示词 |
-| `user-speech-expression-template.txt` | 发言表达层用户模板 |
+| `system-discussion.txt` | 讨论阶段 system prompt；注入完整人格卡文本 |
+| `user-discussion-template.txt` | 讨论阶段用户模板；注入轮次、聊天记录、历史投票等公开上下文 |
 | `system-vote.txt` | 投票系统提示词 |
 | `user-vote-template.txt` | 投票用户模板 |
 
-#### 6.7.2 模拟真人 Prompt 文件
+#### 6.7.2 离线沙盒角色 Prompt 文件
 
-目录：`apps/api/src/ai/prompts/sim-human/`
+目录：`apps/api/src/ai/prompts/sandbox/`
 
-- 发言：`system-sim-human-speech.txt` / `system-sim-human-speech-high.txt`
-- 投票：`system-sim-human-vote.txt` / `system-sim-human-vote-high.txt`
-- 用户模板：`user-sim-human-speech-template.txt`、`user-sim-human-vote-template.txt`
+| 文件 | 作用 |
+| --- | --- |
+| `detective-discussion.txt` | 沙盒侦探角色的讨论 system prompt |
+| `detective-vote.txt` | 沙盒侦探 / filler 角色共用的投票 system prompt |
+| `filler-discussion.txt` | 沙盒 filler 角色的讨论 system prompt |
 
-#### 6.7.3 缓存分层
+#### 6.7.3 Prompt 加载与版本覆盖
 
-AI 玩家模板使用 `<<CACHE_SPLIT>>` 划分缓存层：
-
-1. 静态指令
-2. 玩家固定信息
-3. 轮内稳定信息
-4. 最近聊天
-5. 高频变化后缀
-
-发送给 OpenAI-compatible 或流式接口前会移除该标记；Claude 请求会按层构造成 block。
+- 产品默认 Prompt 通过 `prompt-loader.ts` 从文件系统读取。
+- 沙盒里只有 `ai_under_test` 的**讨论** system prompt 支持版本覆盖：`AiService.loadPromptVersionText()` 会按 `myPromptVersionId` 从 `sandbox_prompt_versions` 读取正文，失败时回退到 `system-discussion.txt`。
+- 投票 system prompt 当前不走版本覆盖，始终使用文件版 `system-vote.txt`。
+- 当前普通对局链路没有应用层的 `<<CACHE_SPLIT>>` 标记分层；日志中看到的缓存 token 指标来自模型提供方返回的 usage 数据。
 
 ### 6.8 模型协议与解析
 
@@ -338,7 +324,9 @@ AI 玩家模板使用 `<<CACHE_SPLIT>>` 划分缓存层：
 
 #### 6.8.2 Claude Messages API
 
-`AiService.buildClaudeRequest()` 发送：
+Claude Messages API 支持把 `messages[].content` 写成文本块数组等更通用形式；当前项目的 `AiService.buildClaudeRequest()` 采用字符串简写形式发送用户消息。
+
+API 层面的泛化写法可表示为：
 
 ```json
 {
@@ -355,20 +343,36 @@ AI 玩家模板使用 `<<CACHE_SPLIT>>` 划分缓存层：
 }
 ```
 
+当前实现等价于：
+
+```json
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "…"
+    }
+  ]
+}
+```
+
 若模型条目配置为 `claude`，`baseURL` 会被标准化为不带 `/v1` 的根地址，实际请求地址为 `{baseURL}/v1/messages`。
 
-#### 6.8.3 JSON 容错解析
+#### 6.8.3 讨论与投票解析
 
-`AiService.extractJson()` 依次尝试：
+讨论阶段不解析 JSON，而是直接把模型返回当作聊天文本处理：
 
-1. 直接 `JSON.parse(text.trim())`
-2. 从 Markdown 代码块中提取 JSON
-3. 从文本中提取首个 `{...}` 对象
+1. 空文本直接视为 `skip`
+2. 归一化后若仅为 `skip` / `沉默` / `pass`，视为“这轮先看着”
+3. `cleanSpeech()` 清掉包裹引号、自报座号前缀和多余空白，并截断到 `120` 字符
+4. `typingDelayForContent()` 按文本长度估一个打字耗时，避免模型驱动玩家秒回
 
-三者都失败时：
+投票阶段的解析顺序为：
 
-- 发言返回 `skip`
-- 投票返回 `null`
+1. 从整段响应中提取首个 `{...}` 并尝试 `JSON.parse`
+2. 优先读取 `vote` 和 `reason` 字段
+3. 若 JSON 失败，则直接从整段文本里提取座号（兼容 `3号` / `P3` / `3`）
+4. 若座号不存在、目标不存活或目标是自己，则返回 `null`，由对局层走 fallback
 
 ## 7. 数据模型、接口与配置
 
@@ -377,7 +381,7 @@ AI 玩家模板使用 `<<CACHE_SPLIT>>` 划分缓存层：
 | 类型 | 说明 |
 | --- | --- |
 | `GameContext` | 模型调用的统一输入 |
-| `AiSpeechStrategy` | 策略层输出的结构化发言策略 |
+| `PersonaCard` | 单层方案的人格卡结构 |
 | `AiSpeechAction` | 发言动作：`speak` 或 `skip` |
 | `AiVoteAction` | 投票动作 |
 | `AiCallRecord` | 单次模型调用日志 |
@@ -386,11 +390,10 @@ AI 玩家模板使用 `<<CACHE_SPLIT>>` 划分缓存层：
 
 | `callType` | 触发场景 |
 | --- | --- |
-| `speech-strategy` | AI 发言策略层 |
-| `speech-expression` | AI 发言表达层 |
-| `vote` | AI 投票 |
-| `sim-human-speech` | 模拟真人发言 |
-| `sim-human-vote` | 模拟真人投票 |
+| `discussion` | 当前运行时所有模型驱动玩家的讨论发言调用 |
+| `vote` | 当前运行时所有模型驱动玩家的投票调用 |
+
+> Replay / 导出链路仍兼容历史日志中的 `speech-strategy`、`speech-expression`、`sim-human-speech`、`sim-human-vote`，但当前实现不会再产生这些新值。
 
 ### 7.3 关键配置
 
@@ -423,26 +426,28 @@ AI 玩家模板使用 `<<CACHE_SPLIT>>` 划分缓存层：
 | `temperature` | 温度 |
 | `reasoningEffort` | 推理强度 |
 | `thinking` | 是否发送 `thinking` 字段 |
+| `maxTokens` | Claude 请求的 `max_tokens` 上限；未配置时使用默认值 |
 | `timeoutMs` | 单次调用超时 |
-| `expression.*` | 表达层覆盖项 |
+
+> 历史配置文件里可能仍保留 `expression.*` 字段，但当前单层运行时不会读取它。
 
 ## 8. 备选方案与取舍
 
 | 决策 ID | 决策 | 备选方案 | 取舍理由 |
 | --- | --- | --- | --- |
 | `DEC-ROOM-SERIAL-SCHEDULING` | 房间级串行发言调度 | 多个 AI 并发生成 | 并发会导致多个 AI 基于同一上下文同时抢话，表现更机械，且更容易互相踩上下文 |
-| `DEC-DOUBLE-STAGE-SPEECH` | 发言拆为策略层 + 表达层 | 单次模型直接产出最终发言 | 双层更容易约束“是否说、何时说、说什么”，也更利于调试和拟人化优化 |
+| `DEC-SINGLE-STAGE-DISCUSSION` | 讨论阶段单次模型直接产出最终发言 | 策略层 + 表达层两次调用 | 当前人格卡 + 单层 system prompt 已足够约束口吻和目标；单次调用链路更短，也便于与沙盒 prompt 版本共用 |
 | `DEC-STALE-CHECK-ROUND-AND-VOTES` | 普通模式下仅用 `roundNo + voteCount` 判定发言上下文失效 | 任意新聊天都视为失效 | 聊天变化过于频繁，会导致普通模式下大量调用被误丢弃 |
 | `DEC-HIDE-LIVE-VOTE-COUNTS` | 投票 Prompt 固定隐藏实时票型 | 直接把 `currentVoteCounts` 暴露给模型 | 游戏规则要求同时盲投，模型不能读取本轮未公开票数 |
-| `DEC-PUBLIC-SEAT-VIEW` | 聊天统一使用“X号位”公共视角 | 按当前玩家重写成“你/别人”视角 | 公共视角更利于跨玩家缓存复用，也降低上下文分叉 |
-| `DEC-TOLERANT-JSON-EXTRACTION` | 对 JSON 输出做宽松提取 | 严格要求模型必须返回纯 JSON | 宽松解析能显著降低因模型输出包裹文字而导致的整次调用失败 |
+| `DEC-PUBLIC-SEAT-VIEW` | 聊天统一使用“`N号`”公共视角 | 按当前玩家重写成“你/别人”视角 | 公共视角更利于跨玩家缓存复用，也降低上下文分叉 |
+| `DEC-TOLERANT-VOTE-PARSING` | 投票输出先按 JSON 解析，再宽松提取座号 | 严格要求模型必须返回纯 JSON | 宽松解析能显著降低因模型输出夹带说明文字而导致的投票失败 |
 
 ## 9. 风险与失败模式
 
 | 风险 | 触发条件 | 影响 | 缓解措施 |
 | --- | --- | --- | --- |
 | 模型超时 | 上游 API 慢或不可用 | 发言或投票缺失 | 超时后发言转 `skip`，投票走兜底 |
-| 输出非法 | 非 JSON、字段缺失、目标非法 | 动作无法执行 | 工程层解析、校验并降级 |
+| 输出非法 | 讨论返回空文本 / 沉默标记，或投票 JSON 损坏、座号非法 | 动作无法执行 | 讨论转 `skip`；投票宽松解析后仍不合法则走 fallback |
 | 上下文过期 | 模型返回前轮次或投票状态变化 | 旧上下文发言污染当前局势 | 保存前再次校验，失效则丢弃并短延迟重试 |
 | 调度偏置 | 少数 AI 连续被选中 | 话语权分布不自然 | 使用“未发言 / 未考虑过”优先级和 skip backoff |
 | 实现集中 | `ai.service.ts` 职责过重 | 后续修改成本高 | 目前通过类型和模板分层控制；模块拆分列入后续工作 |
@@ -456,11 +461,11 @@ AI 玩家模板使用 `<<CACHE_SPLIT>>` 划分缓存层：
 2. **投票规则验证**  
    检查投票阶段模型是否无法看到实时票型，且无自投、重复投票和对已出局玩家投票。
 3. **失败兜底验证**  
-   人工制造模型超时或非 JSON 输出，确认发言转 `skip`、投票走 fallback。
+   人工制造模型超时、讨论空文本或投票非 JSON 输出，确认发言转 `skip`、投票走 fallback。
 4. **复盘验证**  
    通过 `ai_call_logs`、Replay 导出和自动对抗房观察 Prompt、原始输出和最终落库行为是否一致。
-5. **缓存验证**  
-   查看模型日志中的缓存命中统计，确认 `<<CACHE_SPLIT>>` 分层生效。
+5. **调用观测验证**  
+   查看模型日志、Replay 导出或 usage 中的缓存 token 统计，确认请求参数、Prompt 覆盖与 provider 返回符合预期。
 
 ## 11. 已知限制
 
