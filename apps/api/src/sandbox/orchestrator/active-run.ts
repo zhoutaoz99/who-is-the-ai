@@ -30,6 +30,8 @@ export type GameStatus = "pending" | "running" | "scoring" | "finished" | "faile
  */
 export interface GameItem {
   side: "champion" | "child";
+  /** 多候选一代时,child 侧对局所属的候选版本。champion 侧为空。 */
+  child_id?: string;
   scenario_id: string;
   seed: number;
   run: number;
@@ -62,11 +64,23 @@ export type GameStatusUpdate = { status: GameStatus } & GameDetail;
 /** 优化器候选(供前台 review + 编辑后接受)。 */
 export interface ActiveRunChild {
   version_id: string;
+  based_on?: string;
+  crossover?: {
+    base: string;
+    donor: string;
+    grafted_trait: string;
+  };
   target: string;
   edit_type: string;
   hypothesis?: string;
   diff_summary?: string;
   prompt_text: string;
+  validate?: PromptValidation;
+  validation?: ValidationReport;
+  gate?: GateDecision;
+  holdout?: HoldoutRun;
+  decision?: "promoted" | "rejected";
+  score?: number | null;
 }
 
 export interface ActiveRun {
@@ -84,9 +98,15 @@ export interface ActiveRun {
     /** 本 run 的完整配置(刷新/重连后前台回显用;与上面计划字段一起持久化进 state)。 */
     discussionSeconds?: number;
     judgeModelId?: string;
+    judgeModelIds?: string[];
+    diagnose?: boolean;
+    costTier?: string;
     optimizerModelId?: string;
     assignedTarget?: string;
   };
+  /** 所有候选;旧前台兼容字段 child 始终指向当前评测/选中的候选。 */
+  children?: ActiveRunChild[];
+  selected_child_id?: string;
   /** optimize+validate 后填充。 */
   child?: ActiveRunChild;
   /** gating 后填充(优化集闸门)。 */

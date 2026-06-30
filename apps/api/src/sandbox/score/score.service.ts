@@ -62,17 +62,18 @@ export class ScoreService {
     let blindOk: boolean;
     let diagnostic: DiagnosticParts | undefined;
     let diagPartial = false;
+    const primaryJudgeModelId = opts.judgeModelId ?? opts.judgeModelIds?.[0];
 
     if (opts.diagnose) {
       // 诊断路径:逐轮轨迹定位失败轮,再跑诊断裁判。
-      const traj = await this.trajectory.run(match, opts.judgeModelId);
+      const traj = await this.trajectory.run(match, primaryJudgeModelId);
       suspicion = traj.suspicion;
       blindOk = traj.ok;
       const diag = await this.diagnostic.run(
         match,
         view,
         traj.failureRound,
-        opts.judgeModelId,
+        primaryJudgeModelId,
       );
       if (blindOk) judges = [diag.judgeModel];
       if (diag.ok) {

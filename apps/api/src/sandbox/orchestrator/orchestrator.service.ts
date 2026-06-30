@@ -11,14 +11,16 @@ import { buildValidation } from "../aggregate/validation";
 import { DEFAULT_AGG_CONFIG } from "../aggregate/types";
 import type { ValidationReport } from "../aggregate/validation";
 import { assignTargets } from "../optimizer/assign-targets";
-import { buildOptimizerInput, championProfile } from "../optimizer/input";
+import type { AssignedTarget } from "../optimizer/assign-targets";
+import { isDuplicate } from "../optimizer/dedupe";
+import { buildOptimizerInput, championProfile, LOCKED_SECTIONS, type WeakDimension } from "../optimizer/input";
 import { typeOfTarget } from "../optimizer/operators";
 import { OptimizerService } from "../optimizer/propose";
-import { marginScore, updatePopulation } from "./population";
-import { emptyScoreboard, updateScoreboard } from "../optimizer/scoreboard";
-import { evaluateHypothesis } from "../optimizer/tried-and-rejected";
+import { marginScore, sampleParents, updatePopulation } from "./population";
+import { emptyScoreboard, updateScoreboard, type OperatorScoreboard } from "../optimizer/scoreboard";
+import { compressTried, evaluateHypothesis } from "../optimizer/tried-and-rejected";
 import { validatePrompt } from "../optimizer/validate-prompt";
-import type { PromptValidation } from "../optimizer/validate-prompt";
+import type { PromptValidation, RequiredExcerpt } from "../optimizer/validate-prompt";
 import { SandboxRepository } from "../sandbox.repository";
 import { optimizeGate } from "./gate";
 import type { GateDecision } from "./gate";
@@ -42,8 +44,17 @@ import type {
 } from "./active-run";
 
 const POPULATION_CAP = 5;
-/** 每代靶子预算(assign_targets 取前 N 弱点配算子;单线贪心取首个,多子并行待后续)。 */
+/** 每代靶子预算(assign_targets 取前 N 弱点配算子;自动模式默认生成 K 个候选)。 */
 const K_CHILDREN = 4;
+
+interface CandidateResult {
+  child: PromptVersion;
+  validate: PromptValidation;
+  validation: ValidationReport;
+  gate: GateDecision;
+  holdout?: HoldoutSummary;
+  decision: "promoted" | "rejected";
+}
 
 export interface OrchestratorSnapshot {
   champion: string;
@@ -172,10 +183,46 @@ export class OrchestratorService implements OnModuleInit {
     if (state && versionId === state.champion) {
       throw new Error("不能删除当前 champion");
     }
-    if (state?.active_run?.child?.version_id === versionId) {
+    if (
+      state?.active_run?.child?.version_id === versionId ||
+      state?.active_run?.children?.some((c) => c.version_id === versionId)
+    ) {
       throw new Error("不能删除活跃 run 的候选(先终止或确认本代)");
     }
     this.promptStore.deleteVersion(versionId);
+  }
+
+  /** 将一个稳定历史版本重新激活为 champion(用于人工回滚 / 真人校准翻车后的执行动作)。 */
+  async activateVersion(versionId: string): Promise<void> {
+    const state = this.stateStore.load() ?? this.stateStore.seedBaseline();
+    if (state.active_run && state.active_run.phase !== "settled") {
+      throw new Error("有活跃 run 时不能切换 champion(请先确认/终止)");
+    }
+    const target = this.promptStore.load(versionId);
+    if (!target) throw new Error(`版本不存在:${versionId}`);
+    if (target.status === "candidate" || target.status === "rejected") {
+      throw new Error(`只能重激活 champion/accepted/baseline 这类稳定版本,当前状态=${target.status}`);
+    }
+    if (state.champion === versionId) return;
+
+    const previousChampion = state.champion;
+    this.promptStore.patchStatus(previousChampion, { status: "accepted" });
+    this.promptStore.patchStatus(versionId, { status: "champion" });
+
+    state.champion = versionId;
+    state.population = updatePopulation(
+      state.population,
+      versionId,
+      versionId,
+      POPULATION_CAP,
+      (id) => marginScore(this.promptStore.loadMeta(id) ?? target),
+    );
+    state.active_run = null;
+    state.updatedAt = new Date().toISOString();
+    this.stateStore.save(state);
+    await this.stateStore.flush();
+    this.emitStatus();
+    this.logger.warn(`重激活 champion:${previousChampion} → ${versionId}`);
   }
 
   /** 删除一条失败记忆(按 version_id;同 version_id 的条目一并移除)。 */
@@ -212,6 +259,24 @@ export class OrchestratorService implements OnModuleInit {
       this.promptStore.save({ ...child, status: "candidate" });
     }
     const childVersion = this.promptStore.load(child.version_id)!;
+    const validate = validatePrompt(childVersion, championVersion, {
+      lengthBudgetPct: 0.15,
+      requiredExcerpts: this.requiredExcerptsFor(childVersion, championVersion),
+    });
+    if (!validate.ok) {
+      return await this.settleGeneration({
+        championBeforeId: championVersion.version_id,
+        child: childVersion,
+        decision: "rejected",
+        validation: emptyValidation(championVersion.version_id, childVersion.version_id),
+        gate: {
+          decision: "reject",
+          reasons: [`validate_prompt 失败: ${validate.reasons.join("; ")}`],
+          marginVerdict: null,
+        },
+        evalSetVersion: plan.evalSetVersion,
+      });
+    }
     const parentScores = await this.pairedEval.runVersionEval(championVersion, plan);
     const childScores = await this.pairedEval.runVersionEval(childVersion, plan);
     const validation = buildValidation(parentScores, childScores);
@@ -268,6 +333,9 @@ export class OrchestratorService implements OnModuleInit {
         evalSetVersion: plan.evalSetVersion,
         discussionSeconds: plan.discussionSeconds,
         judgeModelId: plan.judgeModelId,
+        judgeModelIds: plan.judgeModelIds,
+        diagnose: plan.diagnose,
+        costTier: plan.costTier,
         optimizerModelId: opts.optimizerModelId,
         assignedTarget: opts.assignedTarget,
       },
@@ -308,125 +376,231 @@ export class OrchestratorService implements OnModuleInit {
     });
     if (this.stopRequested) return this.settleStopped("用户停止");
 
-    // 2) 优化器提案:assign_targets(覆盖 top-N 弱点 + 战绩排序)。
-    //    单线贪心取首个可定向靶子(K 并行待后续);手动 opts 可覆盖靶子/算子。
+    // 2) 优化器提案:assign_targets 产 K 个靶子;每个靶子单独调用一次优化器。
     this.setPhase("optimizing");
     const profile = championProfile(championScores);
     const state = this.stateStore.load()!;
     const board = state.operator_scoreboard ?? emptyScoreboard();
-    const assigned = assignTargets(profile.weakDimensions, K_CHILDREN, board);
-    const topAssigned = assigned.find((a) => a.assigned_target != null);
-    const target =
-      opts.assignedTarget ?? topAssigned?.assigned_target ?? profile.weakDimensions[0]?.metric ?? "blind_suspicion_margin";
-    const editType = opts.assignedEditType ?? topAssigned?.assigned_edit_type ?? undefined;
-    const input = buildOptimizerInput(champion, profile, target, editType, state.tried_and_rejected);
-    const proposal = await this.optimizer.propose(input, {
-      basedOn: champion.version_id,
-      optimizerModelId: opts.optimizerModelId,
-    });
+    const parentVersions = this.sampleParentVersions(champion, state);
+    const targetPlans = buildTargetPlans(opts, profile.weakDimensions, board);
+    const proposedChildren: PromptVersion[] = [];
+    run.children = [];
+    run.selected_child_id = undefined;
+    for (let i = 0; i < targetPlans.length; i += 1) {
+      const planTarget = targetPlans[i];
+      const parent = parentVersions[i % parentVersions.length] ?? champion;
+      const target =
+        planTarget.assigned_target ?? profile.weakDimensions[0]?.metric ?? "blind_suspicion_margin";
+      const editType = planTarget.assigned_edit_type || undefined;
+      const input = buildOptimizerInput(
+        parent,
+        profile,
+        target,
+        editType,
+        state.tried_and_rejected,
+      );
+      const proposal = await this.optimizer.propose(input, {
+        basedOn: parent.version_id,
+        optimizerModelId: opts.optimizerModelId,
+      });
+      if (proposal && !isDuplicate(proposal.child, proposedChildren)) {
+        proposedChildren.push(proposal.child);
+      }
+      if (this.stopRequested) return this.settleStopped("用户停止");
+    }
+    if (!opts.assignedTarget && !opts.assignedEditType) {
+      const pair = this.pickCrossoverPair(champion, state);
+      if (pair) {
+        const proposal = await this.optimizer.crossover(
+          {
+            base: pair.base,
+            donor: pair.donor,
+            baseTraits: pair.baseTraits,
+            donorTrait: pair.donorTrait,
+            donorExcerpt: pair.donorExcerpt,
+            lockedSections: LOCKED_SECTIONS,
+            triedAndRejected: compressTried(state.tried_and_rejected).slice(0, 20),
+            lengthBudget: `不超过底版长度 +15%(底版约 ${pair.base.prompt_text.length} 字)`,
+          },
+          { optimizerModelId: opts.optimizerModelId },
+        );
+        if (proposal && !isDuplicate(proposal.child, proposedChildren)) {
+          proposedChildren.push(proposal.child);
+        }
+      }
+    }
     if (this.stopRequested) return this.settleStopped("用户停止");
-    if (!proposal) return this.settleStopped("优化器未产出可用候选");
+    if (proposedChildren.length === 0) return this.settleStopped("优化器未产出可用候选");
 
-    // 3) 校验
+    // 3) 校验全部候选
     this.setPhase("validating");
-    this.promptStore.save({ ...proposal.child, status: "candidate" });
-    const validate = validatePrompt(proposal.child, champion, { lengthBudgetPct: 0.15 });
-    run.child = {
-      version_id: proposal.child.version_id,
-      target: proposal.child.target_dimension ?? target,
-      edit_type: proposal.child.edit_type ?? "",
-      hypothesis: proposal.child.hypothesis,
-      prompt_text: proposal.child.prompt_text,
-    };
-    run.validate = validate;
+    const results: CandidateResult[] = [];
+    const validChildren: Array<{ child: PromptVersion; validate: PromptValidation }> = [];
+    for (const child of proposedChildren) {
+      this.promptStore.save({ ...child, status: "candidate" });
+      const parent = this.promptStore.load(child.parent_id ?? champion.version_id) ?? champion;
+      const validate = validatePrompt(child, parent, {
+        lengthBudgetPct: 0.15,
+        requiredExcerpts: this.requiredExcerptsFor(child, parent),
+      });
+      const childView = toActiveRunChild(child, validate);
+      this.upsertRunChild(childView);
+      run.child = childView;
+      run.validate = validate;
+      run.selected_child_id = child.version_id;
+      this.persistRun();
+      this.emitProposal(childView, validate);
+      if (!validate.ok) {
+        const failGate: GateDecision = {
+          decision: "reject",
+          reasons: [`validate_prompt 失败: ${validate.reasons.join("; ")}`],
+          marginVerdict: null,
+        };
+        childView.gate = failGate;
+        childView.validation = emptyValidation(champion.version_id, child.version_id);
+        childView.decision = "rejected";
+        this.upsertRunChild(childView);
+        results.push({
+          child,
+          validate,
+          decision: "rejected",
+          validation: childView.validation,
+          gate: failGate,
+        });
+      } else {
+        validChildren.push({ child, validate });
+      }
+    }
     this.persistRun();
-    this.emitProposal(run.child, validate);
     if (this.stopRequested) return this.settleStopped("用户停止");
-    if (!validate.ok) {
-      // validate 失败:按 rejected 落定(记 tried_and_rejected + 历史代)
-      const failGate: GateDecision = {
-        decision: "reject",
-        reasons: [`validate_prompt 失败: ${validate.reasons.join("; ")}`],
-        marginVerdict: null,
-      };
-      run.gate = failGate;
-      await this.settleGeneration({
+    if (validChildren.length === 0) {
+      const selected = results[0];
+      if (!selected) return this.settleStopped("所有候选校验失败");
+      await this.settleGenerationMulti({
         championBeforeId: champion.version_id,
-        child: proposal.child,
-        decision: "rejected",
-        validation: emptyValidation(champion.version_id, proposal.child.version_id),
-        gate: failGate,
+        selectedChildId: selected.child.version_id,
+        selectedDecision: "rejected",
+        results,
         evalSetVersion: plan.evalSetVersion,
       });
       return this.settleRunDone("rejected");
     }
 
-    // 4) 评测 child
+    // 4) 批量评测 child。候选之间共享 champion 评分;child 侧总进度按候选数扩展。
     this.setPhase("evaluating_child");
-    const childScores = await this.pairedEval.runVersionEval(proposal.child, plan, {
-      onGameStatus: (patch) => this.recordGameStatus({ side: "child", ...patch }),
-      shouldStop: () => this.stopRequested,
-    });
+    run.progress.child_total = run.progress.champion_total * validChildren.length;
+    this.persistRun();
+    const childScoresByVersion = await this.pairedEval.runVersionsEval(
+      validChildren.map((item) => item.child),
+      plan,
+      {
+        onGameStatus: (child, patch) =>
+          this.recordGameStatus({ side: "child", child_id: child.version_id, ...patch }),
+        shouldStop: () => this.stopRequested,
+      },
+    );
     if (this.stopRequested) return this.settleStopped("用户停止");
 
-    // 5) 优化集闸门
     this.setPhase("gating");
-    const validation = buildValidation(championScores, childScores);
-    const gate = optimizeGate(validation);
-    run.validation = validation;
-    run.gate = gate;
-    this.persistRun();
-    this.emitGate(validation, gate);
+    for (const item of validChildren) {
+      const childView = this.findRunChild(item.child.version_id) ?? toActiveRunChild(item.child, item.validate);
+      run.child = childView;
+      run.selected_child_id = item.child.version_id;
+      run.validate = item.validate;
+      this.persistRun();
+      const childScores = childScoresByVersion.get(item.child.version_id) ?? [];
+      const validation = buildValidation(championScores, childScores);
+      const gate = optimizeGate(validation);
+      childView.validation = validation;
+      childView.gate = gate;
+      childView.score = validationScore(validation);
+      run.validation = validation;
+      run.gate = gate;
+      this.upsertRunChild(childView);
+      this.persistRun();
+      this.emitGate(validation, gate);
+      results.push({
+        child: item.child,
+        validate: item.validate,
+        decision: "rejected",
+        validation,
+        gate,
+      });
+    }
 
-    // 5.5) 留出复核(M5.7):仅过优化集闸时跑;无 holdout 配置则跳过(holdoutSummary=undefined)。
-    let holdoutSummary: HoldoutSummary | undefined;
-    let holdoutPass = true;
-    if (gate.decision === "promote") {
+    // 5.5) 在通过优化集闸的候选中按主 margin 选择,逐个留出复核,直到找到泛化也过闸的候选。
+    let selected = selectBestCandidate(results) ?? results[0];
+    let selectedHoldoutPass = selected.gate.decision === "promote";
+    const promoteCandidates = results
+      .filter((r) => r.validate.ok && r.gate.decision === "promote")
+      .sort((a, b) => validationScore(a.validation) - validationScore(b.validation));
+    for (const candidate of promoteCandidates) {
       this.setPhase("evaluating_holdout");
-      const review = await this.runHoldoutReview(champion, proposal.child, plan, {
-        onGameStatus: (patch) => this.recordHoldoutGameStatus(patch),
+      const childView = this.findRunChild(candidate.child.version_id) ?? toActiveRunChild(candidate.child, candidate.validate);
+      run.child = childView;
+      run.selected_child_id = candidate.child.version_id;
+      this.persistRun();
+      const review = await this.runHoldoutReview(champion, candidate.child, plan, {
+        onGameStatus: (patch) =>
+          this.recordHoldoutGameStatus({ ...patch, child_id: candidate.child.version_id }),
         shouldStop: () => this.stopRequested,
       });
       if (this.stopRequested) return this.settleStopped("用户停止");
-      if (review) {
-        holdoutSummary = review.summary;
-        holdoutPass = review.decision.decision === "pass";
-        if (run.holdout) {
-          run.holdout.validation = review.validation;
-          run.holdout.decision = review.decision;
-        }
-        this.persistRun();
-        this.emitHoldout(review.summary, review.decision);
+      if (!review) {
+        selected = candidate;
+        selectedHoldoutPass = true;
+        break;
       }
+      candidate.holdout = review.summary;
+      if (run.holdout) {
+        run.holdout.validation = review.validation;
+        run.holdout.decision = review.decision;
+      }
+      childView.holdout = run.holdout;
+      this.upsertRunChild(childView);
+      this.persistRun();
+      this.emitHoldout(review.summary, review.decision);
+      if (review.decision.decision === "pass") {
+        selected = candidate;
+        selectedHoldoutPass = true;
+        break;
+      }
+      selected = candidate;
+      selectedHoldoutPass = false;
     }
 
-    // 6) confirm 暂停 / auto 自动落定。auto 决策 = 过优化集闸 AND 过留出闸。
+    run.child = this.findRunChild(selected.child.version_id) ?? toActiveRunChild(selected.child, selected.validate);
+    run.selected_child_id = selected.child.version_id;
+    run.validation = selected.validation;
+    run.gate = selected.gate;
+    run.validate = selected.validate;
+    this.persistRun();
+
+    // 6) confirm 暂停 / auto 自动落定。auto 决策 = 选中候选过优化集闸 AND 过留出闸。
     if (run.mode === "confirm") {
       this.setPhase("awaiting_confirmation");
       const res = await this.awaitConfirm();
       if (res === "stop") return this.settleStopped("用户停止");
       const decision: "promoted" | "rejected" = res.accept ? "promoted" : "rejected";
-      await this.settleGeneration({
+      selected.decision = decision;
+      await this.settleGenerationMulti({
         championBeforeId: champion.version_id,
-        child: proposal.child,
-        decision,
-        validation,
-        gate,
-        holdout: holdoutSummary,
+        selectedChildId: selected.child.version_id,
+        selectedDecision: decision,
+        results,
         evalSetVersion: plan.evalSetVersion,
         editedPromptText: res.edited,
       });
       return this.settleRunDone(decision);
     }
     const autoDecision: "promoted" | "rejected" =
-      gate.decision === "promote" && holdoutPass ? "promoted" : "rejected";
-    await this.settleGeneration({
+      selected.gate.decision === "promote" && selectedHoldoutPass ? "promoted" : "rejected";
+    selected.decision = autoDecision;
+    await this.settleGenerationMulti({
       championBeforeId: champion.version_id,
-      child: proposal.child,
-      decision: autoDecision,
-      validation,
-      gate,
-      holdout: holdoutSummary,
+      selectedChildId: selected.child.version_id,
+      selectedDecision: autoDecision,
+      results,
       evalSetVersion: plan.evalSetVersion,
     });
     return this.settleRunDone(autoDecision);
@@ -494,20 +668,20 @@ export class OrchestratorService implements OnModuleInit {
     if (!run || run.phase !== "awaiting_confirmation") {
       throw new Error("无待确认的 run");
     }
-    if (!run.child || !run.validation || !run.gate) {
+    const selectedId = run.selected_child_id ?? run.child?.version_id;
+    if (!selectedId || !run.child || !run.validation || !run.gate) {
       throw new Error("待确认 run 数据不完整");
     }
     this.activeRun = run;
-    const child = this.promptStore.load(run.child.version_id);
-    if (!child) throw new Error(`候选版本缺失: ${run.child.version_id}`);
+    const child = this.promptStore.load(selectedId);
+    if (!child) throw new Error(`候选版本缺失: ${selectedId}`);
     const decision: "promoted" | "rejected" = accept ? "promoted" : "rejected";
-    await this.settleGeneration({
+    const results = rebuildCandidateResults(run, child, decision);
+    await this.settleGenerationMulti({
       championBeforeId: run.champion_id,
-      child,
-      decision,
-      validation: run.validation,
-      gate: run.gate,
-      holdout: holdoutSummaryOf(run.holdout),
+      selectedChildId: child.version_id,
+      selectedDecision: decision,
+      results,
       evalSetVersion: run.plan_summary.evalSetVersion,
       editedPromptText: edited,
     });
@@ -561,8 +735,11 @@ export class OrchestratorService implements OnModuleInit {
     await this.stateStore.flush();
 
     // 2) 丢弃本次候选版本(optimizing/validating 阶段才存在)。
-    const childId = run.child?.version_id;
-    if (childId) {
+    const childIds = new Set<string>([
+      ...(run.children ?? []).map((c) => c.version_id),
+      ...(run.child?.version_id ? [run.child.version_id] : []),
+    ]);
+    for (const childId of childIds) {
       this.promptStore.deleteVersion(childId);
     }
 
@@ -603,6 +780,7 @@ export class OrchestratorService implements OnModuleInit {
     const idx = games.findIndex(
       (g) =>
         g.side === item.side &&
+        (g.child_id ?? "") === (item.child_id ?? "") &&
         g.scenario_id === item.scenario_id &&
         g.seed === item.seed &&
         g.run === item.run,
@@ -628,6 +806,7 @@ export class OrchestratorService implements OnModuleInit {
     const idx = ho.games.findIndex(
       (g) =>
         g.side === item.side &&
+        (g.child_id ?? "") === (item.child_id ?? "") &&
         g.scenario_id === item.scenario_id &&
         g.seed === item.seed &&
         g.run === item.run,
@@ -651,6 +830,234 @@ export class OrchestratorService implements OnModuleInit {
     }
   }
 
+  private upsertRunChild(child: ActiveRunChild): void {
+    if (!this.activeRun) return;
+    const children = this.activeRun.children ?? [];
+    const idx = children.findIndex((c) => c.version_id === child.version_id);
+    if (idx >= 0) {
+      const next = children.slice();
+      next[idx] = { ...next[idx], ...child };
+      this.activeRun.children = next;
+    } else {
+      this.activeRun.children = [...children, child];
+    }
+  }
+
+  private findRunChild(versionId: string): ActiveRunChild | undefined {
+    return this.activeRun?.children?.find((c) => c.version_id === versionId);
+  }
+
+  private sampleParentVersions(champion: PromptVersion, state: OrchestratorState): PromptVersion[] {
+    const population = state.population
+      .map((id) => this.promptStore.load(id))
+      .filter((v): v is PromptVersion => v != null);
+    const parentIds = sampleParents(champion.version_id, population, Math.min(2, Math.max(1, population.length)));
+    const parents = parentIds
+      .map((id) => this.promptStore.load(id))
+      .filter((v): v is PromptVersion => v != null);
+    return parents.length > 0 ? parents : [champion];
+  }
+
+  private pickCrossoverPair(
+    champion: PromptVersion,
+    state: OrchestratorState,
+  ): { base: PromptVersion; donor: PromptVersion; baseTraits: string; donorTrait: string; donorExcerpt: string } | null {
+    const versions = uniqueVersions([
+      champion,
+      ...state.population
+        .map((id) => this.promptStore.load(id))
+        .filter((v): v is PromptVersion => v != null),
+    ]).filter(hasAcceptedTrait);
+    if (versions.length < 2) return null;
+
+    const pairs: Array<{ a: PromptVersion; b: PromptVersion; score: number }> = [];
+    for (let i = 0; i < versions.length; i += 1) {
+      for (let j = i + 1; j < versions.length; j += 1) {
+        const a = versions[i];
+        const b = versions[j];
+        if (traitTarget(a) === traitTarget(b)) continue;
+        pairs.push({ a, b, score: marginScore(a) + marginScore(b) });
+      }
+    }
+    pairs.sort((x, y) => x.score - y.score);
+    const pair = pairs[0];
+    if (!pair) return null;
+    const base = marginScore(pair.a) <= marginScore(pair.b) ? pair.a : pair.b;
+    const donor = base.version_id === pair.a.version_id ? pair.b : pair.a;
+    return {
+      base,
+      donor,
+      baseTraits: this.describeVersionTraits(base),
+      donorTrait: describeVersionTrait(donor),
+      donorExcerpt: this.extractTraitExcerpt(donor),
+    };
+  }
+
+  private requiredExcerptsFor(child: PromptVersion, parent: PromptVersion): RequiredExcerpt[] {
+    if (!child.crossover) return [];
+    const out: RequiredExcerpt[] = [];
+    for (const item of this.collectAcceptedTraits(parent)) {
+      out.push({
+        label: `base:${item.version_id}:${item.trait.target}`,
+        text: item.trait.excerpt,
+        minLineOverlap: 0.8,
+      });
+    }
+    const donor = this.promptStore.load(child.crossover.donor);
+    if (donor?.accepted_trait?.excerpt) {
+      out.push({
+        label: `donor:${donor.version_id}:${donor.accepted_trait.target}`,
+        text: donor.accepted_trait.excerpt,
+        minLineOverlap: 0.25,
+      });
+    }
+    return out;
+  }
+
+  private describeVersionTraits(version: PromptVersion): string {
+    const traits = this.collectAcceptedTraits(version)
+      .slice(0, 8)
+      .map((item) => describeVersionTrait(item.version));
+    return traits.length > 0 ? traits.join("\n") : "(暂无明确胜招元数据;至少保住底版当前已验证指标)";
+  }
+
+  private collectAcceptedTraits(
+    version: PromptVersion,
+  ): Array<{ version_id: string; version: PromptVersion; trait: NonNullable<PromptVersion["accepted_trait"]> }> {
+    const traits: Array<{ version_id: string; version: PromptVersion; trait: NonNullable<PromptVersion["accepted_trait"]> }> = [];
+    let cur: PromptVersion | null = version;
+    const seen = new Set<string>();
+    while (cur && !seen.has(cur.version_id) && traits.length < 12) {
+      seen.add(cur.version_id);
+      if (cur.accepted_trait) {
+        traits.push({ version_id: cur.version_id, version: cur, trait: cur.accepted_trait });
+      }
+      cur = cur.parent_id ? this.promptStore.load(cur.parent_id) : null;
+    }
+    return traits;
+  }
+
+  private extractTraitExcerpt(version: PromptVersion): string {
+    return version.accepted_trait?.excerpt ?? "";
+  }
+
+  /** 多候选一代落定:同一代只晋升一个候选,其余候选统一记 rejected/tried。 */
+  private async settleGenerationMulti(args: {
+    championBeforeId: string;
+    selectedChildId: string;
+    selectedDecision: "promoted" | "rejected";
+    results: CandidateResult[];
+    evalSetVersion: string;
+    editedPromptText?: string;
+  }): Promise<GenerationEval> {
+    const state = this.stateStore.load() ?? this.stateStore.seedBaseline();
+    const { championBeforeId, selectedChildId, selectedDecision, results, evalSetVersion, editedPromptText } = args;
+    const generationNo = state.generation + 1;
+    const triedAdded: string[] = [];
+    let championAfter = state.champion;
+
+    for (const result of results) {
+      const isSelected = result.child.version_id === selectedChildId;
+      const decision: "promoted" | "rejected" = isSelected ? selectedDecision : "rejected";
+      result.decision = decision;
+
+      if (decision === "promoted") {
+        const finalChild =
+          editedPromptText && isSelected ? { ...result.child, prompt_text: editedPromptText } : result.child;
+        const parent = this.promptStore.load(finalChild.parent_id ?? championBeforeId);
+        const promotedChild = {
+          ...finalChild,
+          accepted_trait: buildAcceptedTrait(finalChild, parent),
+        };
+        result.child = promotedChild;
+        this.promptStore.save({ ...promotedChild, status: "candidate" });
+        this.promptStore.patchStatus(promotedChild.version_id, {
+          status: "champion",
+          validated_metrics: summarize(result.validation),
+          eval_set_version: evalSetVersion,
+          accepted_trait: promotedChild.accepted_trait,
+        });
+        if (state.champion !== promotedChild.version_id) {
+          this.promptStore.patchStatus(state.champion, { status: "accepted" });
+        }
+        state.champion = promotedChild.version_id;
+        championAfter = promotedChild.version_id;
+        state.population = updatePopulation(
+          state.population,
+          promotedChild.version_id,
+          promotedChild.version_id,
+          POPULATION_CAP,
+          (id) => marginScore(this.promptStore.loadMeta(id) ?? promotedChild),
+        );
+        this.logger.log(`晋升:${promotedChild.version_id} 成为新 champion`);
+      } else {
+        this.promptStore.patchStatus(result.child.version_id, { status: "rejected" });
+        const reasonParts = [...result.gate.reasons];
+        if (result.holdout && !result.holdout.holds) {
+          reasonParts.push(...result.holdout.reasons.map((r) => `[holdout] ${r}`));
+        }
+        if (!isSelected) {
+          reasonParts.push("同代未选中:已有排序更优/留出更稳的候选");
+        } else if (result.gate.decision === "promote" && selectedDecision === "rejected") {
+          reasonParts.push("人工拒绝或留出复核未通过");
+        }
+        const hypo = evaluateHypothesis(result.child.target_dimension, result.validation);
+        if (!hypo.held) reasonParts.push(`[假设推翻] ${hypo.note}`);
+        state.tried_and_rejected.push({
+          version_id: result.child.version_id,
+          hypothesis: result.child.hypothesis,
+          target_dimension: result.child.target_dimension,
+          edit_type: result.child.edit_type,
+          reason: reasonParts.join("; ") || "未过闸/未选中",
+          generation: generationNo,
+        });
+        triedAdded.push(result.child.version_id);
+        this.logger.log(`拒绝:${result.child.version_id}`);
+      }
+
+      const tType = typeOfTarget(result.child.target_dimension ?? "");
+      if (tType && result.child.edit_type) {
+        state.operator_scoreboard = updateScoreboard(
+          state.operator_scoreboard ?? emptyScoreboard(),
+          tType,
+          result.child.edit_type,
+          decision === "promoted",
+        );
+      }
+    }
+
+    state.generation = generationNo;
+    state.eval_set_version = evalSetVersion;
+    state.updatedAt = new Date().toISOString();
+    const generation_id = `gen_${state.generation}_${selectedChildId}`;
+    const genEval: GenerationEval = {
+      generation_id,
+      generation: state.generation,
+      eval_set_version: evalSetVersion,
+      mode: "scripted_intent",
+      champion_before: championBeforeId,
+      children_evaluated: results.map((result) => ({
+        child_id: result.child.version_id,
+        based_on: result.child.parent_id ?? championBeforeId,
+        hypothesis: result.child.hypothesis,
+        target_dimension: result.child.target_dimension,
+        edit_type: result.child.edit_type,
+        validation: result.validation,
+        gate: result.gate,
+        holdout: result.holdout,
+        decision: result.decision,
+      })),
+      champion_after: championAfter,
+      population_after: state.population,
+      tried_and_rejected_added: triedAdded,
+      timestamp: new Date().toISOString(),
+    };
+    this.stateStore.save(state);
+    await this.repo.upsertGenerationEval(genEval);
+    await this.stateStore.flush();
+    return genEval;
+  }
+
   /** promote/reject + 状态更新 + GenerationEval 落盘(手动/自动两路共用)。 */
   private async settleGeneration(args: {
     championBeforeId: string;
@@ -664,28 +1071,36 @@ export class OrchestratorService implements OnModuleInit {
   }): Promise<GenerationEval> {
     const state = this.stateStore.load() ?? this.stateStore.seedBaseline();
     const { championBeforeId, child, decision, validation, gate, holdout, evalSetVersion, editedPromptText } = args;
+    let recordedChild = child;
 
     if (decision === "promoted") {
       const finalChild = editedPromptText ? { ...child, prompt_text: editedPromptText } : child;
-      this.promptStore.save({ ...finalChild, status: "candidate" });
-      this.promptStore.patchStatus(finalChild.version_id, {
+      const parent = this.promptStore.load(finalChild.parent_id ?? championBeforeId);
+      const promotedChild = {
+        ...finalChild,
+        accepted_trait: buildAcceptedTrait(finalChild, parent),
+      };
+      recordedChild = promotedChild;
+      this.promptStore.save({ ...promotedChild, status: "candidate" });
+      this.promptStore.patchStatus(promotedChild.version_id, {
         status: "champion",
         validated_metrics: summarize(validation),
         eval_set_version: evalSetVersion,
+        accepted_trait: promotedChild.accepted_trait,
       });
-      if (state.champion !== finalChild.version_id) {
+      if (state.champion !== promotedChild.version_id) {
         this.promptStore.patchStatus(state.champion, { status: "accepted" });
       }
-      state.champion = finalChild.version_id;
+      state.champion = promotedChild.version_id;
       // M5.10 种群:按 validated margin 排名 + 精英保留(champion 恒在)+ 截到 cap。
       state.population = updatePopulation(
         state.population,
-        finalChild.version_id,
-        finalChild.version_id,
+        promotedChild.version_id,
+        promotedChild.version_id,
         POPULATION_CAP,
-        (id) => marginScore(this.promptStore.loadMeta(id) ?? finalChild),
+        (id) => marginScore(this.promptStore.loadMeta(id) ?? promotedChild),
       );
-      this.logger.log(`晋升:${finalChild.version_id} 成为新 champion`);
+      this.logger.log(`晋升:${promotedChild.version_id} 成为新 champion`);
     } else {
       this.promptStore.patchStatus(child.version_id, { status: "rejected" });
       // 拒绝理由合并:优化集闸 + 留出闸(背答案常表现为优化集过、holdout 不过)+ M4.11 假设回环。
@@ -708,12 +1123,12 @@ export class OrchestratorService implements OnModuleInit {
     }
 
     // M4.9 战绩表更新:(破绽类型, edit_type) 这一格记一次(accepted=晋升)。自由名额无类型 → 跳过。
-    const tType = typeOfTarget(child.target_dimension ?? "");
-    if (tType && child.edit_type) {
+    const tType = typeOfTarget(recordedChild.target_dimension ?? "");
+    if (tType && recordedChild.edit_type) {
       state.operator_scoreboard = updateScoreboard(
         state.operator_scoreboard ?? emptyScoreboard(),
         tType,
-        child.edit_type,
+        recordedChild.edit_type,
         decision === "promoted",
       );
     }
@@ -721,7 +1136,7 @@ export class OrchestratorService implements OnModuleInit {
     state.generation += 1;
     state.eval_set_version = evalSetVersion;
     state.updatedAt = new Date().toISOString();
-    const generation_id = `gen_${state.generation}_${child.version_id}`;
+    const generation_id = `gen_${state.generation}_${recordedChild.version_id}`;
     const genEval: GenerationEval = {
       generation_id,
       generation: state.generation,
@@ -730,11 +1145,11 @@ export class OrchestratorService implements OnModuleInit {
       champion_before: championBeforeId,
       children_evaluated: [
         {
-          child_id: child.version_id,
-          based_on: child.parent_id ?? championBeforeId,
-          hypothesis: child.hypothesis,
-          target_dimension: child.target_dimension,
-          edit_type: child.edit_type,
+          child_id: recordedChild.version_id,
+          based_on: recordedChild.parent_id ?? championBeforeId,
+          hypothesis: recordedChild.hypothesis,
+          target_dimension: recordedChild.target_dimension,
+          edit_type: recordedChild.edit_type,
           validation,
           gate,
           holdout,
@@ -743,7 +1158,7 @@ export class OrchestratorService implements OnModuleInit {
       ],
       champion_after: state.champion,
       population_after: state.population,
-      tried_and_rejected_added: decision === "rejected" ? [child.version_id] : [],
+      tried_and_rejected_added: decision === "rejected" ? [recordedChild.version_id] : [],
       timestamp: new Date().toISOString(),
     };
     this.stateStore.save(state);
@@ -785,15 +1200,17 @@ export class OrchestratorService implements OnModuleInit {
     if (this.terminating) return;
     const run = this.activeRun;
     const state = this.stateStore.load();
-    if (run?.child && state) {
-      state.tried_and_rejected.push({
-        version_id: run.child.version_id,
-        hypothesis: run.child.hypothesis,
-        target_dimension: run.child.target,
-        edit_type: run.child.edit_type,
-        reason: `停止: ${reason}`,
-        generation: run.generation,
-      });
+    if (run && state) {
+      for (const child of run.children ?? (run.child ? [run.child] : [])) {
+        state.tried_and_rejected.push({
+          version_id: child.version_id,
+          hypothesis: child.hypothesis,
+          target_dimension: child.target,
+          edit_type: child.edit_type,
+          reason: `停止: ${reason}`,
+          generation: run.generation,
+        });
+      }
     }
     if (run) {
       run.phase = "settled";
@@ -857,4 +1274,142 @@ function summarize(validation: ValidationReport): Record<string, unknown> {
 
 function emptyValidation(parentVersion: string, childVersion: string): ValidationReport {
   return { parentVersion, childVersion, config: DEFAULT_AGG_CONFIG, buckets: [] };
+}
+
+function toActiveRunChild(child: PromptVersion, validate?: PromptValidation): ActiveRunChild {
+  return {
+    version_id: child.version_id,
+    based_on: child.parent_id ?? undefined,
+    target: child.target_dimension ?? "",
+    edit_type: child.edit_type ?? "",
+    crossover: child.crossover,
+    hypothesis: child.hypothesis,
+    prompt_text: child.prompt_text,
+    validate,
+  };
+}
+
+function buildTargetPlans(
+  opts: { assignedTarget?: string; assignedEditType?: string },
+  weakDimensions: WeakDimension[],
+  board: OperatorScoreboard,
+): AssignedTarget[] {
+  if (opts.assignedTarget || opts.assignedEditType) {
+    return [
+      {
+        assigned_target: opts.assignedTarget ?? weakDimensions[0]?.metric ?? "blind_suspicion_margin",
+        assigned_edit_type: (opts.assignedEditType ?? "") as AssignedTarget["assigned_edit_type"],
+      },
+    ];
+  }
+  const assigned = assignTargets(weakDimensions, K_CHILDREN, board);
+  if (assigned.length > 0) return assigned;
+  return [{ assigned_target: weakDimensions[0]?.metric ?? "blind_suspicion_margin", assigned_edit_type: "" }];
+}
+
+function uniqueVersions(versions: PromptVersion[]): PromptVersion[] {
+  const seen = new Set<string>();
+  const out: PromptVersion[] = [];
+  for (const version of versions) {
+    if (seen.has(version.version_id)) continue;
+    seen.add(version.version_id);
+    out.push(version);
+  }
+  return out;
+}
+
+function hasAcceptedTrait(version: PromptVersion): boolean {
+  return Boolean(version.accepted_trait?.target && version.accepted_trait.excerpt.trim());
+}
+
+function traitTarget(version: PromptVersion): string {
+  return (version.accepted_trait?.target ?? "").trim();
+}
+
+function describeVersionTrait(version: PromptVersion): string {
+  const trait = version.accepted_trait;
+  if (!trait) return `${version.version_id}: (无 accepted_trait)`;
+  return `${version.version_id}: ${trait.summary}; target=${trait.target}; edit_type=${trait.edit_type}; hypothesis=${trait.hypothesis ?? "无"}`;
+}
+
+function buildAcceptedTrait(
+  child: PromptVersion,
+  parent: PromptVersion | null,
+): NonNullable<PromptVersion["accepted_trait"]> {
+  const target = child.target_dimension?.trim() || child.crossover?.grafted_trait || "unknown";
+  const editType = child.edit_type?.trim() || "unknown";
+  const excerpt = changedExcerpt(child.prompt_text, parent?.prompt_text ?? "");
+  return {
+    target,
+    edit_type: editType,
+    hypothesis: child.hypothesis,
+    summary: child.crossover?.grafted_trait || `${editType} → ${target}`,
+    excerpt,
+    source: child.crossover ? "crossover" : "mutation",
+  };
+}
+
+function changedExcerpt(childText: string, parentText: string): string {
+  if (!parentText.trim()) return limitLines(childText);
+  const parentLines = new Set(parentText.split("\n").map((line) => line.trim()).filter(Boolean));
+  const changed = childText
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      return trimmed.length > 0 && !parentLines.has(trimmed);
+    })
+    .join("\n")
+    .trim();
+  return limitLines(changed || childText);
+}
+
+function limitLines(text: string, maxLines = 16): string {
+  const lines = text.split("\n").map((line) => line.trimEnd()).filter((line) => line.trim().length > 0);
+  return lines.slice(0, maxLines).join("\n");
+}
+
+function validationScore(validation: ValidationReport): number {
+  const point = validation.buckets[0]?.metrics["blind_suspicion_margin"]?.point;
+  return typeof point === "number" ? point : Number.POSITIVE_INFINITY;
+}
+
+function selectBestCandidate(results: CandidateResult[]): CandidateResult | null {
+  if (results.length === 0) return null;
+  const promoted = results
+    .filter((r) => r.validate.ok && r.gate.decision === "promote")
+    .sort((a, b) => validationScore(a.validation) - validationScore(b.validation));
+  if (promoted[0]) return promoted[0];
+  return [...results].sort((a, b) => validationScore(a.validation) - validationScore(b.validation))[0];
+}
+
+function rebuildCandidateResults(
+  run: ActiveRun,
+  selectedChild: PromptVersion,
+  selectedDecision: "promoted" | "rejected",
+): CandidateResult[] {
+  const children = run.children && run.children.length > 0 ? run.children : run.child ? [run.child] : [];
+  return children.map((child) => {
+    const prompt = child.version_id === selectedChild.version_id
+      ? selectedChild
+      : {
+          version_id: child.version_id,
+          parent_id: child.based_on ?? run.champion_id,
+          prompt_text: child.prompt_text,
+          persona_scope: "shared" as const,
+          status: "candidate" as const,
+          hypothesis: child.hypothesis,
+          target_dimension: child.target,
+          edit_type: child.edit_type,
+          crossover: child.crossover,
+          created_at: new Date().toISOString(),
+        };
+    return {
+      child: prompt,
+      validate: child.validate ?? { ok: true, reasons: [] },
+      validation: child.validation ?? run.validation ?? emptyValidation(run.champion_id, child.version_id),
+      gate: child.gate ?? run.gate ?? { decision: "reject", reasons: ["待确认 run 缺少闸门结果"], marginVerdict: null },
+      holdout: child.holdout ? holdoutSummaryOf(child.holdout) : child.version_id === selectedChild.version_id ? holdoutSummaryOf(run.holdout) : undefined,
+      decision: child.version_id === selectedChild.version_id ? selectedDecision : "rejected",
+    };
+  });
 }

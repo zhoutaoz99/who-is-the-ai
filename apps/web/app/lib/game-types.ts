@@ -197,11 +197,23 @@ export type OrchestratorValidate = { ok: boolean; reasons: string[] };
 
 export type OrchestratorChild = {
   version_id: string;
+  based_on?: string;
+  crossover?: {
+    base: string;
+    donor: string;
+    grafted_trait: string;
+  };
   target: string;
   edit_type: string;
   hypothesis?: string;
   diff_summary?: string;
   prompt_text: string;
+  validate?: OrchestratorValidate;
+  validation?: OrchestratorValidation;
+  gate?: OrchestratorGate;
+  holdout?: OrchestratorHoldout;
+  decision?: "promoted" | "rejected";
+  score?: number | null;
 };
 
 export type OrchestratorGameStatus =
@@ -214,6 +226,7 @@ export type OrchestratorGameStatus =
 /** 单局进度(以 side×scenario×seed×run 为稳定 key,逐局增量更新)。 */
 export type OrchestratorGame = {
   side: "champion" | "child";
+  child_id?: string;
   scenario_id: string;
   seed: number;
   run: number;
@@ -245,9 +258,14 @@ export type OrchestratorActiveRun = {
     evalSetVersion: string;
     discussionSeconds?: number;
     judgeModelId?: string;
+    judgeModelIds?: string[];
+    diagnose?: boolean;
+    costTier?: "decision" | "diagnostic" | "calibration";
     optimizerModelId?: string;
     assignedTarget?: string;
   };
+  children?: OrchestratorChild[];
+  selected_child_id?: string;
   child?: OrchestratorChild;
   validation?: OrchestratorValidation;
   gate?: OrchestratorGate;
@@ -302,6 +320,8 @@ export type OrchestratorGenerationChild = {
   hypothesis?: string;
   target_dimension?: string;
   edit_type?: string;
+  validation?: OrchestratorValidation;
+  gate?: OrchestratorGate;
   holdout?: OrchestratorHoldoutSummary;
   decision: "promoted" | "rejected";
 };
@@ -327,6 +347,14 @@ export type OrchestratorVersionMeta = {
   hypothesis?: string;
   target_dimension?: string;
   edit_type?: string;
+  accepted_trait?: {
+    target: string;
+    edit_type: string;
+    hypothesis?: string;
+    summary: string;
+    excerpt: string;
+    source: "mutation" | "crossover";
+  };
   created_by_generation?: number;
   created_at: string;
 };
@@ -345,6 +373,9 @@ export type OrchestratorStartPayload = {
   assigned_edit_type?: string;
   optimizer_model_id?: string;
   judge_model_id?: string;
+  judge_model_ids?: string[];
+  diagnose?: boolean;
+  cost_tier?: "decision" | "diagnostic" | "calibration";
   discussion_seconds?: number;
   eval_set_version?: string;
 };
@@ -497,4 +528,3 @@ export type OptCheckStartPayload = {
   optimizer_model_id?: string;
   judge_model_id?: string;
 };
-

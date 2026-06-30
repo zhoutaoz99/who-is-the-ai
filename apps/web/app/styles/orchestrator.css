@@ -279,6 +279,42 @@
   text-transform: uppercase;
 }
 
+.iteration-controls .orch-inline-check {
+  min-width: 96px;
+  flex-direction: row;
+  align-items: center;
+  align-self: end;
+  gap: 8px;
+  min-height: 37px;
+}
+
+.orch-child-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.orch-child-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) minmax(140px, 1fr) minmax(180px, 1.2fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.orch-child-row.selected {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.orch-child-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+}
+
 /* 全宽区块 */
 .orch-section {
   margin-top: 18px;
@@ -471,4 +507,226 @@
 }
 .iter-step-badge.step-idle {
   background: var(--muted);
+}
+
+/* 高级 / 数据接入面板 */
+.orch-adv-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.orch-adv-intro {
+  margin: 4px 0 14px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.orch-tool-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.orch-tool {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.orch-tool-tag {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.orch-tool-desc {
+  margin: 6px 0 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.orch-tool-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+.field.compact {
+  display: grid;
+  gap: 4px;
+}
+.field.compact span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.field.compact input,
+.field.compact select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+}
+.orch-tool-wide {
+  width: 100%;
+}
+.orch-tool-wide textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+.orch-tool-result {
+  margin-top: 12px;
+}
+.orch-tool-error {
+  margin-top: 8px;
+}
+.orch-tool-json-toggle {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent);
+  margin-top: 8px;
+}
+.orch-tool-result .iter-detail-pre {
+  margin-top: 8px;
+}
+
+/* 高级面板头部右侧按钮组 */
+.orch-adv-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 提示词版本管理面板 */
+.orch-prompt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.orch-prompt-assets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.orch-prompt-asset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.orch-prompt-asset-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.orch-prompt-asset-head code {
+  font-size: 12px;
+  color: var(--text);
+}
+.orch-prompt-asset-head .compact-button {
+  margin-left: auto;
+}
+.orch-prompt-editor {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.orch-prompt-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+.orch-prompt-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+.orch-prompt-patch {
+  margin-bottom: 10px;
+}
+.orch-prompt-patch textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+.orch-prompt-patch-note {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.orch-prompt-gens {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.orch-prompt-gen {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.orch-prompt-gen .orch-status {
+  margin-left: 8px;
+}
+
+/* LLM 调用可观测表 */
+.orch-llm-table {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.orch-llm-row {
+  display: grid;
+  grid-template-columns: 70px 1.2fr 1.4fr 56px 80px 1fr;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.orch-llm-row:last-child {
+  border-bottom: none;
+}
+.orch-llm-head {
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface);
+}
+.orch-llm-fail {
+  background: rgba(180, 35, 24, 0.08);
+}
+.orch-llm-fail span:nth-child(4) {
+  color: #b42318;
+  font-weight: 600;
 }

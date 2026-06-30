@@ -22,6 +22,20 @@ export interface PromptVersion {
   hypothesis?: string;
   target_dimension?: string;
   edit_type?: string;
+  crossover?: {
+    base: string;
+    donor: string;
+    grafted_trait: string;
+  };
+  /** 仅 accepted/champion 版本写入:它被接受时验证过的一处胜招,供 guided crossover 读取。 */
+  accepted_trait?: {
+    target: string;
+    edit_type: string;
+    hypothesis?: string;
+    summary: string;
+    excerpt: string;
+    source: "mutation" | "crossover";
+  };
   created_by_generation?: number;
   validated_metrics?: Record<string, unknown>;
   eval_set_version?: string;
@@ -75,7 +89,7 @@ export class PromptVersionStore {
 
   patchStatus(
     id: string,
-    patch: Partial<Pick<PromptVersion, "status" | "validated_metrics" | "eval_set_version">>,
+    patch: Partial<Pick<PromptVersion, "status" | "validated_metrics" | "eval_set_version" | "accepted_trait">>,
   ): boolean {
     const v = this.cache.get(id);
     if (!v) return false;

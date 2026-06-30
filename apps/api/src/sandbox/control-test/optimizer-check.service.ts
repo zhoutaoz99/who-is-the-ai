@@ -17,6 +17,7 @@ import { validatePrompt } from "../optimizer/validate-prompt";
 import { BASELINE_VERSION_ID, PromptVersionStore } from "../orchestrator/prompt-version";
 import type { PromptVersion } from "../orchestrator/prompt-version";
 import { parseJsonObject } from "../shared/json-parse";
+import { observeSandboxLlmCall } from "../shared/observability";
 import {
   DIGGABLE_HOLES,
   digHole,
@@ -237,7 +238,14 @@ export class OptimizerCheckService {
     try {
       const { mainConfig, connection } = this.ai.resolveCallConfig(judgeModelId);
       const modelConfig = { ...mainConfig, temperature: JUDGE_TEMPERATURE };
-      const { content } = await this.ai.callModel(system, user, modelConfig, connection);
+      const { content } = await observeSandboxLlmCall(
+        {
+          stage: "optimizer_check_coverage",
+          model: modelConfig.model,
+          attempt: 1,
+        },
+        () => this.ai.callModel(system, user, modelConfig, connection),
+      );
       const obj = parseJsonObject<{ covered?: boolean; quote?: string }>(content);
       if (obj && typeof obj.covered === "boolean") {
         return { covered: obj.covered, quote: obj.quote || undefined, method: "judge" };

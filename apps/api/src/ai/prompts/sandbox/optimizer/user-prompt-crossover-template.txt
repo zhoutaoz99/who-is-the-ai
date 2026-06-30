@@ -1,0 +1,21 @@
+==== 底版(以它为基础,其余部分一字不动)persona 范围:{{persona_scope}} ====
+版本 {{base_id}}:
+{{base_prompt}}
+
+底版已有、必须【原样保住】的胜招:
+{{base_traits}}
+
+==== 要嫁接进来的那一处胜招(来自供体 {{donor_id}}) ====
+胜招描述:{{donor_trait}}
+供体里实现它的原文片段(参考其做法,按底版的措辞融入,不要照搬突兀):
+{{donor_excerpt}}
+
+==== 不许改动的锁定段 ====
+{{locked_sections}}
+(必须一字不动地保留)
+
+==== 已经试过、没用的改法(别再走这些死路) ====
+{{tried_and_rejected}}
+
+==== 长度预算 ====
+{{length_budget}}

@@ -15,10 +15,18 @@ import { Body, Controller, Delete, Get, Param, Post } from "@nestjs/common";
 import type { Scenario } from "../scenario/types";
 import { SandboxService } from "../sandbox.service";
 import type { EvalSetSummary } from "../sandbox.service";
+import {
+  calibrationVerdict,
+  correlationProxyVsReal,
+  shouldRollback,
+  type CalibrationPair,
+} from "./calibration";
+import { metricsComparable, planRebaseline, rebaselineRequired } from "./eval-set-version";
 import type { EvalPlan } from "./paired-eval";
 import { OrchestratorService } from "./orchestrator.service";
 import { toMeta } from "./prompt-version";
 import type { PromptVersion, PromptVersionMeta } from "./prompt-version";
+import type { EvalCostTier } from "./scheduler";
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -53,6 +61,9 @@ export class OrchestratorController {
       seeds_per_scenario?: number;
       runs_per_seed?: number;
       judge_model_id?: string;
+      judge_model_ids?: string[] | string;
+      diagnose?: boolean;
+      cost_tier?: string;
       discussion_seconds?: number;
       eval_set_version?: string;
     },
@@ -95,6 +106,9 @@ export class OrchestratorController {
       assigned_edit_type?: string;
       optimizer_model_id?: string;
       judge_model_id?: string;
+      judge_model_ids?: string[] | string;
+      diagnose?: boolean;
+      cost_tier?: string;
       discussion_seconds?: number;
       seeds_per_scenario?: number;
       runs_per_seed?: number;
@@ -195,6 +209,69 @@ export class OrchestratorController {
     return v ? { ok: true, version: v } : { ok: false, error: "未找到该版本" };
   }
 
+  /** 重激活一个稳定历史版本为 champion(人工回滚 / 校准翻车后使用)。 */
+  @Post("versions/:id/activate")
+  async activateVersion(
+    @Param("id") id: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.orchestrator.activateVersion(id);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: msg(err) };
+    }
+  }
+
+  /**
+   * 真人校准体检(M5.11):调用方传入 proxy/real 配对样本,返回相关性裁决。
+   * 不自动改 champion;真人批次接入后由调用方按 rollback=true 决策回滚。
+   */
+  @Post("calibration/check")
+  calibrationCheck(
+    @Body()
+    body: {
+      pairs?: CalibrationPair[];
+      threshold?: number;
+      sandbox_improved?: boolean;
+      real_regressed?: boolean;
+    },
+  ): { ok: boolean; result?: unknown; verdict?: unknown; rollback?: boolean; error?: string } {
+    const pairs = Array.isArray(body?.pairs) ? body.pairs : [];
+    if (pairs.length === 0) return { ok: false, error: "缺少 pairs" };
+    const result = correlationProxyVsReal(pairs, body.threshold);
+    return {
+      ok: true,
+      result,
+      verdict: calibrationVerdict(result),
+      rollback: shouldRollback(body?.sandbox_improved === true, body?.real_regressed === true),
+    };
+  }
+
+  /**
+   * 评测集升级重基线计划(M5.12):判断当前 state.eval_set_version 与目标集是否可比/需重跑。
+   */
+  @Post("rebaseline-plan")
+  rebaselinePlan(
+    @Body() body: { set_id?: string; target_eval_set_version?: string; version_id?: string },
+  ): { ok: boolean; required?: boolean; comparable?: boolean; plan?: unknown; error?: string } {
+    const state = this.orchestrator.getState();
+    let target = body?.target_eval_set_version;
+    if (!target && body?.set_id) {
+      const set = this.sandbox.loadEvalSet(body.set_id);
+      if (!set) return { ok: false, error: `未找到评测集 ${body.set_id}` };
+      target = set.eval_set_version;
+    }
+    if (!target) return { ok: false, error: "缺少 set_id 或 target_eval_set_version" };
+    const versionId = body?.version_id || state.champion;
+    const meta = this.orchestrator.listVersions().find((v) => v.version_id === versionId);
+    return {
+      ok: true,
+      required: rebaselineRequired(state.eval_set_version, target),
+      comparable: meta ? metricsComparable(meta, target) : false,
+      plan: planRebaseline(versionId, state.eval_set_version, target),
+    };
+  }
+
   /** 删除一个提示词版本(禁止删 champion / baseline / 活跃候选;服务端再校验)。 */
   @Delete("versions/:id")
   async deleteVersion(
@@ -271,6 +348,9 @@ export class OrchestratorController {
       seeds_per_scenario?: number;
       runs_per_seed?: number;
       judge_model_id?: string;
+      judge_model_ids?: string[] | string;
+      diagnose?: boolean;
+      cost_tier?: string;
       discussion_seconds?: number;
     },
     evalSetVersion: string,
@@ -282,8 +362,28 @@ export class OrchestratorController {
       seedsPerScenario: body.seeds_per_scenario ?? 1,
       runsPerSeed: body.runs_per_seed ?? 3,
       judgeModelId: body.judge_model_id,
+      judgeModelIds: parseModelIds(body.judge_model_ids),
+      diagnose: body.diagnose === true,
+      costTier: parseCostTier(body.cost_tier),
       discussionSeconds: body.discussion_seconds,
       evalSetVersion,
     };
   }
+}
+
+function parseModelIds(value: string[] | string | undefined): string[] | undefined {
+  if (Array.isArray(value)) {
+    const ids = value.map((v) => String(v).trim()).filter(Boolean);
+    return ids.length > 0 ? ids : undefined;
+  }
+  if (typeof value !== "string") return undefined;
+  const ids = value
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+  return ids.length > 0 ? ids : undefined;
+}
+
+function parseCostTier(value: string | undefined): EvalCostTier | undefined {
+  return value === "decision" || value === "diagnostic" || value === "calibration" ? value : undefined;
 }

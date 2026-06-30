@@ -2,7 +2,9 @@
 // 跑某版本在 eval 集上的全部 (scenario, seed, run) → MatchRecord → ScoreRecord。
 // 子/父用【同一批 scenario、同一组 seed、同一 run_index】,差异只来自 AI 提示词版本。
 // paired_cache:同 (version, evalSet, seed 计划) 复用 → 重跑新子版本时父代不重跑,省算力。
-// 并发:worker 池(GAME_CONCURRENCY)并发跑局;onGameStatus 回调逐局广播 pending→running→scoring→finished/failed 状态(含对局内细节);shouldStop 让编排器能在局间中止(用户停止)。
+// 并发:按成本层把 versions×scenarios×seeds×runs 扁平化进 worker 池;
+// onGameStatus 回调逐局广播 pending→running→scoring→finished/failed 状态(含对局内细节);
+// shouldStop 让编排器能在局间中止(用户停止)。
 
 import { Injectable, Logger } from "@nestjs/common";
 import type { RoomSnapshot } from "../../game/game.types";
@@ -11,11 +13,16 @@ import { ScoreService } from "../score/score.service";
 import type { ScoreRecord } from "../score/types";
 import { SandboxRepository } from "../sandbox.repository";
 import { SandboxService } from "../sandbox.service";
+import { runWorkerPool } from "../shared/concurrency";
 import type { GameDetail, GameStatusPatch, GameStatusUpdate } from "./active-run";
 import type { PromptVersion } from "./prompt-version";
-
-/** 对局并发上限(对齐旧 iteration 的 worker 池;GameService 多房间已验证可安全并发)。 */
-const GAME_CONCURRENCY = 3;
+import {
+  concurrencyForCostTier,
+  expandEvalTasks,
+  resolveCostTier,
+  type EvalTask,
+  type EvalCostTier,
+} from "./scheduler";
 
 export interface EvalPlan {
   scenarios: Scenario[];
@@ -29,6 +36,12 @@ export interface EvalPlan {
   /** 每个种子跑几局(压 LLM 噪声)。 */
   runsPerSeed: number;
   judgeModelId?: string;
+  /** 多裁判集成(M2.11):传 2+ 个模型 id 时 ScoreService 会聚合盲测读数。 */
+  judgeModelIds?: string[];
+  /** 诊断评分(M2.6/2.7/2.9):逐轮轨迹 + 八维 rubric + judge_eval_needed 探测裁定。 */
+  diagnose?: boolean;
+  /** 成本分层(M5.14):默认按 diagnose / 多裁判推断。 */
+  costTier?: EvalCostTier;
   discussionSeconds?: number;
   evalSetVersion: string;
 }
@@ -38,6 +51,22 @@ export interface EvalRunOptions {
   onGameStatus?: (patch: GameStatusPatch) => void;
   /** 局间检查;返回 true 则尽早中止,返回部分评分(不缓存)。 */
   shouldStop?: () => boolean;
+}
+
+export interface MultiVersionEvalRunOptions {
+  /** 多版本调度时,回调会携带当前版本,由编排器补 side/child_id。 */
+  onGameStatus?: (version: PromptVersion, patch: GameStatusPatch) => void;
+  shouldStop?: () => boolean;
+}
+
+interface VersionEvalTask {
+  version: PromptVersion;
+  task: EvalTask;
+}
+
+interface VersionScore {
+  versionId: string;
+  score: ScoreRecord;
 }
 
 @Injectable()
@@ -55,99 +84,73 @@ export class PairedEvalService {
     plan: EvalPlan,
     opts: EvalRunOptions = {},
   ): Promise<ScoreRecord[]> {
-    const key = cacheKey(version.version_id, plan);
-    const cached = await this.loadCache(key);
-    if (cached) {
-      // 缓存命中:回放每条为 finished 状态给前台(列表仍能看到逐局),不跑新对局。
-      if (opts.onGameStatus) {
+    const results = await this.runVersionsEval([version], plan, {
+      onGameStatus: (_version, patch) => opts.onGameStatus?.(patch),
+      shouldStop: opts.shouldStop,
+    });
+    return results.get(version.version_id) ?? [];
+  }
+
+  /**
+   * M5.14:把 versions×scenarios×seeds×runs 扁平化进同一个 worker 池。
+   * 这样 K 个候选共享同一成本层并发预算,而不是外层逐候选顺序跑或嵌套放大并发。
+   */
+  async runVersionsEval(
+    versions: PromptVersion[],
+    plan: EvalPlan,
+    opts: MultiVersionEvalRunOptions = {},
+  ): Promise<Map<string, ScoreRecord[]>> {
+    const result = new Map<string, ScoreRecord[]>();
+
+    const tasks = expandEvalTasks(plan);
+    const work: VersionEvalTask[] = [];
+    for (const version of versions) {
+      const key = cacheKey(version.version_id, plan);
+      const cached = await this.loadCache(key);
+      if (cached) {
         for (const sc of cached) {
-          opts.onGameStatus(scoreToFinishedPatch(sc));
+          opts.onGameStatus?.(version, scoreToFinishedPatch(sc));
         }
+        this.logger.log(`paired_cache 命中(回放 ${cached.length} 条): ${version.version_id}`);
+        result.set(version.version_id, cached);
+        continue;
       }
-      this.logger.log(`paired_cache 命中(回放 ${cached.length} 条): ${version.version_id}`);
-      return cached;
+      for (const task of tasks) {
+        opts.onGameStatus?.(version, {
+          scenario_id: task.scenario.scenario_id,
+          seed: task.seed,
+          run: task.run,
+          status: "pending",
+        });
+        work.push({ version, task });
+      }
     }
 
-    // 展开全部 (scenario, seed, run) 任务,先广播 pending(列表显示全部待开始)。
-    const tasks: Array<{ scenario: Scenario; seed: number; run: number }> = [];
-    for (const scenario of plan.scenarios) {
-      for (let s = 0; s < plan.seedsPerScenario; s += 1) {
-        const seed = plan.seedsPerScenario > 1 ? scenario.seed + s * 7919 : scenario.seed;
-        for (let r = 0; r < plan.runsPerSeed; r += 1) {
-          tasks.push({ scenario, seed, run: r });
-        }
-      }
-    }
-    for (const t of tasks) {
-      opts.onGameStatus?.({
-        scenario_id: t.scenario.scenario_id,
-        seed: t.seed,
-        run: t.run,
-        status: "pending",
-      });
-    }
-
-    // worker 池并发(上限 GAME_CONCURRENCY),逐局完成即广播状态。
-    const scores: ScoreRecord[] = [];
-    let stopped = false;
-    let next = 0;
-    const workers = Array.from(
-      { length: Math.min(GAME_CONCURRENCY, tasks.length) },
-      async () => {
-        while (next < tasks.length) {
-          if (opts.shouldStop?.()) {
-            stopped = true;
-            break;
-          }
-          const t = tasks[next++];
-          const publish = (patch: GameStatusUpdate) => {
-            opts.onGameStatus?.({
-              scenario_id: t.scenario.scenario_id,
-              seed: t.seed,
-              run: t.run,
-              ...patch,
-            });
-          };
-          try {
-            publish({ status: "running" });
-            const match = await this.sandbox.runMatch(
-              t.scenario,
-              {
-                run_index: t.run,
-                seed_override: t.seed,
-                ai_prompt_version_id: version.version_id,
-                discussion_seconds: plan.discussionSeconds,
-              },
-              (room) => publish({ status: "running", ...snapshotToGamePatch(room) }),
-            );
-            publish({ status: "scoring" });
-            const scoreRec = await this.score.scoreMatch(match, {
-              judgeModelId: plan.judgeModelId,
-            });
-            scores.push(scoreRec);
-            publish({
-              status: "finished",
-              match_id: match.match_id,
-              margin: scoreRec.blind_suspicion?.suspicion_margin ?? null,
-              veto: scoreRec.veto_triggered === true,
-            });
-            this.logger.log(
-              `评测 ${version.version_id} ${t.scenario.scenario_id} seed${t.seed} run${t.run} → margin=${scoreRec.blind_suspicion?.suspicion_margin ?? "?"}`,
-            );
-          } catch (err) {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            publish({ status: "failed", error: errMsg });
-            this.logger.warn(
-              `评测 ${version.version_id} ${t.scenario.scenario_id} seed${t.seed} run${t.run} 失败: ${errMsg}`,
-            );
-          }
-        }
+    const tier = resolveCostTier(plan);
+    const { results: scored, stopped } = await runWorkerPool<VersionEvalTask, VersionScore>(
+      work,
+      async ({ version, task }) => {
+        const score = await this.runEvalTask(version, plan, task, (patch) =>
+          opts.onGameStatus?.(version, patch),
+        );
+        return score ? { versionId: version.version_id, score } : undefined;
       },
+      { concurrency: concurrencyForCostTier(tier), shouldStop: opts.shouldStop },
     );
-    await Promise.all(workers);
 
-    if (!stopped) await this.saveCache(key, scores); // 只缓存完整结果
-    return scores;
+    const byVersion = new Map<string, ScoreRecord[]>();
+    for (const item of scored) {
+      const arr = byVersion.get(item.versionId) ?? [];
+      arr.push(item.score);
+      byVersion.set(item.versionId, arr);
+    }
+    for (const version of versions) {
+      if (result.has(version.version_id)) continue;
+      const scores = byVersion.get(version.version_id) ?? [];
+      result.set(version.version_id, scores);
+      if (!stopped) await this.saveCache(cacheKey(version.version_id, plan), scores);
+    }
+    return result;
   }
 
   private async loadCache(key: string): Promise<ScoreRecord[] | null> {
@@ -157,12 +160,73 @@ export class PairedEvalService {
   private async saveCache(key: string, scores: ScoreRecord[]): Promise<void> {
     await this.repo.saveCache(key, scores);
   }
+
+  private async runEvalTask(
+    version: PromptVersion,
+    plan: EvalPlan,
+    task: EvalTask,
+    onGameStatus?: (patch: GameStatusPatch) => void,
+  ): Promise<ScoreRecord | undefined> {
+    const publish = (patch: GameStatusUpdate) => {
+      onGameStatus?.({
+        scenario_id: task.scenario.scenario_id,
+        seed: task.seed,
+        run: task.run,
+        ...patch,
+      });
+    };
+    try {
+      publish({ status: "running" });
+      const match = await this.sandbox.runMatch(
+        task.scenario,
+        {
+          run_index: task.run,
+          seed_override: task.seed,
+          ai_prompt_version_id: version.version_id,
+          discussion_seconds: plan.discussionSeconds,
+        },
+        (room) => publish({ status: "running", ...snapshotToGamePatch(room) }),
+      );
+      publish({ status: "scoring" });
+      const scoreRec = await this.score.scoreMatch(match, {
+        judgeModelId: plan.judgeModelId,
+        judgeModelIds: plan.judgeModelIds,
+        diagnose: plan.diagnose,
+      });
+      publish({
+        status: "finished",
+        match_id: match.match_id,
+        margin: scoreRec.blind_suspicion?.suspicion_margin ?? null,
+        veto: scoreRec.veto_triggered === true,
+      });
+      this.logger.log(
+        `评测 ${version.version_id} ${task.scenario.scenario_id} seed${task.seed} run${task.run} → margin=${scoreRec.blind_suspicion?.suspicion_margin ?? "?"}`,
+      );
+      return scoreRec;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      publish({ status: "failed", error: errMsg });
+      this.logger.warn(
+        `评测 ${version.version_id} ${task.scenario.scenario_id} seed${task.seed} run${task.run} 失败: ${errMsg}`,
+      );
+      return undefined;
+    }
+  }
 }
 
 /** cache key:版本 × 评测集版本 × 种子计划 × 场景指纹(决定缓存是否可复用)。 */
 function cacheKey(versionId: string, plan: EvalPlan): string {
   const scnHash = plan.scenarios.map((s) => s.scenario_id).sort().join(",");
-  return `${versionId}__${plan.evalSetVersion}__s${plan.seedsPerScenario}r${plan.runsPerSeed}__${scnHash}`;
+  const judgeHash = [
+    plan.judgeModelId ?? "default",
+    ...(plan.judgeModelIds ?? []).slice().sort(),
+  ].join(",");
+  const modeHash = [
+    plan.diagnose === true ? "diagnose" : "decision",
+    `discussion=${plan.discussionSeconds ?? "default"}`,
+    `judge=${judgeHash}`,
+  ].join("__");
+  return `${versionId}__${plan.evalSetVersion}__s${plan.seedsPerScenario}r${plan.runsPerSeed}__${modeHash}__${scnHash}`;
 }
 
 /** 房间快照 → 对局内实时细节(phase/当前轮/AI 存活);口径对齐旧 iteration.gameProgressFromSnapshot。 */

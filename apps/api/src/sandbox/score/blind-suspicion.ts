@@ -4,8 +4,9 @@
 
 import { Injectable, Logger } from "@nestjs/common";
 import { AiService } from "../../ai/ai.service";
-import { loadPrompt, renderTemplate } from "../../ai/prompt-loader";
 import { parseJsonObject } from "../shared/json-parse";
+import { observeSandboxLlmCall } from "../shared/observability";
+import { SandboxPromptService } from "../shared/prompt-versions";
 import type { MatchRecord } from "../match-record/types";
 import type { AnonymizedView } from "./anonymize";
 import type { BlindAssessment, BlindSuspicion } from "./types";
@@ -28,15 +29,18 @@ export interface BlindScoreResult {
 export class BlindSuspicionScorer {
   private readonly logger = new Logger(BlindSuspicionScorer.name);
 
-  constructor(private readonly ai: AiService) {}
+  constructor(
+    private readonly ai: AiService,
+    private readonly prompts: SandboxPromptService,
+  ) {}
 
   async score(
     match: MatchRecord,
     view: AnonymizedView,
     judgeModelId?: string,
   ): Promise<BlindScoreResult> {
-    const system = loadPrompt("sandbox/judge/blind-suspicion-system.txt");
-    const user = renderTemplate("sandbox/judge/blind-suspicion-user.txt", {
+    const system = await this.prompts.load("sandbox/judge/blind-suspicion-system.txt");
+    const user = await this.prompts.render("sandbox/judge/blind-suspicion-user.txt", {
       alive_players: view.aliveLabels.join(", "),
       round: String(view.scoringRound),
       public_vote_history: view.publicVoteHistory,
@@ -50,11 +54,15 @@ export class BlindSuspicionScorer {
     let lastError = "";
     for (let attempt = 0; attempt <= MAX_RETRIES && !assessments; attempt += 1) {
       try {
-        const { content } = await this.ai.callModel(
-          system,
-          user,
-          modelConfig,
-          connection,
+        const { content } = await observeSandboxLlmCall(
+          {
+            stage: "blind_suspicion",
+            model: modelConfig.model,
+            match_id: match.match_id,
+            round: view.scoringRound,
+            attempt: attempt + 1,
+          },
+          () => this.ai.callModel(system, user, modelConfig, connection),
         );
         assessments = this.parseAssessments(content, view.aliveLabels);
         if (!assessments) lastError = "parse_failed";

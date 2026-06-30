@@ -7,10 +7,11 @@
 
 import { Injectable, Logger } from "@nestjs/common";
 import { AiService } from "../../ai/ai.service";
-import { loadPrompt, renderTemplate } from "../../ai/prompt-loader";
 import { loadDefaultProbeBank } from "../probe/probe-bank";
 import type { MatchRecord } from "../match-record/types";
 import { parseJsonObject } from "../shared/json-parse";
+import { observeSandboxLlmCall } from "../shared/observability";
+import { SandboxPromptService } from "../shared/prompt-versions";
 import { buildLabeledTranscript } from "./anonymize";
 import type { AnonymizedView } from "./anonymize";
 import { RUBRIC_KEYS, type FailureCase, type ProbeVerdict } from "./types";
@@ -33,7 +34,10 @@ export interface DiagnosticResult {
 export class RubricDiagnosticScorer {
   private readonly logger = new Logger(RubricDiagnosticScorer.name);
 
-  constructor(private readonly ai: AiService) {}
+  constructor(
+    private readonly ai: AiService,
+    private readonly prompts: SandboxPromptService,
+  ) {}
 
   /**
    * @param view 复用盲测同款打乱标签(保证标签一致);本遍【告知】AI 标签。
@@ -46,8 +50,8 @@ export class RubricDiagnosticScorer {
     judgeModelId?: string,
   ): Promise<DiagnosticResult> {
     const probes = buildJudgeEvalProbes(match);
-    const system = loadPrompt("sandbox/judge/rubric-diagnostic-system.txt");
-    const user = renderTemplate("sandbox/judge/rubric-diagnostic-user.txt", {
+    const system = await this.prompts.load("sandbox/judge/rubric-diagnostic-system.txt");
+    const user = await this.prompts.render("sandbox/judge/rubric-diagnostic-user.txt", {
       ai_player_label: view.aiLabel,
       room_context: roomContext(match),
       focus_round: focusRound != null ? `第 ${focusRound} 轮` : "整局",
@@ -64,7 +68,16 @@ export class RubricDiagnosticScorer {
     let lastError = "";
     for (let attempt = 0; attempt <= MAX_RETRIES && !parsed; attempt += 1) {
       try {
-        const { content } = await this.ai.callModel(system, user, modelConfig, connection);
+        const { content } = await observeSandboxLlmCall(
+          {
+            stage: "rubric_diagnostic",
+            model: modelConfig.model,
+            match_id: match.match_id,
+            round: focusRound ?? undefined,
+            attempt: attempt + 1,
+          },
+          () => this.ai.callModel(system, user, modelConfig, connection),
+        );
         parsed = parseDiagnostic(content, validIds);
         if (!parsed) lastError = "parse_failed";
       } catch (err) {

@@ -80,6 +80,7 @@ type GameClientContextValue = {
   terminateOrchestrator: () => Promise<{ ok: boolean; error?: string }>;
   deleteOrchestratorGeneration: (id: string) => Promise<{ ok: boolean; error?: string }>;
   deleteOrchestratorVersion: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  activateOrchestratorVersion: (id: string) => Promise<{ ok: boolean; error?: string }>;
   deleteOrchestratorTried: (versionId: string) => Promise<{ ok: boolean; error?: string }>;
   clearOrchestratorTried: () => Promise<{ ok: boolean; error?: string }>;
   confirmOrchestrator: (
@@ -353,7 +354,9 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
                 ...cur,
                 active_run: {
                   ...cur.active_run,
+                  children: upsertOrchestratorChild(cur.active_run.children, payload.child),
                   child: payload.child,
+                  selected_child_id: payload.child.version_id,
                   validate: payload.validate,
                 },
               }
@@ -861,6 +864,8 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
         orchestratorDelete(`generations/${encodeURIComponent(id)}`),
       deleteOrchestratorVersion: (id: string) =>
         orchestratorDelete(`versions/${encodeURIComponent(id)}`),
+      activateOrchestratorVersion: (id: string) =>
+        orchestratorRest(`versions/${encodeURIComponent(id)}/activate`, {}) as Promise<{ ok: boolean; error?: string }>,
       deleteOrchestratorTried: (versionId: string) =>
         orchestratorDelete(`tried/${encodeURIComponent(versionId)}`),
       clearOrchestratorTried: () => orchestratorDelete("tried"),
@@ -1064,6 +1069,7 @@ function upsertOrchestratorGame(
   const idx = games.findIndex(
     (x) =>
       x.side === g.side &&
+      (x.child_id ?? "") === (g.child_id ?? "") &&
       x.scenario_id === g.scenario_id &&
       x.seed === g.seed &&
       x.run === g.run,
@@ -1071,6 +1077,18 @@ function upsertOrchestratorGame(
   if (idx < 0) return [...games, g];
   const next = games.slice();
   next[idx] = { ...next[idx], ...g };
+  return next;
+}
+
+function upsertOrchestratorChild(
+  children: OrchestratorChild[] | undefined,
+  child: OrchestratorChild,
+): OrchestratorChild[] {
+  const current = children ?? [];
+  const idx = current.findIndex((item) => item.version_id === child.version_id);
+  if (idx < 0) return [...current, child];
+  const next = current.slice();
+  next[idx] = { ...next[idx], ...child };
   return next;
 }
 

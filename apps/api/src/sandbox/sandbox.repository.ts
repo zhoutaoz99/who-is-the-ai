@@ -5,12 +5,34 @@
 // 元数据型(state / prompt-version)由各自 store 做内存缓存,文档型直接调用本类 async 方法。
 
 import { Injectable } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { PostgresService } from "../data/postgres.service";
 import type { GenerationEval } from "./orchestrator/generation-eval";
 import type { OrchestratorState } from "./orchestrator/state";
 import type { PromptVersion, PromptVersionMeta } from "./orchestrator/prompt-version";
 import type { MatchRecord } from "./match-record/types";
 import type { ScoreRecord } from "./score/types";
+
+export interface EvalPromptAssetRow {
+  asset_key: string;
+  version: number;
+  content: string;
+  parent_version?: number | null;
+  note?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at?: string;
+}
+
+export interface EvalPromptGenerationRow {
+  id: string;
+  manifest: Record<string, number>;
+  parent_id?: string | null;
+  status: string;
+  is_best: boolean;
+  score?: Record<string, unknown> | null;
+  note?: string | null;
+  created_at?: string;
+}
 
 @Injectable()
 export class SandboxRepository {
@@ -196,6 +218,133 @@ export class SandboxRepository {
     await this.ready();
     await this.postgres.query(
       `DELETE FROM sandbox_prompt_versions WHERE version_id = $1`,
+      [id],
+    );
+  }
+
+  // ===== Sandbox judge / optimizer prompt assets(复用 eval_prompt_* 版本表)=====
+
+  async listEvalPromptAssets(assetKeys?: string[]): Promise<EvalPromptAssetRow[]> {
+    await this.ready();
+    const rows = assetKeys && assetKeys.length > 0
+      ? await this.postgres.query<EvalPromptAssetRow>(
+          `SELECT asset_key, version, content, parent_version, note, metadata, created_at
+           FROM eval_prompt_assets
+           WHERE asset_key = ANY($1)
+           ORDER BY asset_key ASC, version DESC`,
+          [assetKeys],
+        )
+      : await this.postgres.query<EvalPromptAssetRow>(
+          `SELECT asset_key, version, content, parent_version, note, metadata, created_at
+           FROM eval_prompt_assets
+           ORDER BY asset_key ASC, version DESC`,
+        );
+    return rows.rows;
+  }
+
+  async loadEvalPromptAsset(assetKey: string, version: number): Promise<EvalPromptAssetRow | null> {
+    await this.ready();
+    const res = await this.postgres.query<EvalPromptAssetRow>(
+      `SELECT asset_key, version, content, parent_version, note, metadata, created_at
+       FROM eval_prompt_assets
+       WHERE asset_key = $1 AND version = $2`,
+      [assetKey, version],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  async createEvalPromptAssetVersion(
+    assetKey: string,
+    content: string,
+    opts: { parentVersion?: number; note?: string; metadata?: Record<string, unknown> | null } = {},
+  ): Promise<EvalPromptAssetRow> {
+    await this.ready();
+    const latest = await this.postgres.query<{ version: number }>(
+      `SELECT version FROM eval_prompt_assets WHERE asset_key = $1 ORDER BY version DESC LIMIT 1`,
+      [assetKey],
+    );
+    const version = (latest.rows[0]?.version ?? 0) + 1;
+    const res = await this.postgres.query<EvalPromptAssetRow>(
+      `INSERT INTO eval_prompt_assets (id, asset_key, version, content, parent_version, note, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       RETURNING asset_key, version, content, parent_version, note, metadata, created_at`,
+      [
+        randomUUID(),
+        assetKey,
+        version,
+        content,
+        opts.parentVersion ?? latest.rows[0]?.version ?? null,
+        opts.note ?? null,
+        JSON.stringify(opts.metadata ?? null),
+      ],
+    );
+    return res.rows[0];
+  }
+
+  async listEvalPromptGenerations(): Promise<EvalPromptGenerationRow[]> {
+    await this.ready();
+    const res = await this.postgres.query<EvalPromptGenerationRow>(
+      `SELECT id, manifest, parent_id, status, is_best, score, note, created_at
+       FROM eval_prompt_generations
+       ORDER BY created_at DESC`,
+    );
+    return res.rows;
+  }
+
+  async loadEvalPromptGeneration(id: string): Promise<EvalPromptGenerationRow | null> {
+    await this.ready();
+    const res = await this.postgres.query<EvalPromptGenerationRow>(
+      `SELECT id, manifest, parent_id, status, is_best, score, note, created_at
+       FROM eval_prompt_generations
+       WHERE id = $1`,
+      [id],
+    );
+    return res.rows[0] ?? null;
+  }
+
+  async loadActiveEvalPromptGeneration(): Promise<EvalPromptGenerationRow | null> {
+    await this.ready();
+    const state = await this.postgres.query<{ active_generation_id: string | null }>(
+      `SELECT active_generation_id FROM eval_prompt_state WHERE id = 1`,
+    );
+    const id = state.rows[0]?.active_generation_id;
+    return id ? this.loadEvalPromptGeneration(id) : null;
+  }
+
+  async upsertEvalPromptGeneration(
+    generation: Omit<EvalPromptGenerationRow, "created_at">,
+  ): Promise<EvalPromptGenerationRow> {
+    await this.ready();
+    const res = await this.postgres.query<EvalPromptGenerationRow>(
+      `INSERT INTO eval_prompt_generations (id, manifest, parent_id, status, is_best, score, note)
+       VALUES ($1, $2::jsonb, $3, $4, $5, $6::jsonb, $7)
+       ON CONFLICT (id) DO UPDATE
+       SET manifest = EXCLUDED.manifest,
+           parent_id = EXCLUDED.parent_id,
+           status = EXCLUDED.status,
+           is_best = EXCLUDED.is_best,
+           score = EXCLUDED.score,
+           note = EXCLUDED.note
+       RETURNING id, manifest, parent_id, status, is_best, score, note, created_at`,
+      [
+        generation.id,
+        JSON.stringify(generation.manifest),
+        generation.parent_id ?? null,
+        generation.status,
+        generation.is_best,
+        JSON.stringify(generation.score ?? null),
+        generation.note ?? null,
+      ],
+    );
+    return res.rows[0];
+  }
+
+  async setActiveEvalPromptGeneration(id: string): Promise<void> {
+    await this.ready();
+    await this.postgres.query(
+      `INSERT INTO eval_prompt_state (id, active_generation_id)
+       VALUES (1, $1)
+       ON CONFLICT (id) DO UPDATE SET active_generation_id = EXCLUDED.active_generation_id`,
       [id],
     );
   }

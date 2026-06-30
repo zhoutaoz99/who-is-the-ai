@@ -122,6 +122,7 @@ export function buildOptimizerInput(
       "小步定向改不要整段重写",
       "目标是降可疑度/修破绽,不是刷某个评分",
       "修探测类优先写成通用回避反射,别背具体答案",
+      "若 assigned_edit_type=consolidate,只在不改变既有行为前提下精简/去冗余,不要吸收新策略或改变决策逻辑",
       "保留 {{persona}} 占位与锁定段",
     ],
   };

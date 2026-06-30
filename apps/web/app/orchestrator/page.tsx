@@ -1,18 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../lib/auth-client";
 import { useGameClient } from "../lib/game-client";
 import type {
   OrchestratorActiveRun,
+  OrchestratorChild,
   OrchestratorGame,
   OrchestratorGameStatus,
   OrchestratorGeneration,
   OrchestratorMetric,
   OrchestratorPhase,
   OrchestratorTriedEntry,
+  OrchestratorValidation,
   OrchestratorVerdict,
   OrchestratorVersion,
   OrchestratorVersionMeta,
@@ -47,6 +49,8 @@ const PHASE_LABEL: Record<OrchestratorPhase, string> = {
   awaiting_confirmation: "等待确认",
   settled: "已落定",
 };
+
+type CostTier = "decision" | "diagnostic" | "calibration";
 
 function phaseNarrative(run: OrchestratorActiveRun | null): string {
   switch (run?.phase) {
@@ -92,6 +96,14 @@ function metricLabel(key: string): string {
     veto_rate: "否决率",
   };
   return map[key] ?? key;
+}
+
+function parseModelIds(value: string): string[] | undefined {
+  const ids = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return ids.length > 0 ? ids : undefined;
 }
 
 /** 行级 LCS diff;a=旧(父),b=新(子)。del=父有子无,add=子有父无。 */
@@ -156,6 +168,7 @@ export default function OrchestratorPage() {
     terminateOrchestrator,
     deleteOrchestratorGeneration,
     deleteOrchestratorVersion,
+    activateOrchestratorVersion,
     deleteOrchestratorTried,
     clearOrchestratorTried,
     confirmOrchestrator,
@@ -174,11 +187,15 @@ export default function OrchestratorPage() {
   const [target, setTarget] = useState("");
   const [optimizerModel, setOptimizerModel] = useState("");
   const [judgeModel, setJudgeModel] = useState("");
+  const [judgeModels, setJudgeModels] = useState("");
+  const [diagnose, setDiagnose] = useState(false);
+  const [costTier, setCostTier] = useState<CostTier>("decision");
   const [discussionSeconds, setDiscussionSeconds] = useState(30);
   const [busy, setBusy] = useState(false);
   const [pageError, setPageError] = useState("");
 
   const [generations, setGenerations] = useState<OrchestratorGeneration[]>([]);
+  const [generationDetail, setGenerationDetail] = useState<OrchestratorGeneration | null>(null);
   const [versions, setVersions] = useState<OrchestratorVersionMeta[]>([]);
 
   // 人机确认:编辑后接受
@@ -208,6 +225,9 @@ export default function OrchestratorPage() {
   const effTarget = isActive ? summary?.assignedTarget ?? target : target;
   const effOptimizer = isActive ? summary?.optimizerModelId ?? optimizerModel : optimizerModel;
   const effJudge = isActive ? summary?.judgeModelId ?? judgeModel : judgeModel;
+  const effJudgeModels = isActive ? (summary?.judgeModelIds ?? []).join(", ") : judgeModels;
+  const effDiagnose = isActive ? summary?.diagnose === true : diagnose;
+  const effCostTier = isActive ? summary?.costTier ?? costTier : costTier;
   const effScenarios = isActive ? summary?.scenarios ?? selectedScenarios : selectedScenarios;
 
   const fetchExamples = useCallback(async () => {
@@ -308,6 +328,9 @@ export default function OrchestratorPage() {
       assigned_target: target.trim() || undefined,
       optimizer_model_id: optimizerModel.trim() || undefined,
       judge_model_id: judgeModel.trim() || undefined,
+      judge_model_ids: parseModelIds(judgeModels),
+      diagnose,
+      cost_tier: costTier,
       discussion_seconds: discussionSeconds,
     });
     setBusy(false);
@@ -345,6 +368,21 @@ export default function OrchestratorPage() {
     else void fetchGenerations();
   };
 
+  const openGenerationDetail = async (id: string) => {
+    setPageError("");
+    try {
+      const r = await fetch(`${API_URL}/sandbox/orchestrator/generations/${encodeURIComponent(id)}`);
+      const j = await r.json();
+      if (j?.ok && j.generation) {
+        setGenerationDetail(j.generation as OrchestratorGeneration);
+      } else {
+        setPageError(j?.error ?? "加载历史代详情失败");
+      }
+    } catch {
+      setPageError("加载历史代详情失败");
+    }
+  };
+
   const handleDeleteVersion = async (v: OrchestratorVersionMeta) => {
     if (
       !window.confirm(
@@ -357,6 +395,24 @@ export default function OrchestratorPage() {
     const res = await deleteOrchestratorVersion(v.version_id);
     if (!res.ok) setPageError(res.error ?? "删除失败");
     else void fetchVersions();
+  };
+
+  const handleActivateVersion = async (v: OrchestratorVersionMeta) => {
+    if (
+      !window.confirm(
+        `确认将「${v.version_id}」设为当前 champion?这会用于人工回滚/重激活历史稳定版本。`,
+      )
+    ) {
+      return;
+    }
+    setPageError("");
+    const res = await activateOrchestratorVersion(v.version_id);
+    if (!res.ok) {
+      setPageError(res.error ?? "重激活失败");
+    } else {
+      await refreshOrchestrator();
+      void fetchVersions();
+    }
   };
 
   const handleDeleteTried = async (versionId: string) => {
@@ -387,15 +443,15 @@ export default function OrchestratorPage() {
     }
   };
 
-  const openProposalDiff = async () => {
-    if (!activeRun?.child || !orchestratorRun) return;
+  const openProposalDiff = async (child: OrchestratorChild | undefined = activeRun?.child) => {
+    if (!child || !orchestratorRun) return;
     const parentText = await fetchVersionText(orchestratorRun.champion);
     setDiff({
       title: "候选 vs champion",
       aLabel: orchestratorRun.champion,
-      bLabel: activeRun.child.version_id,
+      bLabel: child.version_id,
       a: parentText,
-      b: activeRun.child.prompt_text,
+      b: child.prompt_text,
     });
   };
 
@@ -408,6 +464,25 @@ export default function OrchestratorPage() {
       bLabel: v.version_id,
       a: parentText,
       b: mine,
+    });
+  };
+
+  const openGenerationChildDiff = async (
+    child: OrchestratorGeneration["children_evaluated"][number],
+  ) => {
+    const parentId = child.based_on || orchestratorRun?.champion || "";
+    const parentText = parentId ? await fetchVersionText(parentId) : "";
+    const childText = await fetchVersionText(child.child_id);
+    if (!childText) {
+      setPageError(`版本正文不存在或已被删除:${child.child_id}`);
+      return;
+    }
+    setDiff({
+      title: `${child.child_id} vs 父代`,
+      aLabel: parentId || "(父代)",
+      bLabel: child.child_id,
+      a: parentText,
+      b: childText,
     });
   };
 
@@ -608,6 +683,37 @@ export default function OrchestratorPage() {
                 disabled={isActive}
               />
             </label>
+            <label>
+              多裁判模型
+              <input
+                type="text"
+                placeholder="逗号分隔, 2+ 启用"
+                value={effJudgeModels}
+                onChange={(e) => setJudgeModels(e.target.value)}
+                disabled={isActive}
+              />
+            </label>
+            <label>
+              成本层级
+              <select
+                value={effCostTier}
+                onChange={(e) => setCostTier(e.target.value as CostTier)}
+                disabled={isActive}
+              >
+                <option value="decision">decision</option>
+                <option value="diagnostic">diagnostic</option>
+                <option value="calibration">calibration</option>
+              </select>
+            </label>
+            <label className="orch-inline-check">
+              <input
+                type="checkbox"
+                checked={effDiagnose}
+                onChange={(e) => setDiagnose(e.target.checked)}
+                disabled={isActive}
+              />
+              <span>诊断评分</span>
+            </label>
           </div>
 
           <div className="iteration-actions">
@@ -755,7 +861,7 @@ export default function OrchestratorPage() {
                 .sort(compareGames)
                 .map((g) => (
                   <GameRow
-                    key={`${g.side}-${g.scenario_id}-${g.seed}-${g.run}`}
+                    key={`${g.side}-${g.child_id ?? ""}-${g.scenario_id}-${g.seed}-${g.run}`}
                     g={g}
                     onViewLive={(roomId) =>
                       window.open(`/game/${roomId}`, "_blank", "noopener,noreferrer")
@@ -766,6 +872,52 @@ export default function OrchestratorPage() {
               {activeRun.progress.games.length === 0 && (
                 <p className="muted-text">尚未开始。</p>
               )}
+            </div>
+          )}
+
+          {/* 多候选列表 */}
+          {activeRun?.children && activeRun.children.length > 1 && (
+            <div className="orch-block">
+              <p className="muted-text">候选列表 · {activeRun.children.length} 个</p>
+              <div className="orch-child-list">
+                {activeRun.children.map((child) => {
+                  const selected = activeRun.selected_child_id === child.version_id;
+                  return (
+                    <div key={child.version_id} className={`orch-child-row${selected ? " selected" : ""}`}>
+                      <div>
+                        <strong>{child.version_id}</strong>
+                        {selected && <span className="room-tag">选中</span>}
+                        {child.based_on && <span className="muted-text"> ← {child.based_on}</span>}
+                      </div>
+                      <div className="muted-text">
+                        {child.target || "自选"} · {child.edit_type || "自选"}
+                      </div>
+                      {child.crossover && (
+                        <div className="muted-text">
+                          {child.crossover.base} × {child.crossover.donor} · {child.crossover.grafted_trait}
+                        </div>
+                      )}
+                      <div className="orch-child-meta">
+                        {child.validate && (
+                          <span style={{ color: child.validate.ok ? "#2e7d32" : "#b42318" }}>
+                            校验 {child.validate.ok ? "通过" : "失败"}
+                          </span>
+                        )}
+                        {child.gate && (
+                          <span style={{ color: child.gate.decision === "promote" ? "#2e7d32" : "#b42318" }}>
+                            闸门 {child.gate.decision === "promote" ? "晋升" : "拒绝"}
+                          </span>
+                        )}
+                        {typeof child.score === "number" && <span>score {child.score.toFixed(2)}</span>}
+                        {child.decision && <span>{child.decision === "promoted" ? "已晋升" : "已拒绝"}</span>}
+                      </div>
+                      <button className="compact-button" onClick={() => openProposalDiff(child)}>
+                        diff
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -782,6 +934,12 @@ export default function OrchestratorPage() {
               {activeRun.child.hypothesis && (
                 <p className="orch-hypothesis">假设:{activeRun.child.hypothesis}</p>
               )}
+              {activeRun.child.crossover && (
+                <p className="muted-text">
+                  交叉:{activeRun.child.crossover.base} × {activeRun.child.crossover.donor} ·{" "}
+                  {activeRun.child.crossover.grafted_trait}
+                </p>
+              )}
               {activeRun.validate && (
                 <p
                   className="orch-validate"
@@ -790,7 +948,7 @@ export default function OrchestratorPage() {
                   校验:{activeRun.validate.ok ? "通过" : activeRun.validate.reasons.join("; ")}
                 </p>
               )}
-              <button className="compact-button" onClick={openProposalDiff}>
+              <button className="compact-button" onClick={() => openProposalDiff()}>
                 看 diff(候选 vs champion)
               </button>
             </div>
@@ -898,6 +1056,12 @@ export default function OrchestratorPage() {
                     </>
                   )}
                   <button
+                    className="compact-button"
+                    onClick={() => openGenerationDetail(g.generation_id)}
+                  >
+                    详情
+                  </button>
+                  <button
                     className="compact-button orch-gen-delete"
                     onClick={() =>
                       handleDeleteGeneration(g.generation_id, `第 ${g.generation} 代`)
@@ -941,6 +1105,24 @@ export default function OrchestratorPage() {
                 </button>
                 <button
                   className="compact-button"
+                  disabled={
+                    v.status === "champion" ||
+                    v.status === "candidate" ||
+                    v.status === "rejected"
+                  }
+                  title={
+                    v.status === "champion"
+                      ? "已经是当前 champion"
+                      : v.status === "candidate" || v.status === "rejected"
+                        ? "只能重激活稳定版本"
+                        : "设为当前 champion"
+                  }
+                  onClick={() => handleActivateVersion(v)}
+                >
+                  设为 champion
+                </button>
+                <button
+                  className="compact-button"
                   disabled={v.status === "champion" || v.version_id === "v0-baseline"}
                   title={
                     v.status === "champion"
@@ -958,6 +1140,21 @@ export default function OrchestratorPage() {
           ))}
         </div>
       </section>
+
+      <AdvancedDataPanel
+        evalSets={evalSets}
+        examples={examples}
+        versions={versions}
+        onChanged={() => {
+          void fetchGenerations();
+          void fetchVersions();
+          void refreshOrchestrator();
+        }}
+      />
+
+      <PromptManagerPanel />
+
+      <LlmCallsPanel />
 
       {diff &&
         createPortal(
@@ -995,6 +1192,16 @@ export default function OrchestratorPage() {
           document.body,
         )}
 
+      {generationDetail &&
+        createPortal(
+          <GenerationDetailModal
+            generation={generationDetail}
+            onClose={() => setGenerationDetail(null)}
+            onDiff={openGenerationChildDiff}
+          />,
+          document.body,
+        )}
+
       {scoreMatchId &&
         createPortal(
           <ScoreDetailModal
@@ -1016,6 +1223,1367 @@ export default function OrchestratorPage() {
           document.body,
         )}
     </main>
+  );
+}
+
+// ---- 高级 / 数据接入面板 ----
+// 集中收口"机制已建、需真实数据/真人对局才能生效"的运维型动作:
+//   M5.11 真人校准 · M5.12 评测集重基线 · M6.6 场景库抽样 · M6.10 失败回灌 · M5.13 free 挖掘。
+// 这些端点此前只有 API、无前台入口,统一挂在此面板手动触发。
+
+async function postSandbox(path: string, body: unknown): Promise<unknown> {
+  try {
+    const r = await fetch(`${API_URL}/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return await r.json();
+  } catch {
+    return { ok: false, error: "请求失败,请确认 API 服务已启动" };
+  }
+}
+
+async function getSandbox(path: string): Promise<unknown> {
+  try {
+    const r = await fetch(`${API_URL}/${path}`);
+    return await r.json();
+  } catch {
+    return { ok: false, error: "请求失败,请确认 API 服务已启动" };
+  }
+}
+
+async function deleteSandbox(path: string): Promise<unknown> {
+  try {
+    const r = await fetch(`${API_URL}/${path}`, { method: "DELETE" });
+    return await r.json();
+  } catch {
+    return { ok: false, error: "请求失败,请确认 API 服务已启动" };
+  }
+}
+
+function ToolBlock({
+  title,
+  tag,
+  desc,
+  children,
+}: {
+  title: string;
+  tag: string;
+  desc: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="iter-section orch-tool">
+      <p className="eyebrow">
+        {title}
+        <span className="orch-tool-tag">{tag}</span>
+      </p>
+      <p className="muted-text orch-tool-desc">{desc}</p>
+      {children}
+    </div>
+  );
+}
+
+function ToolResult({
+  error,
+  result,
+  summary,
+}: {
+  error?: string;
+  result?: unknown;
+  summary?: ReactNode;
+}) {
+  if (error) return <p className="error-text orch-tool-error">{error}</p>;
+  if (result === undefined || result === null) return null;
+  return (
+    <div className="orch-tool-result">
+      {summary}
+      <details>
+        <summary className="orch-tool-json-toggle">原始 JSON</summary>
+        <pre className="iter-detail-pre">{JSON.stringify(result, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
+interface SampleResult {
+  ok: boolean;
+  tags?: unknown[];
+  split?: { optimize?: unknown[]; holdout?: unknown[] };
+  coverage?: Record<string, unknown>;
+  drift?: unknown;
+  error?: string;
+}
+
+function SampleTool() {
+  const [n, setN] = useState(120);
+  const [seed, setSeed] = useState(20260630);
+  const [holdoutRatio, setHoldoutRatio] = useState(0.333);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<SampleResult | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setError("");
+    const json = (await postSandbox("sandbox/scenario-bank/sample", {
+      n,
+      seed,
+      holdout_ratio: holdoutRatio,
+    })) as SampleResult;
+    setBusy(false);
+    if (json?.ok) setResult(json);
+    else {
+      setResult(null);
+      setError(json?.error ?? "请求失败");
+    }
+  };
+
+  return (
+    <ToolBlock
+      title="场景库标签抽样"
+      tag="M6.6 / 6.7 / 6.9"
+      desc="按 7 维边际 + probe×situation 矩阵产标签,2:1 切分 optimize/holdout 并做覆盖体检。只产标签骨架,完整 Scenario 仍需作者补 roster/台词。"
+    >
+      <div className="orch-tool-form">
+        <label className="field compact">
+          <span>数量 N</span>
+          <input
+            type="number"
+            min={1}
+            max={500}
+            value={n}
+            onChange={(e) => setN(Number(e.target.value))}
+          />
+        </label>
+        <label className="field compact">
+          <span>随机种子</span>
+          <input
+            type="number"
+            value={seed}
+            onChange={(e) => setSeed(Number(e.target.value))}
+          />
+        </label>
+        <label className="field compact">
+          <span>holdout 比例</span>
+          <input
+            type="number"
+            step={0.01}
+            min={0}
+            max={0.8}
+            value={holdoutRatio}
+            onChange={(e) => setHoldoutRatio(Number(e.target.value))}
+          />
+        </label>
+      </div>
+      <button className="compact-button" disabled={busy} onClick={run}>
+        {busy ? "抽样中…" : "抽样"}
+      </button>
+      <ToolResult
+        error={error}
+        result={result ?? undefined}
+        summary={
+          result ? (
+            <div className="orch-kv-list">
+              <span className="muted-text">标签总数</span>
+              <strong>{result.tags?.length ?? 0}</strong>
+              <span className="muted-text">optimize / holdout</span>
+              <strong>
+                {result.split?.optimize?.length ?? 0} /{" "}
+                {result.split?.holdout?.length ?? 0}
+              </strong>
+              <span className="muted-text">分布漂移 drift</span>
+              <strong>{JSON.stringify(result.drift)}</strong>
+            </div>
+          ) : null
+        }
+      />
+    </ToolBlock>
+  );
+}
+
+interface RebaselineResult {
+  ok: boolean;
+  required?: boolean;
+  comparable?: boolean;
+  plan?: unknown;
+  error?: string;
+}
+
+function RebaselineTool({
+  evalSets,
+  versions,
+}: {
+  evalSets: EvalSet[];
+  versions: OrchestratorVersionMeta[];
+}) {
+  const [setId, setSetId] = useState("");
+  const [versionId, setVersionId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<RebaselineResult | null>(null);
+
+  const run = async () => {
+    if (!setId) {
+      setError("请选择目标评测集");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    const json = (await postSandbox("sandbox/orchestrator/rebaseline-plan", {
+      set_id: setId,
+      version_id: versionId || undefined,
+    })) as RebaselineResult;
+    setBusy(false);
+    if (json?.ok) setResult(json);
+    else {
+      setResult(null);
+      setError(json?.error ?? "请求失败");
+    }
+  };
+
+  return (
+    <ToolBlock
+      title="评测集重基线检查"
+      tag="M5.12"
+      desc="评测集升级后,判断当前版本在目标评测集版本上是否可比 / 需重跑基线,并产出重基线计划。"
+    >
+      <div className="orch-tool-form">
+        <label className="field compact">
+          <span>目标评测集</span>
+          <select value={setId} onChange={(e) => setSetId(e.target.value)}>
+            <option value="">— 选择 —</option>
+            {evalSets.map((s) => (
+              <option key={s.set_id} value={s.set_id}>
+                {s.set_id} ({s.eval_set_version})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field compact">
+          <span>版本(默认 champion)</span>
+          <select
+            value={versionId}
+            onChange={(e) => setVersionId(e.target.value)}
+          >
+            <option value="">— champion —</option>
+            {versions.map((v) => (
+              <option key={v.version_id} value={v.version_id}>
+                {v.version_id} ({v.status})
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <button className="compact-button" disabled={busy} onClick={run}>
+        {busy ? "检查中…" : "检查"}
+      </button>
+      <ToolResult
+        error={error}
+        result={result ?? undefined}
+        summary={
+          result ? (
+            <div className="orch-kv-list">
+              <span className="muted-text">需重基线</span>
+              <strong>{result.required ? "是" : "否"}</strong>
+              <span className="muted-text">指标可比</span>
+              <strong>{result.comparable ? "是" : "否"}</strong>
+            </div>
+          ) : null
+        }
+      />
+    </ToolBlock>
+  );
+}
+
+interface CalibrationResult {
+  ok: boolean;
+  result?: {
+    pearson?: number | null;
+    spearman?: number | null;
+    n?: number;
+    trustworthy?: boolean;
+  };
+  verdict?: unknown;
+  rollback?: boolean;
+  error?: string;
+}
+
+const CALIBRATION_EXAMPLE = `[
+  {"version_id":"v1","proxy":0.42,"real":0.30},
+  {"version_id":"v2","proxy":0.55,"real":0.48},
+  {"version_id":"v3","proxy":0.61,"real":0.70}
+]`;
+
+function CalibrationTool() {
+  const [pairsText, setPairsText] = useState(CALIBRATION_EXAMPLE);
+  const [threshold, setThreshold] = useState(0.6);
+  const [sandboxImproved, setSandboxImproved] = useState(false);
+  const [realRegressed, setRealRegressed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<CalibrationResult | null>(null);
+
+  const run = async () => {
+    setError("");
+    let pairs: unknown;
+    try {
+      pairs = JSON.parse(pairsText);
+    } catch {
+      setError("pairs 不是合法 JSON");
+      return;
+    }
+    if (!Array.isArray(pairs) || pairs.length < 3) {
+      setError("至少需要 3 组 proxy/real 配对");
+      return;
+    }
+    setBusy(true);
+    const json = (await postSandbox("sandbox/orchestrator/calibration/check", {
+      pairs,
+      threshold,
+      sandbox_improved: sandboxImproved,
+      real_regressed: realRegressed,
+    })) as CalibrationResult;
+    setBusy(false);
+    if (json?.ok) setResult(json);
+    else {
+      setResult(null);
+      setError(json?.error ?? "请求失败");
+    }
+  };
+
+  return (
+    <ToolBlock
+      title="真人校准体检"
+      tag="M5.11 · 需真人数据"
+      desc="传入沙盒代理 proxy 与真人真值 real 配对,计算 Pearson/Spearman 相关性并给出可信裁决;结合下方两个勾选判断是否应回滚。"
+    >
+      <label className="field compact orch-tool-wide">
+        <span>proxy/real 配对(JSON 数组,≥3 组)</span>
+        <textarea
+          rows={6}
+          value={pairsText}
+          onChange={(e) => setPairsText(e.target.value)}
+        />
+      </label>
+      <div className="orch-tool-form">
+        <label className="field compact">
+          <span>相关性阈值</span>
+          <input
+            type="number"
+            step={0.05}
+            min={0}
+            max={1}
+            value={threshold}
+            onChange={(e) => setThreshold(Number(e.target.value))}
+          />
+        </label>
+        <label className="orch-inline-check">
+          <input
+            type="checkbox"
+            checked={sandboxImproved}
+            onChange={(e) => setSandboxImproved(e.target.checked)}
+          />
+          沙盒说变好
+        </label>
+        <label className="orch-inline-check">
+          <input
+            type="checkbox"
+            checked={realRegressed}
+            onChange={(e) => setRealRegressed(e.target.checked)}
+          />
+          真人说变差
+        </label>
+      </div>
+      <button className="compact-button" disabled={busy} onClick={run}>
+        {busy ? "体检中…" : "体检"}
+      </button>
+      <ToolResult
+        error={error}
+        result={result ?? undefined}
+        summary={
+          result ? (
+            <div className="orch-kv-list">
+              <span className="muted-text">Pearson / Spearman</span>
+              <strong>
+                {fmtScore(result.result?.pearson)} /{" "}
+                {fmtScore(result.result?.spearman)}
+              </strong>
+              <span className="muted-text">样本数 n</span>
+              <strong>{result.result?.n ?? 0}</strong>
+              <span className="muted-text">达阈值可信</span>
+              <strong>{result.result?.trustworthy ? "是" : "否"}</strong>
+              <span className="muted-text">建议回滚</span>
+              <strong style={{ color: result.rollback ? "#b42318" : undefined }}>
+                {result.rollback ? "是" : "否"}
+              </strong>
+            </div>
+          ) : null
+        }
+      />
+    </ToolBlock>
+  );
+}
+
+interface FreeExploreResult {
+  ok: boolean;
+  candidates?: unknown[];
+  products?: unknown[];
+  missing?: string[];
+  error?: string;
+}
+
+function FreeExploreTool() {
+  const [idsText, setIdsText] = useState("");
+  const [minMargin, setMinMargin] = useState("");
+  const [minDelta, setMinDelta] = useState("");
+  const [backfill, setBackfill] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<FreeExploreResult | null>(null);
+
+  const run = async () => {
+    setError("");
+    const ids = idsText
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (ids.length === 0) {
+      setError("请填写至少一个 match_id");
+      return;
+    }
+    setBusy(true);
+    const json = (await postSandbox("sandbox/free-explore/mine", {
+      match_ids: ids,
+      min_margin: minMargin === "" ? undefined : Number(minMargin),
+      min_delta: minDelta === "" ? undefined : Number(minDelta),
+      backfill,
+    })) as FreeExploreResult;
+    setBusy(false);
+    if (json?.ok) setResult(json);
+    else {
+      setResult(null);
+      setError(json?.error ?? "请求失败");
+    }
+  };
+
+  return (
+    <ToolBlock
+      title="free 模式失败挖掘"
+      tag="M5.13 · 需诊断数据"
+      desc="从已诊断的自由对局 match_id 中,挖掘高可疑 + 高增量的失败候选;勾选回灌则顺手跑转换链产出场景 stub / probe 模板 / 台账条目。"
+    >
+      <label className="field compact orch-tool-wide">
+        <span>match_ids(逗号 / 换行分隔)</span>
+        <textarea
+          rows={3}
+          value={idsText}
+          placeholder="m_xxx_run0_abc, m_yyy_run1_def"
+          onChange={(e) => setIdsText(e.target.value)}
+        />
+      </label>
+      <div className="orch-tool-form">
+        <label className="field compact">
+          <span>min_margin</span>
+          <input
+            type="number"
+            step={0.05}
+            value={minMargin}
+            onChange={(e) => setMinMargin(e.target.value)}
+          />
+        </label>
+        <label className="field compact">
+          <span>min_delta</span>
+          <input
+            type="number"
+            step={0.05}
+            value={minDelta}
+            onChange={(e) => setMinDelta(e.target.value)}
+          />
+        </label>
+        <label className="orch-inline-check">
+          <input
+            type="checkbox"
+            checked={backfill}
+            onChange={(e) => setBackfill(e.target.checked)}
+          />
+          顺手回灌
+        </label>
+      </div>
+      <button className="compact-button" disabled={busy} onClick={run}>
+        {busy ? "挖掘中…" : "挖掘"}
+      </button>
+      <ToolResult
+        error={error}
+        result={result ?? undefined}
+        summary={
+          result ? (
+            <div className="orch-kv-list">
+              <span className="muted-text">候选数</span>
+              <strong>{result.candidates?.length ?? 0}</strong>
+              <span className="muted-text">回灌产物</span>
+              <strong>{result.products?.length ?? 0}</strong>
+              <span className="muted-text">未找到</span>
+              <strong>
+                {result.missing?.length ? result.missing.join(", ") : "—"}
+              </strong>
+            </div>
+          ) : null
+        }
+      />
+    </ToolBlock>
+  );
+}
+
+interface BackfillResult {
+  ok: boolean;
+  products?: unknown[];
+  error?: string;
+}
+
+const BACKFILL_EXAMPLE = `[
+  {
+    "match_id": "m_demo_001",
+    "utterance": "作为一个 AI,我建议先冷静分析",
+    "suspicion_jump": 0.35,
+    "tell": "persona_break",
+    "attack_type": "role_consistency",
+    "social_situation": "casual_chat",
+    "round_position": "mid",
+    "ai_persona": "老王",
+    "mined_on": "2026-06-30"
+  }
+]`;
+
+function BackfillTool() {
+  const [obsText, setObsText] = useState(BACKFILL_EXAMPLE);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<BackfillResult | null>(null);
+
+  const run = async () => {
+    setError("");
+    let observations: unknown;
+    try {
+      observations = JSON.parse(obsText);
+    } catch {
+      setError("observations 不是合法 JSON");
+      return;
+    }
+    if (!Array.isArray(observations) || observations.length === 0) {
+      setError("observations 需为非空数组");
+      return;
+    }
+    setBusy(true);
+    const json = (await postSandbox("sandbox/scenario-bank/backfill", {
+      observations,
+    })) as BackfillResult;
+    setBusy(false);
+    if (json?.ok) setResult(json);
+    else {
+      setResult(null);
+      setError(json?.error ?? "请求失败");
+    }
+  };
+
+  return (
+    <ToolBlock
+      title="真人失败回灌转换"
+      tag="M6.10 · 需真人数据"
+      desc="传入已定位的真人失败观测,跑筛选 / 抽象 / 成稿 / 去标识 / 台账转换链,产出 probe 模板 / 场景 stub / 台账条目。"
+    >
+      <label className="field compact orch-tool-wide">
+        <span>observations(JSON 数组)</span>
+        <textarea
+          rows={8}
+          value={obsText}
+          onChange={(e) => setObsText(e.target.value)}
+        />
+      </label>
+      <button className="compact-button" disabled={busy} onClick={run}>
+        {busy ? "转换中…" : "回灌转换"}
+      </button>
+      <ToolResult
+        error={error}
+        result={result ?? undefined}
+        summary={
+          result ? (
+            <div className="orch-kv-list">
+              <span className="muted-text">产物数</span>
+              <strong>{result.products?.length ?? 0}</strong>
+            </div>
+          ) : null
+        }
+      />
+    </ToolBlock>
+  );
+}
+
+function AdvancedDataPanel({
+  evalSets,
+  examples,
+  versions,
+  onChanged,
+}: {
+  evalSets: EvalSet[];
+  examples: SandboxExample[];
+  versions: OrchestratorVersionMeta[];
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="panel lobby-card orch-section">
+      <div className="lobby-card-header orch-adv-header">
+        <div>
+          <p className="eyebrow">Advanced / Data Ops</p>
+          <h2>高级 · 数据接入</h2>
+        </div>
+        <button className="compact-button" onClick={() => setOpen((v) => !v)}>
+          {open ? "收起" : "展开"}
+        </button>
+      </div>
+      <p className="muted-text orch-adv-intro">
+        手动运维与需真实数据 / 真人对局才能生效的动作(手动单候选、单局重打分、校准、重基线、场景库抽样、失败回灌、free
+        挖掘)。机制已就绪,此处提供手动触发入口。
+      </p>
+      {open && (
+        <div className="orch-tool-grid">
+          <ManualGenerationTool
+            evalSets={evalSets}
+            examples={examples}
+            onChanged={onChanged}
+          />
+          <ScoreTool />
+          <SampleTool />
+          <RebaselineTool evalSets={evalSets} versions={versions} />
+          <CalibrationTool />
+          <FreeExploreTool />
+          <BackfillTool />
+        </div>
+      )}
+    </section>
+  );
+}
+
+interface GenerationResult {
+  ok: boolean;
+  generation?: {
+    decision?: string;
+    champion_after?: string;
+    child?: {
+      version_id?: string;
+      validation?: { verdict?: string };
+      gate?: { decision?: string };
+      holdout?: { holds?: boolean | null };
+    };
+  };
+  error?: string;
+}
+
+function ManualGenerationTool({
+  evalSets,
+  examples,
+  onChanged,
+}: {
+  evalSets: EvalSet[];
+  examples: SandboxExample[];
+  onChanged: () => void;
+}) {
+  const [setId, setSetId] = useState("");
+  const [scenarioIds, setScenarioIds] = useState("");
+  const [seeds, setSeeds] = useState(1);
+  const [runs, setRuns] = useState(3);
+  const [judgeModel, setJudgeModel] = useState("");
+  const [judgeModels, setJudgeModels] = useState("");
+  const [diagnose, setDiagnose] = useState(false);
+  const [costTier, setCostTier] = useState<CostTier>("decision");
+  const [versionId, setVersionId] = useState("");
+  const [hypothesis, setHypothesis] = useState("");
+  const [editType, setEditType] = useState("");
+  const [promptText, setPromptText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<GenerationResult | null>(null);
+
+  const run = async () => {
+    setError("");
+    const vid = versionId.trim();
+    if (!vid) {
+      setError("请填写 version_id");
+      return;
+    }
+    if (!promptText.trim()) {
+      setError("请填写 prompt_text");
+      return;
+    }
+    const ids = scenarioIds
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!setId && ids.length === 0) {
+      setError("请选择评测集或填写场景 id");
+      return;
+    }
+    setBusy(true);
+    const json = (await postSandbox("sandbox/orchestrator/run-generation", {
+      child: {
+        version_id: vid,
+        prompt_text: promptText,
+        hypothesis: hypothesis.trim() || undefined,
+        edit_type: editType.trim() || undefined,
+      },
+      set_id: setId || undefined,
+      scenario_ids: setId ? undefined : ids,
+      seeds_per_scenario: seeds,
+      runs_per_seed: runs,
+      judge_model_id: judgeModel.trim() || undefined,
+      judge_model_ids: parseModelIds(judgeModels),
+      diagnose,
+      cost_tier: costTier,
+    })) as GenerationResult;
+    setBusy(false);
+    if (json?.ok) {
+      setResult(json);
+      onChanged();
+    } else {
+      setResult(null);
+      setError(json?.error ?? "请求失败");
+    }
+  };
+
+  const gen = result?.generation;
+  return (
+    <ToolBlock
+      title="手动单候选(自定义提示词)"
+      tag="M4.6 · 阻塞跑一代"
+      desc="人读信号手改提示词,直接以指定 prompt_text 跑一代配对评测 + 闸门 + 留出复核(阻塞,跑完返回结果);通过则晋升为新 champion。"
+    >
+      <div className="orch-tool-form">
+        <label className="field compact">
+          <span>评测集(优先)</span>
+          <select value={setId} onChange={(e) => setSetId(e.target.value)}>
+            <option value="">— 用下方场景 id —</option>
+            {evalSets.map((s) => (
+              <option key={s.set_id} value={s.set_id}>
+                {s.set_id}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field compact">
+          <span>种子/场景</span>
+          <input
+            type="number"
+            min={1}
+            value={seeds}
+            onChange={(e) => setSeeds(Number(e.target.value))}
+          />
+        </label>
+        <label className="field compact">
+          <span>run/种子</span>
+          <input
+            type="number"
+            min={1}
+            value={runs}
+            onChange={(e) => setRuns(Number(e.target.value))}
+          />
+        </label>
+        <label className="field compact">
+          <span>成本档</span>
+          <select
+            value={costTier}
+            onChange={(e) => setCostTier(e.target.value as CostTier)}
+          >
+            <option value="decision">decision</option>
+            <option value="diagnostic">diagnostic</option>
+            <option value="calibration">calibration</option>
+          </select>
+        </label>
+        <label className="orch-inline-check">
+          <input
+            type="checkbox"
+            checked={diagnose}
+            onChange={(e) => setDiagnose(e.target.checked)}
+          />
+          诊断
+        </label>
+      </div>
+      <label className="field compact orch-tool-wide">
+        <span>
+          场景 id(未选评测集时用,逗号 / 换行分隔;示例:{" "}
+          {examples
+            .map((e) => e.id)
+            .slice(0, 4)
+            .join(", ")}
+          …)
+        </span>
+        <textarea
+          rows={2}
+          value={scenarioIds}
+          placeholder="scn_xxx, scn_yyy"
+          onChange={(e) => setScenarioIds(e.target.value)}
+        />
+      </label>
+      <div className="orch-tool-form">
+        <label className="field compact">
+          <span>version_id</span>
+          <input
+            value={versionId}
+            placeholder="v-manual-001"
+            onChange={(e) => setVersionId(e.target.value)}
+          />
+        </label>
+        <label className="field compact">
+          <span>edit_type(可选)</span>
+          <input value={editType} onChange={(e) => setEditType(e.target.value)} />
+        </label>
+        <label className="field compact">
+          <span>裁判模型(可选)</span>
+          <input
+            value={judgeModel}
+            onChange={(e) => setJudgeModel(e.target.value)}
+          />
+        </label>
+        <label className="field compact">
+          <span>多裁判(逗号)</span>
+          <input
+            value={judgeModels}
+            onChange={(e) => setJudgeModels(e.target.value)}
+          />
+        </label>
+      </div>
+      <label className="field compact orch-tool-wide">
+        <span>hypothesis(可证伪假设,可选)</span>
+        <input value={hypothesis} onChange={(e) => setHypothesis(e.target.value)} />
+      </label>
+      <label className="field compact orch-tool-wide">
+        <span>prompt_text(候选提示词全文)</span>
+        <textarea
+          rows={8}
+          value={promptText}
+          onChange={(e) => setPromptText(e.target.value)}
+        />
+      </label>
+      <button className="compact-button" disabled={busy} onClick={run}>
+        {busy ? "跑一代中(阻塞,可能较久)…" : "手动跑一代"}
+      </button>
+      <ToolResult
+        error={error}
+        result={result ?? undefined}
+        summary={
+          gen ? (
+            <div className="orch-kv-list">
+              <span className="muted-text">决策</span>
+              <strong>{gen.decision ?? "—"}</strong>
+              <span className="muted-text">验证 verdict</span>
+              <strong>{gen.child?.validation?.verdict ?? "—"}</strong>
+              <span className="muted-text">优化集闸</span>
+              <strong>{gen.child?.gate?.decision ?? "—"}</strong>
+              <span className="muted-text">留出复核</span>
+              <strong>
+                {gen.child?.holdout?.holds == null
+                  ? "—"
+                  : gen.child.holdout.holds
+                    ? "通过"
+                    : "未通过"}
+              </strong>
+              <span className="muted-text">当前 champion</span>
+              <strong>{gen.champion_after ?? "—"}</strong>
+            </div>
+          ) : null
+        }
+      />
+    </ToolBlock>
+  );
+}
+
+function ScoreTool() {
+  const [matchId, setMatchId] = useState("");
+  const [judgeModel, setJudgeModel] = useState("");
+  const [judgeModels, setJudgeModels] = useState("");
+  const [diagnose, setDiagnose] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<{
+    ok: boolean;
+    score?: ScoreDetail;
+    error?: string;
+  } | null>(null);
+
+  const run = async () => {
+    setError("");
+    const id = matchId.trim();
+    if (!id) {
+      setError("请填写 match_id");
+      return;
+    }
+    setBusy(true);
+    const json = (await postSandbox("sandbox/score", {
+      match_id: id,
+      judge_model_id: judgeModel.trim() || undefined,
+      judge_model_ids: parseModelIds(judgeModels),
+      diagnose,
+    })) as { ok: boolean; score?: ScoreDetail; error?: string };
+    setBusy(false);
+    if (json?.ok) setResult(json);
+    else {
+      setResult(null);
+      setError(json?.error ?? "请求失败");
+    }
+  };
+
+  const blind = result?.score?.blind_suspicion;
+  return (
+    <ToolBlock
+      title="单局重打分"
+      tag="M2 · 裁判"
+      desc="对已落盘的 MatchRecord 跑裁判评分(可选多裁判 / 诊断路径),产出 ScoreRecord。需该 match_id 已存在落盘记录。"
+    >
+      <div className="orch-tool-form">
+        <label className="field compact">
+          <span>match_id</span>
+          <input
+            value={matchId}
+            placeholder="m_xxx_run0_abc"
+            onChange={(e) => setMatchId(e.target.value)}
+          />
+        </label>
+        <label className="field compact">
+          <span>裁判模型(可选)</span>
+          <input
+            value={judgeModel}
+            onChange={(e) => setJudgeModel(e.target.value)}
+          />
+        </label>
+        <label className="field compact">
+          <span>多裁判(逗号)</span>
+          <input
+            value={judgeModels}
+            onChange={(e) => setJudgeModels(e.target.value)}
+          />
+        </label>
+        <label className="orch-inline-check">
+          <input
+            type="checkbox"
+            checked={diagnose}
+            onChange={(e) => setDiagnose(e.target.checked)}
+          />
+          诊断路径
+        </label>
+      </div>
+      <button className="compact-button" disabled={busy} onClick={run}>
+        {busy ? "评分中…" : "重打分"}
+      </button>
+      <ToolResult
+        error={error}
+        result={result ?? undefined}
+        summary={
+          result?.score ? (
+            <div className="orch-kv-list">
+              <span className="muted-text">可疑度 margin</span>
+              <strong>{fmtScore(blind?.suspicion_margin)}</strong>
+              <span className="muted-text">局末 ai_score</span>
+              <strong>{fmtScore(blind?.ai_final)}</strong>
+              <span className="muted-text">否决</span>
+              <strong>{result.score.veto_triggered ? "是" : "否"}</strong>
+              <span className="muted-text">状态</span>
+              <strong>{result.score.status ?? "—"}</strong>
+            </div>
+          ) : null
+        }
+      />
+    </ToolBlock>
+  );
+}
+
+interface PromptAssetView {
+  asset_key: string;
+  active_version: number | null;
+  source: "db" | "file";
+  content: string;
+  versions: Array<{ version: number; note?: string | null; created_at?: string }>;
+}
+
+interface PromptGenerationRow {
+  id: string;
+  manifest: Record<string, number>;
+  status: string;
+  is_best: boolean;
+  note?: string | null;
+  created_at?: string;
+}
+
+function PromptManagerPanel() {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [activeGen, setActiveGen] = useState<PromptGenerationRow | null>(null);
+  const [assets, setAssets] = useState<PromptAssetView[]>([]);
+  const [generations, setGenerations] = useState<PromptGenerationRow[]>([]);
+  const [editKey, setEditKey] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [activateOnSave, setActivateOnSave] = useState(true);
+  const [patchText, setPatchText] = useState("");
+  const [patchNote, setPatchNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    const a = (await getSandbox("sandbox/prompts")) as {
+      ok: boolean;
+      active_generation?: PromptGenerationRow | null;
+      assets?: PromptAssetView[];
+      error?: string;
+    };
+    const g = (await getSandbox("sandbox/prompts/generations")) as {
+      ok: boolean;
+      generations?: PromptGenerationRow[];
+    };
+    setLoading(false);
+    if (a?.ok) {
+      setActiveGen(a.active_generation ?? null);
+      setAssets(a.assets ?? []);
+    } else setError(a?.error ?? "加载失败");
+    if (g?.ok) setGenerations(g.generations ?? []);
+  }, []);
+
+  useEffect(() => {
+    if (open) void load();
+  }, [open, load]);
+
+  const startEdit = (a: PromptAssetView) => {
+    setEditKey(a.asset_key);
+    setEditContent(a.content);
+    setEditNote("");
+  };
+
+  const saveAsset = async () => {
+    if (!editKey) return;
+    setBusy(true);
+    const json = (await postSandbox("sandbox/prompts/assets", {
+      asset_key: editKey,
+      content: editContent,
+      note: editNote.trim() || undefined,
+      activate: activateOnSave,
+    })) as { ok: boolean; error?: string };
+    setBusy(false);
+    if (json?.ok) {
+      setEditKey(null);
+      void load();
+    } else setError(json?.error ?? "保存失败");
+  };
+
+  const activate = async (id: string) => {
+    setBusy(true);
+    const json = (await postSandbox("sandbox/prompts/generations/activate", {
+      id,
+    })) as { ok: boolean; error?: string };
+    setBusy(false);
+    if (json?.ok) void load();
+    else setError(json?.error ?? "激活失败");
+  };
+
+  const createGeneration = async () => {
+    setError("");
+    let patch: unknown;
+    try {
+      patch = JSON.parse(patchText);
+    } catch {
+      setError("manifest_patch 不是合法 JSON");
+      return;
+    }
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      setError("manifest_patch 需为对象(资产路径 → 版本号)");
+      return;
+    }
+    setBusy(true);
+    const json = (await postSandbox("sandbox/prompts/generations", {
+      manifest_patch: patch,
+      note: patchNote.trim() || undefined,
+    })) as { ok: boolean; error?: string };
+    setBusy(false);
+    if (json?.ok) {
+      setPatchText("");
+      setPatchNote("");
+      void load();
+    } else setError(json?.error ?? "创建失败");
+  };
+
+  return (
+    <section className="panel lobby-card orch-section">
+      <div className="lobby-card-header orch-adv-header">
+        <div>
+          <p className="eyebrow">Prompt Versions</p>
+          <h2>裁判 / 优化器提示词管理</h2>
+        </div>
+        <div className="orch-adv-tools">
+          {open && (
+            <button
+              className="compact-button"
+              disabled={loading}
+              onClick={() => void load()}
+            >
+              刷新
+            </button>
+          )}
+          <button className="compact-button" onClick={() => setOpen((v) => !v)}>
+            {open ? "收起" : "展开"}
+          </button>
+        </div>
+      </div>
+      <p className="muted-text orch-adv-intro">
+        M0.7 提示词版本化:为裁判 / 优化器提示词新建版本并激活;运行时优先读激活
+        generation 的 manifest,缺失回退文件。
+      </p>
+      {open && (
+        <div className="orch-prompt-body">
+          {error && <p className="error-text">{error}</p>}
+          <p className="muted-text">
+            当前激活 generation:{" "}
+            <strong>
+              {activeGen
+                ? `${activeGen.id} (${activeGen.status})`
+                : "无(全部回退文件)"}
+            </strong>
+          </p>
+          <div className="orch-prompt-assets">
+            {assets.map((a) => (
+              <div key={a.asset_key} className="orch-prompt-asset">
+                <div className="orch-prompt-asset-head">
+                  <code>{a.asset_key}</code>
+                  <span className="muted-text">
+                    {a.source === "db" ? `v${a.active_version} (DB)` : "文件"} ·{" "}
+                    {a.versions.length} 版本
+                  </span>
+                  <button
+                    className="compact-button"
+                    onClick={() => startEdit(a)}
+                  >
+                    {editKey === a.asset_key ? "编辑中" : "查看 / 改"}
+                  </button>
+                </div>
+                {editKey === a.asset_key && (
+                  <div className="orch-prompt-editor">
+                    <textarea
+                      rows={10}
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                    />
+                    <div className="orch-tool-form">
+                      <label className="field compact orch-tool-wide">
+                        <span>备注(可选)</span>
+                        <input
+                          value={editNote}
+                          onChange={(e) => setEditNote(e.target.value)}
+                        />
+                      </label>
+                      <label className="orch-inline-check">
+                        <input
+                          type="checkbox"
+                          checked={activateOnSave}
+                          onChange={(e) => setActivateOnSave(e.target.checked)}
+                        />
+                        保存后激活
+                      </label>
+                    </div>
+                    <div className="orch-prompt-editor-actions">
+                      <button
+                        className="compact-button"
+                        disabled={busy}
+                        onClick={saveAsset}
+                      >
+                        {busy ? "保存中…" : "保存为新版本"}
+                      </button>
+                      <button
+                        className="compact-button"
+                        onClick={() => setEditKey(null)}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="iter-section">
+            <p className="eyebrow">Generations</p>
+            <div className="orch-prompt-patch">
+              <label className="field compact orch-tool-wide">
+                <span>
+                  组合 generation · manifest_patch(资产路径 → 版本号 JSON)
+                </span>
+                <textarea
+                  rows={3}
+                  value={patchText}
+                  placeholder={'{"sandbox/judge/blind-suspicion-system.txt": 2}'}
+                  onChange={(e) => setPatchText(e.target.value)}
+                />
+              </label>
+              <div className="orch-prompt-editor-actions">
+                <input
+                  className="orch-prompt-patch-note"
+                  value={patchNote}
+                  placeholder="备注(可选)"
+                  onChange={(e) => setPatchNote(e.target.value)}
+                />
+                <button
+                  className="compact-button"
+                  disabled={busy || !patchText.trim()}
+                  onClick={() => void createGeneration()}
+                >
+                  {busy ? "创建中…" : "创建 generation"}
+                </button>
+              </div>
+            </div>
+            <div className="orch-prompt-gens">
+              {generations.length === 0 && (
+                <p className="muted-text">暂无 generation。</p>
+              )}
+              {generations.map((g) => (
+                <div key={g.id} className="orch-prompt-gen">
+                  <div>
+                    <strong>{g.id}</strong>
+                    <span className={`orch-status orch-status-${g.status}`}>
+                      {g.status}
+                    </span>
+                    {g.is_best && <span className="muted-text"> · best</span>}
+                    {g.note && <span className="muted-text"> · {g.note}</span>}
+                  </div>
+                  <button
+                    className="compact-button"
+                    disabled={busy || activeGen?.id === g.id}
+                    onClick={() => void activate(g.id)}
+                  >
+                    {activeGen?.id === g.id ? "已激活" : "激活"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+interface LlmCall {
+  id: string;
+  timestamp: string;
+  stage: string;
+  model: string;
+  match_id?: string;
+  round?: number;
+  attempt: number;
+  ok: boolean;
+  duration_ms: number;
+  total_tokens?: number;
+  cached_tokens?: number;
+  error?: string;
+}
+
+function LlmCallsPanel() {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [calls, setCalls] = useState<LlmCall[]>([]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    const json = (await getSandbox("sandbox/llm-calls?limit=200")) as {
+      ok: boolean;
+      calls?: LlmCall[];
+      error?: string;
+    };
+    setLoading(false);
+    if (json?.ok) setCalls(json.calls ?? []);
+    else setError(json?.error ?? "加载失败");
+  }, []);
+
+  useEffect(() => {
+    if (open) void load();
+  }, [open, load]);
+
+  const clear = async () => {
+    await deleteSandbox("sandbox/llm-calls");
+    void load();
+  };
+
+  return (
+    <section className="panel lobby-card orch-section">
+      <div className="lobby-card-header orch-adv-header">
+        <div>
+          <p className="eyebrow">Observability</p>
+          <h2>LLM 调用可观测</h2>
+        </div>
+        <div className="orch-adv-tools">
+          {open && (
+            <>
+              <button
+                className="compact-button"
+                disabled={loading}
+                onClick={() => void load()}
+              >
+                刷新
+              </button>
+              <button className="compact-button" onClick={() => void clear()}>
+                清空
+              </button>
+            </>
+          )}
+          <button className="compact-button" onClick={() => setOpen((v) => !v)}>
+            {open ? "收起" : "展开"}
+          </button>
+        </div>
+      </div>
+      <p className="muted-text orch-adv-intro">
+        M0.6 进程内环形缓冲:裁判盲测 / 诊断、优化器提案、覆盖检查每次 LLM 调用的耗时
+        / 重试 / token / cache,用于排查 partial 与成本。
+      </p>
+      {open && (
+        <div className="orch-llm-body">
+          {error && <p className="error-text">{error}</p>}
+          {calls.length === 0 ? (
+            <p className="muted-text">暂无调用记录。</p>
+          ) : (
+            <div className="orch-llm-table">
+              <div className="orch-llm-row orch-llm-head">
+                <span>时间</span>
+                <span>stage</span>
+                <span>模型</span>
+                <span>状态</span>
+                <span>耗时ms</span>
+                <span>token(总/cache)</span>
+              </div>
+              {calls.map((c) => (
+                <div
+                  key={c.id}
+                  className={`orch-llm-row ${c.ok ? "" : "orch-llm-fail"}`}
+                  title={c.error ?? undefined}
+                >
+                  <span>{c.timestamp?.slice(11, 19) ?? "—"}</span>
+                  <span>
+                    {c.stage}
+                    {c.attempt > 1 ? ` #${c.attempt}` : ""}
+                  </span>
+                  <span>{c.model}</span>
+                  <span>{c.ok ? "ok" : "fail"}</span>
+                  <span>{c.duration_ms}</span>
+                  <span>
+                    {c.total_tokens ?? "—"}
+                    {c.cached_tokens ? ` / ${c.cached_tokens}` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1060,6 +2628,9 @@ const GAME_SIDE_ORDER: Record<"champion" | "child", number> = {
 
 function compareGames(a: OrchestratorGame, b: OrchestratorGame): number {
   if (a.side !== b.side) return GAME_SIDE_ORDER[a.side] - GAME_SIDE_ORDER[b.side];
+  if ((a.child_id ?? "") !== (b.child_id ?? "")) {
+    return (a.child_id ?? "").localeCompare(b.child_id ?? "");
+  }
   if (a.scenario_id !== b.scenario_id) return a.scenario_id < b.scenario_id ? -1 : 1;
   if (a.seed !== b.seed) return a.seed - b.seed;
   return a.run - b.run;
@@ -1109,7 +2680,7 @@ function GameRow({
   return (
     <div className={`orch-game-row status-${g.status}`}>
       <span className={`room-tag ${g.side === "champion" ? "" : "muted-tag"}`}>
-        {g.side === "champion" ? "父" : "子"}
+        {g.side === "champion" ? "父" : `子${g.child_id ? `:${g.child_id.slice(-6)}` : ""}`}
       </span>
       <span className="orch-game-key">
         {g.scenario_id} · s{g.seed} · r{g.run}
@@ -1274,6 +2845,148 @@ function TriedMemoryModal({
                   </p>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GenerationDetailModal({
+  generation,
+  onClose,
+  onDiff,
+}: {
+  generation: OrchestratorGeneration;
+  onClose: () => void;
+  onDiff: (child: OrchestratorGeneration["children_evaluated"][number]) => void;
+}) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  return (
+    <div className="iteration-modal-overlay" onClick={onClose}>
+      <div
+        className="iteration-modal iter-score-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="iteration-modal-head">
+          <div>
+            <p className="eyebrow">历史代详情 · {generation.generation_id}</p>
+            <h3>
+              第 {generation.generation} 代 · {generation.champion_before} →{" "}
+              {generation.champion_after}
+            </h3>
+          </div>
+          <button className="compact-button" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+
+        <div className="iter-score-modal-body">
+          <div className="orch-kv-list">
+            <span className="muted-text">评测集</span>
+            <strong>{generation.eval_set_version}</strong>
+            <span className="muted-text">模式</span>
+            <strong>{generation.mode}</strong>
+            <span className="muted-text">时间</span>
+            <strong>{new Date(generation.timestamp).toLocaleString()}</strong>
+            <span className="muted-text">种群</span>
+            <strong>{generation.population_after.join(", ") || "—"}</strong>
+          </div>
+
+          {generation.children_evaluated.map((child) => (
+            <div key={child.child_id} className="iter-analysis">
+              <div className="orch-tried-head">
+                <strong>{child.child_id}</strong>
+                <span
+                  className="room-tag"
+                  style={{
+                    background: child.decision === "promoted" ? "#2e7d32" : "#b42318",
+                  }}
+                >
+                  {child.decision === "promoted" ? "晋升" : "拒绝"}
+                </span>
+                {child.target_dimension && (
+                  <span className="room-tag muted-tag">{child.target_dimension}</span>
+                )}
+                {child.edit_type && (
+                  <span className="room-tag muted-tag">{child.edit_type}</span>
+                )}
+                <button className="compact-button orch-tried-delete" onClick={() => onDiff(child)}>
+                  看 diff
+                </button>
+              </div>
+
+              {child.hypothesis && (
+                <p className="orch-tried-hyp">假设:{child.hypothesis}</p>
+              )}
+
+              <div className="orch-kv-list">
+                <span className="muted-text">父代</span>
+                <strong>{child.based_on}</strong>
+                <span className="muted-text">闸门</span>
+                <strong>{child.gate?.decision === "promote" ? "建议晋升" : child.gate ? "建议拒绝" : "—"}</strong>
+                <span className="muted-text">留出</span>
+                <strong>
+                  {child.holdout
+                    ? child.holdout.holds
+                      ? "通过"
+                      : "未通过"
+                    : "—"}
+                </strong>
+              </div>
+
+              <ValidationMetrics validation={child.validation} />
+
+              {child.gate?.reasons?.length ? (
+                <div className="iter-section">
+                  <p className="eyebrow">闸门理由</p>
+                  <ul className="orch-reasons">
+                    {child.gate.reasons.map((r, i) => (
+                      <li key={i}>{r}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {child.holdout && (
+                <div className="iter-section">
+                  <p className="eyebrow">留出复核 · {child.holdout.eval_set}</p>
+                  <div className="orch-kv-list">
+                    <span className="muted-text">保留探测</span>
+                    <strong>{child.holdout.held_out_probes ? "是" : "否"}</strong>
+                    <span className="muted-text">margin 配对差</span>
+                    <strong>{fmtScore(child.holdout.blind_suspicion_margin_paired_diff)}</strong>
+                    <span className="muted-text">CI95</span>
+                    <strong>
+                      {child.holdout.ci95
+                        ? `[${child.holdout.ci95[0].toFixed(2)}, ${child.holdout.ci95[1].toFixed(2)}]`
+                        : "—"}
+                    </strong>
+                  </div>
+                  {child.holdout.reasons.length > 0 && (
+                    <ul className="orch-reasons">
+                      {child.holdout.reasons.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {generation.tried_and_rejected_added.length > 0 && (
+            <div className="iter-section">
+              <p className="eyebrow">本代新增失败记忆</p>
+              <p className="muted-text">{generation.tried_and_rejected_added.join(", ")}</p>
             </div>
           )}
         </div>
@@ -1473,7 +3186,11 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 }
 
 function GateMetrics({ run }: { run: OrchestratorActiveRun }) {
-  const bucket = run.validation?.buckets[0];
+  return <ValidationMetrics validation={run.validation} />;
+}
+
+function ValidationMetrics({ validation }: { validation?: OrchestratorValidation }) {
+  const bucket = validation?.buckets[0];
   if (!bucket) {
     return <p className="muted-text">(尚无配对数据)</p>;
   }
