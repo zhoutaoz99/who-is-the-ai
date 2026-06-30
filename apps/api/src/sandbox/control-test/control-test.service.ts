@@ -24,6 +24,7 @@ import { PairedEvalService } from "../orchestrator/paired-eval";
 import { OrchestratorService } from "../orchestrator/orchestrator.service";
 import type { PromptVersion } from "../orchestrator/prompt-version";
 import { SandboxRepository } from "../sandbox.repository";
+import { isTraceOn, traceEvent } from "../shared/trace";
 import { SandboxService } from "../sandbox.service";
 import {
   ALL_CONTROL_KINDS,
@@ -166,6 +167,14 @@ export class ControlTestService {
         if (this.stopRequested) break;
 
         const validation = buildValidation(parentScores, childScores);
+        if (isTraceOn()) {
+          traceEvent({
+            kind: "aggregate",
+            stage: "control_test_validation",
+            run_id: this.activeRun?.run_id,
+            data: { control_kind: kind, validation },
+          });
+        }
         const gate = optimizeGate(validation);
         const result = this.assess(spec, child.version_id, validation, gate);
         if (this.activeRun) {

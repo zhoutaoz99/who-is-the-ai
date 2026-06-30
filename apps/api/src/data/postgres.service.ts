@@ -270,6 +270,29 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
       ON sandbox_generation_evals (generation_no DESC)
     `);
 
+    // 审计 trace 事件(🟡 LLM 原始 I/O / 🔴 聚合中间产物;默认不写,AUDIT_TRACE=1 才落)。
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_trace_events (
+        id bigserial PRIMARY KEY,
+        run_id text,
+        match_id text,
+        kind text NOT NULL,
+        stage text,
+        data jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS sandbox_trace_events_match_idx
+      ON sandbox_trace_events (match_id, created_at)
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS sandbox_trace_events_run_idx
+      ON sandbox_trace_events (run_id, created_at)
+    `);
+
     await this.query(`
       CREATE TABLE IF NOT EXISTS sandbox_orchestrator_state (
         id integer PRIMARY KEY DEFAULT 1,

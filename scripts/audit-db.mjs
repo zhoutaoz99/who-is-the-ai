@@ -50,6 +50,7 @@ const AUDIT_TABLES = [
   "sandbox_orchestrator_state",
   "sandbox_prompt_versions",
   "sandbox_paired_cache",
+  "sandbox_trace_events",
   "eval_prompt_assets",
   "eval_prompt_generations",
   "eval_prompt_state",
@@ -200,6 +201,57 @@ async function run() {
         out(rows);
         break;
       }
+      case "trace": {
+        const id = requireArg(args[0], "matchId");
+        const limit = clampLimit(args[1], 200);
+        const rows = await readQuery(
+          pool,
+          `SELECT id, created_at, kind, stage, run_id, data FROM sandbox_trace_events
+           WHERE match_id = $1 ORDER BY created_at, id LIMIT $2`,
+          [id, limit],
+        );
+        out(rows);
+        break;
+      }
+      case "trace-run": {
+        const id = requireArg(args[0], "runId");
+        const limit = clampLimit(args[1], 200);
+        const rows = await readQuery(
+          pool,
+          `SELECT id, created_at, kind, stage, match_id, data FROM sandbox_trace_events
+           WHERE run_id = $1 ORDER BY created_at, id LIMIT $2`,
+          [id, limit],
+        );
+        out(rows);
+        break;
+      }
+      case "manifest": {
+        const id = requireArg(args[0], "matchId");
+        const byKind = await readQuery(
+          pool,
+          `SELECT kind, stage, count(*)::int AS n FROM sandbox_trace_events
+           WHERE match_id = $1 GROUP BY kind, stage ORDER BY kind, stage`,
+          [id],
+        );
+        const match = await readQuery(
+          pool,
+          `SELECT 1 FROM sandbox_match_records WHERE match_id = $1`,
+          [id],
+        );
+        const score = await readQuery(
+          pool,
+          `SELECT 1 FROM sandbox_score_records WHERE match_id = $1 LIMIT 1`,
+          [id],
+        );
+        out({
+          match_id: id,
+          match_record: match.length > 0,
+          score_record: score.length > 0,
+          trace_events: byKind,
+          hint: "trace 为空时,确认 API 以 AUDIT_TRACE=1 启动后再跑对局/评分",
+        });
+        break;
+      }
       case "query": {
         const sql = args.join(" ").trim();
         if (!sql) fail('用法: query "SELECT ..."');
@@ -247,6 +299,9 @@ function printUsage() {
       "versions [limit]": "提示词版本概览(不含正文)",
       "version <versionId>": "某版本完整 prompt_text + meta",
       "ai-calls <roomId>": "产品对局逐轮 AI 调用日志(ai_call_logs)",
+      "trace <matchId> [limit]": "该局 trace 事件(🟡 LLM 原文 / 🔴 聚合;需 AUDIT_TRACE=1)",
+      "trace-run <runId> [limit]": "某 run 的 trace 事件(如 control-test 聚合产物)",
+      "manifest <matchId>": "该局可用数据索引(MatchRecord/ScoreRecord/trace 计数)",
       'query "SELECT ..."': "任意只读 SQL",
     },
   });

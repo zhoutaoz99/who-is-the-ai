@@ -243,6 +243,8 @@ export class OptimizerCheckService {
           stage: "optimizer_check_coverage",
           model: modelConfig.model,
           attempt: 1,
+          system,
+          user,
         },
         () => this.ai.callModel(system, user, modelConfig, connection),
       );

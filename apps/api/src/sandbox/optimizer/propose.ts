@@ -102,6 +102,8 @@ export class OptimizerService {
             stage: "optimizer_propose",
             model: modelConfig.model,
             attempt: attempt + 1,
+            system,
+            user,
           },
           () => this.ai.callModel(system, user, modelConfig, connection),
         );
@@ -167,6 +169,8 @@ export class OptimizerService {
             stage: "optimizer_crossover",
             model: modelConfig.model,
             attempt: attempt + 1,
+            system,
+            user,
           },
           () => this.ai.callModel(system, user, modelConfig, connection),
         );

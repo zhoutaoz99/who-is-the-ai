@@ -20,6 +20,7 @@ import { SandboxController } from "./sandbox.controller";
 import { SandboxRepository } from "./sandbox.repository";
 import { SandboxService } from "./sandbox.service";
 import { SandboxPromptService } from "./shared/prompt-versions";
+import { TraceSinkService } from "./shared/trace-sink.service";
 
 // 离线沙盒模块:复用产品运行时(GameModule 导出的 GameService)驱动场景化对局。
 // 产物链:对局引擎(MatchRecord)→ 裁判(ScoreRecord)→ 评分聚合 → 编排器(代际循环)。
@@ -45,6 +46,7 @@ import { SandboxPromptService } from "./shared/prompt-versions";
     ControlTestService,
     OptimizerCheckService,
     ControlTestGateway,
+    TraceSinkService,
   ],
 })
 export class SandboxModule {}

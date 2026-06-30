@@ -63,6 +63,30 @@ export class SandboxRepository {
     return res.rows[0]?.data ?? null;
   }
 
+  // ===== Trace events(审计中间数据,见 docs/audit/CHARTER.md §4.4/§13)=====
+
+  /** 落一条 trace 事件(🟡/🔴)。由 TraceSinkService 接到 trace.ts 的 sink。 */
+  async insertTraceEvent(ev: {
+    kind: string;
+    stage?: string;
+    match_id?: string;
+    run_id?: string;
+    data: unknown;
+  }): Promise<void> {
+    await this.ready();
+    await this.postgres.query(
+      `INSERT INTO sandbox_trace_events (run_id, match_id, kind, stage, data)
+       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [
+        ev.run_id ?? null,
+        ev.match_id ?? null,
+        ev.kind,
+        ev.stage ?? null,
+        JSON.stringify(ev.data ?? null),
+      ],
+    );
+  }
+
   // ===== ScoreRecord =====
 
   async upsertScoreRecord(rec: ScoreRecord): Promise<void> {

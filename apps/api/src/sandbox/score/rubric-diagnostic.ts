@@ -75,6 +75,8 @@ export class RubricDiagnosticScorer {
             match_id: match.match_id,
             round: focusRound ?? undefined,
             attempt: attempt + 1,
+            system,
+            user,
           },
           () => this.ai.callModel(system, user, modelConfig, connection),
         );
