@@ -21,6 +21,8 @@ import {
   shouldRollback,
   type CalibrationPair,
 } from "./calibration";
+import { CalibrationService } from "./calibration.service";
+import type { MatchRecord } from "../match-record/types";
 import { metricsComparable, planRebaseline, rebaselineRequired } from "./eval-set-version";
 import type { EvalPlan } from "./paired-eval";
 import { OrchestratorService } from "./orchestrator.service";
@@ -35,6 +37,7 @@ export class OrchestratorController {
   constructor(
     private readonly orchestrator: OrchestratorService,
     private readonly sandbox: SandboxService,
+    private readonly calibration: CalibrationService,
   ) {}
 
   @Post("seed-baseline")
@@ -238,13 +241,66 @@ export class OrchestratorController {
   ): { ok: boolean; result?: unknown; verdict?: unknown; rollback?: boolean; error?: string } {
     const pairs = Array.isArray(body?.pairs) ? body.pairs : [];
     if (pairs.length === 0) return { ok: false, error: "缺少 pairs" };
-    const result = correlationProxyVsReal(pairs, body.threshold);
+    const result = correlationProxyVsReal(pairs, { threshold: body.threshold });
     return {
       ok: true,
       result,
       verdict: calibrationVerdict(result),
       rollback: shouldRollback(body?.sandbox_improved === true, body?.real_regressed === true),
     };
+  }
+
+  /** 跑一次校准批次:回灌真人局 → 配对 → 相关性 → 落 CalibrationRun + 写冻结态(§3/§4/§6)。 */
+  @Post("calibration/run")
+  async calibrationRun(
+    @Body()
+    body?: {
+      generation?: number;
+      versions?: string[];
+      threshold?: number;
+      min_human_matches?: number;
+      data_source?: "A_live" | "B_testbench" | "C_proxy";
+    },
+  ): Promise<{ ok: boolean; run?: unknown; error?: string }> {
+    try {
+      const run = await this.calibration.runCalibration({
+        generation: body?.generation,
+        versions: body?.versions,
+        threshold: body?.threshold,
+        minHumanMatchesPerVersion: body?.min_human_matches,
+        dataSource: body?.data_source,
+      });
+      return { ok: true, run };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  }
+
+  /** 真人对局回灌入口(data_source A 采集):落 sandbox_human_matches,供后续校准配对。 */
+  @Post("calibration/human-matches")
+  async ingestHumanMatches(
+    @Body() body?: { matches?: MatchRecord[] },
+  ): Promise<{ ok: boolean; ingested?: number; error?: string }> {
+    try {
+      const matches = Array.isArray(body?.matches) ? body!.matches! : [];
+      if (matches.length === 0) return { ok: false, error: "缺少 matches" };
+      const { ingested } = await this.calibration.ingestHumanMatches(matches);
+      return { ok: true, ingested };
+    } catch (e) {
+      return { ok: false, error: msg(e) };
+    }
+  }
+
+  /** 当前校准冻结态(供前台/排障读)。 */
+  @Get("calibration/state")
+  calibrationState(): { ok: boolean; calibration: unknown } {
+    return { ok: true, calibration: this.calibration.getCalibrationState() };
+  }
+
+  /** 历史校准批次。 */
+  @Get("calibration/runs")
+  async calibrationRuns(): Promise<{ ok: boolean; runs: unknown[] }> {
+    return { ok: true, runs: await this.calibration.listRuns() };
   }
 
   /**

@@ -7,6 +7,7 @@
 
 import { Injectable, Logger } from "@nestjs/common";
 import type { ActiveRun } from "./active-run";
+import type { CalibrationAction, CalibrationVerdict } from "./calibration";
 import { BASELINE_VERSION_ID } from "./prompt-version";
 import { emptyScoreboard, type OperatorScoreboard } from "../optimizer/scoreboard";
 import { SandboxRepository } from "../sandbox.repository";
@@ -30,6 +31,16 @@ export interface OrchestratorState {
   operator_scoreboard: OperatorScoreboard;
   /** 活跃的一代 run(后台运行/待确认);无则 null。 */
   active_run: ActiveRun | null;
+  /** 真人校准冻结态(《真人校准 · 方案设计》§6):drifting/broken → frozen,晋升被拦。 */
+  calibration?: {
+    calibration_id: string;
+    verdict: CalibrationVerdict;
+    action: CalibrationAction;
+    frozen: boolean;
+    generation: number;
+    reason: string;
+    updatedAt: string;
+  };
   updatedAt: string;
 }
 

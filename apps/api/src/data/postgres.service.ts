@@ -293,6 +293,30 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
       ON sandbox_trace_events (run_id, created_at)
     `);
 
+    // 真人校准:真人对局回灌存储 + 校准批次记录(《真人校准 · 方案设计》§2/§7)。
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_human_matches (
+        match_id text PRIMARY KEY,
+        prompt_version_id text NOT NULL,
+        data jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS sandbox_human_matches_version_idx
+      ON sandbox_human_matches (prompt_version_id)
+    `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_calibration_runs (
+        calibration_id text PRIMARY KEY,
+        generation integer NOT NULL,
+        data jsonb NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
     await this.query(`
       CREATE TABLE IF NOT EXISTS sandbox_orchestrator_state (
         id integer PRIMARY KEY DEFAULT 1,

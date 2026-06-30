@@ -28,5 +28,7 @@ export interface GenerationEval {
   champion_after: string;
   population_after: string[];
   tried_and_rejected_added: string[];
+  /** 本代关联的真人校准批次(《真人校准 · 方案设计》§7);无则缺省。 */
+  human_calibration_ref?: string;
   timestamp: string;
 }

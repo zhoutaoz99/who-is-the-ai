@@ -13,6 +13,7 @@ import { OrchestratorController } from "./orchestrator/orchestrator.controller";
 import { OrchestratorGateway } from "./orchestrator/orchestrator.gateway";
 import { OrchestratorService } from "./orchestrator/orchestrator.service";
 import { OrchestratorStateStore } from "./orchestrator/state";
+import { CalibrationService } from "./orchestrator/calibration.service";
 import { PairedEvalService } from "./orchestrator/paired-eval";
 import { PromptVersionStore } from "./orchestrator/prompt-version";
 import { OptimizerService } from "./optimizer/propose";
@@ -39,6 +40,7 @@ import { TraceSinkService } from "./shared/trace-sink.service";
     ScoreService,
     PromptVersionStore,
     OrchestratorStateStore,
+    CalibrationService,
     PairedEvalService,
     OptimizerService,
     OrchestratorService,

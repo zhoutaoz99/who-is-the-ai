@@ -12,6 +12,7 @@ import type { OrchestratorState } from "./orchestrator/state";
 import type { PromptVersion, PromptVersionMeta } from "./orchestrator/prompt-version";
 import type { MatchRecord } from "./match-record/types";
 import type { ScoreRecord } from "./score/types";
+import type { CalibrationRun } from "./orchestrator/calibration-backfill";
 
 export interface EvalPromptAssetRow {
   asset_key: string;
@@ -85,6 +86,51 @@ export class SandboxRepository {
         JSON.stringify(ev.data ?? null),
       ],
     );
+  }
+
+  // ===== 真人校准(《真人校准 · 方案设计》§2/§7)=====
+
+  /** 回灌一局真人对局(data_source A 采集);幂等按 match_id。 */
+  async insertHumanMatch(rec: MatchRecord): Promise<void> {
+    await this.ready();
+    await this.postgres.query(
+      `INSERT INTO sandbox_human_matches (match_id, prompt_version_id, data)
+       VALUES ($1, $2, $3::jsonb)
+       ON CONFLICT (match_id) DO UPDATE SET data = EXCLUDED.data, prompt_version_id = EXCLUDED.prompt_version_id`,
+      [rec.match_id, rec.prompt_version_id, JSON.stringify(rec)],
+    );
+  }
+
+  /** 读真人对局(可按版本过滤),供校准配对。 */
+  async listHumanMatches(versions?: string[]): Promise<MatchRecord[]> {
+    await this.ready();
+    const res =
+      versions && versions.length > 0
+        ? await this.postgres.query<{ data: MatchRecord }>(
+            `SELECT data FROM sandbox_human_matches WHERE prompt_version_id = ANY($1)`,
+            [versions],
+          )
+        : await this.postgres.query<{ data: MatchRecord }>(`SELECT data FROM sandbox_human_matches`);
+    return res.rows.map((r) => r.data);
+  }
+
+  async insertCalibrationRun(run: CalibrationRun): Promise<void> {
+    await this.ready();
+    await this.postgres.query(
+      `INSERT INTO sandbox_calibration_runs (calibration_id, generation, data)
+       VALUES ($1, $2, $3::jsonb)
+       ON CONFLICT (calibration_id) DO UPDATE SET data = EXCLUDED.data`,
+      [run.calibration_id, run.generation, JSON.stringify(run)],
+    );
+  }
+
+  async listCalibrationRuns(limit = 50): Promise<CalibrationRun[]> {
+    await this.ready();
+    const res = await this.postgres.query<{ data: CalibrationRun }>(
+      `SELECT data FROM sandbox_calibration_runs ORDER BY created_at DESC LIMIT $1`,
+      [Math.max(1, Math.min(500, Math.floor(limit)))],
+    );
+    return res.rows.map((r) => r.data);
   }
 
   // ===== ScoreRecord =====

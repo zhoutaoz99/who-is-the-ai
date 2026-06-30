@@ -203,6 +203,10 @@ export class OrchestratorService implements OnModuleInit {
     if (target.status === "candidate" || target.status === "rejected") {
       throw new Error(`只能重激活 champion/accepted/baseline 这类稳定版本,当前状态=${target.status}`);
     }
+    if (state.calibration?.frozen) {
+      // 《真人校准》§6:相关性漂移期冻结晋升,人工也不得绕过(先跑校准确认回升或解冻)。
+      throw new Error(`晋升已被真人校准冻结(verdict=${state.calibration.verdict});先跑校准确认相关性回升或解冻`);
+    }
     if (state.champion === versionId) return;
 
     const previousChampion = state.champion;
@@ -971,25 +975,36 @@ export class OrchestratorService implements OnModuleInit {
         };
         result.child = promotedChild;
         this.promptStore.save({ ...promotedChild, status: "candidate" });
-        this.promptStore.patchStatus(promotedChild.version_id, {
-          status: "champion",
-          validated_metrics: summarize(result.validation),
-          eval_set_version: evalSetVersion,
-          accepted_trait: promotedChild.accepted_trait,
-        });
-        if (state.champion !== promotedChild.version_id) {
-          this.promptStore.patchStatus(state.champion, { status: "accepted" });
+        const frozen = state.calibration?.frozen ? state.calibration.reason || "真人校准冻结晋升" : null;
+        if (frozen) {
+          // 《真人校准》§6:冻结期不让 Goodhart 嫌疑版本上线;保留候选、记元数据,但不换 champion。
+          this.promptStore.patchStatus(promotedChild.version_id, {
+            validated_metrics: summarize(result.validation),
+            eval_set_version: evalSetVersion,
+            accepted_trait: promotedChild.accepted_trait,
+          });
+          this.logger.warn(`晋升被真人校准冻结:${promotedChild.version_id} 暂不上线(${frozen})`);
+        } else {
+          this.promptStore.patchStatus(promotedChild.version_id, {
+            status: "champion",
+            validated_metrics: summarize(result.validation),
+            eval_set_version: evalSetVersion,
+            accepted_trait: promotedChild.accepted_trait,
+          });
+          if (state.champion !== promotedChild.version_id) {
+            this.promptStore.patchStatus(state.champion, { status: "accepted" });
+          }
+          state.champion = promotedChild.version_id;
+          championAfter = promotedChild.version_id;
+          state.population = updatePopulation(
+            state.population,
+            promotedChild.version_id,
+            promotedChild.version_id,
+            POPULATION_CAP,
+            (id) => marginScore(this.promptStore.loadMeta(id) ?? promotedChild),
+          );
+          this.logger.log(`晋升:${promotedChild.version_id} 成为新 champion`);
         }
-        state.champion = promotedChild.version_id;
-        championAfter = promotedChild.version_id;
-        state.population = updatePopulation(
-          state.population,
-          promotedChild.version_id,
-          promotedChild.version_id,
-          POPULATION_CAP,
-          (id) => marginScore(this.promptStore.loadMeta(id) ?? promotedChild),
-        );
-        this.logger.log(`晋升:${promotedChild.version_id} 成为新 champion`);
       } else {
         this.promptStore.patchStatus(result.child.version_id, { status: "rejected" });
         const reasonParts = [...result.gate.reasons];
@@ -1050,6 +1065,7 @@ export class OrchestratorService implements OnModuleInit {
       champion_after: championAfter,
       population_after: state.population,
       tried_and_rejected_added: triedAdded,
+      human_calibration_ref: state.calibration?.calibration_id,
       timestamp: new Date().toISOString(),
     };
     this.stateStore.save(state);
@@ -1082,25 +1098,36 @@ export class OrchestratorService implements OnModuleInit {
       };
       recordedChild = promotedChild;
       this.promptStore.save({ ...promotedChild, status: "candidate" });
-      this.promptStore.patchStatus(promotedChild.version_id, {
-        status: "champion",
-        validated_metrics: summarize(validation),
-        eval_set_version: evalSetVersion,
-        accepted_trait: promotedChild.accepted_trait,
-      });
-      if (state.champion !== promotedChild.version_id) {
-        this.promptStore.patchStatus(state.champion, { status: "accepted" });
+      const frozen = state.calibration?.frozen ? state.calibration.reason || "真人校准冻结晋升" : null;
+      if (frozen) {
+        // 《真人校准》§6:冻结期保留候选、记元数据,但不换 champion。
+        this.promptStore.patchStatus(promotedChild.version_id, {
+          validated_metrics: summarize(validation),
+          eval_set_version: evalSetVersion,
+          accepted_trait: promotedChild.accepted_trait,
+        });
+        this.logger.warn(`晋升被真人校准冻结:${promotedChild.version_id} 暂不上线(${frozen})`);
+      } else {
+        this.promptStore.patchStatus(promotedChild.version_id, {
+          status: "champion",
+          validated_metrics: summarize(validation),
+          eval_set_version: evalSetVersion,
+          accepted_trait: promotedChild.accepted_trait,
+        });
+        if (state.champion !== promotedChild.version_id) {
+          this.promptStore.patchStatus(state.champion, { status: "accepted" });
+        }
+        state.champion = promotedChild.version_id;
+        // M5.10 种群:按 validated margin 排名 + 精英保留(champion 恒在)+ 截到 cap。
+        state.population = updatePopulation(
+          state.population,
+          promotedChild.version_id,
+          promotedChild.version_id,
+          POPULATION_CAP,
+          (id) => marginScore(this.promptStore.loadMeta(id) ?? promotedChild),
+        );
+        this.logger.log(`晋升:${promotedChild.version_id} 成为新 champion`);
       }
-      state.champion = promotedChild.version_id;
-      // M5.10 种群:按 validated margin 排名 + 精英保留(champion 恒在)+ 截到 cap。
-      state.population = updatePopulation(
-        state.population,
-        promotedChild.version_id,
-        promotedChild.version_id,
-        POPULATION_CAP,
-        (id) => marginScore(this.promptStore.loadMeta(id) ?? promotedChild),
-      );
-      this.logger.log(`晋升:${promotedChild.version_id} 成为新 champion`);
     } else {
       this.promptStore.patchStatus(child.version_id, { status: "rejected" });
       // 拒绝理由合并:优化集闸 + 留出闸(背答案常表现为优化集过、holdout 不过)+ M4.11 假设回环。
