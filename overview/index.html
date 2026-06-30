@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>《谁是AI》· AI 玩家系统全景导览</title>
+  <meta name="description" content="《谁是AI》AI 玩家系统的可视化解读：在线 ⇄ 离线双回路、离线优化流水线、三道防自欺闸门与九条核心设计洞察。" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+
+<!-- ===================== 顶部进度 / 导航 ===================== -->
+<header class="topbar" id="topbar">
+  <a class="brand" href="#top">
+    <span class="brand-mark">谁是<b>AI</b></span>
+    <span class="brand-sub">系统全景导览</span>
+  </a>
+  <nav class="topnav">
+    <a href="#loop">双回路</a>
+    <a href="#layers">三层架构</a>
+    <a href="#pipeline">离线流水线</a>
+    <a href="#gates">三道闸门</a>
+    <a href="#insights">九条洞察</a>
+    <a href="#modules">模块深潜</a>
+    <a href="#map">文档地图</a>
+  </nav>
+  <div class="progress-rail"><div class="progress-bar" id="progressBar"></div></div>
+</header>
+
+<!-- ===================== Hero ===================== -->
+<section class="hero" id="top">
+  <div class="hero-glow"></div>
+  <div class="hero-inner">
+    <p class="eyebrow">项目全景导览 · Architecture Explorer</p>
+    <h1 class="hero-title">《谁是<span class="grad">AI</span>》—— AI 玩家系统</h1>
+    <p class="hero-lede">
+      一款社交聊天推理游戏：真人与隐藏的 AI 混在一起，靠聊天与盲投找出 AI。<br />
+      这套系统要把 AI 玩家做到<strong>真人难以分辨</strong>，并用一套离线机制<strong>持续把它变更强</strong>。
+    </p>
+
+    <div class="hero-creed">
+      <div class="creed-card">
+        <span class="creed-k">目标</span>
+        <span class="creed-v">让 AI 玩家<strong>融入真人、别被识破</strong></span>
+      </div>
+      <div class="creed-x">×</div>
+      <div class="creed-card">
+        <span class="creed-k">信念</span>
+        <span class="creed-v">只让<strong>经得起真人检验</strong>的真实改进沉淀下来</span>
+      </div>
+    </div>
+
+    <div class="metric-chip">
+      <span class="dot"></span>
+      唯一成败标准 · 真人对局里 AI 的<strong>存活率 / 被识破率</strong>
+    </div>
+
+    <div class="scroll-hint">
+      <span>向下滚动，逐层看懂这套系统</span>
+      <span class="chevron">⌄</span>
+    </div>
+  </div>
+
+  <!-- 视觉编码图例 -->
+  <div class="legend" aria-label="颜色图例">
+    <span class="legend-item"><i class="sw sw-online"></i>在线层（生产）</span>
+    <span class="legend-item"><i class="sw sw-offline"></i>离线优化层</span>
+    <span class="legend-item"><i class="sw sw-contract"></i>契约层</span>
+    <span class="legend-item"><i class="sw sw-actor"></i>参与方</span>
+    <span class="legend-item"><i class="sw sw-core"></i>★ 核心机制</span>
+  </div>
+</section>
+
+<!-- ===================== Section A · 在线⇄离线 双回路 ===================== -->
+<section class="scrolly" id="loop">
+  <div class="section-head">
+    <span class="kicker">L0 · 一图看懂</span>
+    <h2>在线 ⇄ 离线，一个互喂的<strong>闭环</strong></h2>
+    <p class="section-sub">整套系统交付两样东西，并让它们持续互相喂养。滚动跟随高亮，看「它们怎么串起来」。</p>
+  </div>
+
+  <div class="scrolly-inner">
+    <div class="scrolly-graphic">
+      <!-- 双回路 SVG -->
+      <svg viewBox="0 0 720 480" xmlns:xlink="http://www.w3.org/1999/xlink" class="diagram diagram-loop" role="img" aria-label="在线层与离线层构成的闭环">
+        <defs>
+          <marker id="ah-up" markerWidth="12" markerHeight="12" refX="6" refY="9" orient="auto">
+            <path d="M2,10 L6,2 L10,10" fill="none" stroke="var(--c-online)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+          <marker id="ah-down" markerWidth="12" markerHeight="12" refX="6" refY="3" orient="auto">
+            <path d="M2,2 L6,10 L10,2" fill="none" stroke="var(--c-offline)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+
+        <!-- 左弧：champion 上线（offline → online，向上） -->
+        <g class="node" data-node="up">
+          <path id="path-up" d="M150,300 C 52,252 52,218 150,170" fill="none" stroke="var(--c-online)" stroke-width="3" stroke-dasharray="2 0" marker-end="url(#ah-up)"/>
+          <circle class="flow-dot dot-online" r="5"><animateMotion dur="3.2s" repeatCount="indefinite"><mpath xlink:href="#path-up"/></animateMotion></circle>
+          <text class="arc-label" x="42" y="232" text-anchor="middle">champion</text>
+          <text class="arc-label" x="42" y="250" text-anchor="middle">上线 ↑</text>
+        </g>
+
+        <!-- 右弧：真值 + 失败回灌（online → offline，向下） -->
+        <g class="node" data-node="down">
+          <path id="path-down" d="M570,170 C 668,218 668,252 570,300" fill="none" stroke="var(--c-offline)" stroke-width="3" stroke-dasharray="2 0" marker-end="url(#ah-down)"/>
+          <circle class="flow-dot dot-offline" r="5"><animateMotion dur="3.2s" repeatCount="indefinite"><mpath xlink:href="#path-down"/></animateMotion></circle>
+          <text class="arc-label" x="678" y="232" text-anchor="middle">真值</text>
+          <text class="arc-label" x="678" y="250" text-anchor="middle">失败回灌 ↓</text>
+        </g>
+
+        <!-- 在线层 -->
+        <g class="node node-box box-online" data-node="online">
+          <rect x="130" y="55" width="460" height="115" rx="20"/>
+          <text class="box-title" x="360" y="98" text-anchor="middle">在线层（生产）</text>
+          <text class="box-sub" x="360" y="126" text-anchor="middle">AI 玩家 = champion 提示词 + 人设卡 + 投票逻辑</text>
+          <text class="box-sub2" x="360" y="148" text-anchor="middle">在真实房间里聊天、盲投 · 目标：别被识破、撑过 4 轮</text>
+        </g>
+
+        <!-- 离线层 -->
+        <g class="node node-box box-offline" data-node="offline">
+          <rect x="130" y="300" width="460" height="125" rx="20"/>
+          <text class="box-title" x="360" y="342" text-anchor="middle">离线层（优化沙盒）</text>
+          <text class="box-sub" x="360" y="372" text-anchor="middle">引擎 → 裁判 → 聚合 → 优化器 → 编排器</text>
+          <text class="box-sub2" x="360" y="396" text-anchor="middle">真人失败回灌场景库 · 真人结果校准 · 迭代出更强 champion</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="scrolly-steps">
+      <div class="scrolly-step" data-target="online offline">
+        <span class="step-tag">交付两样东西</span>
+        <p><strong>A · 一个真人难以分辨的在线 AI 玩家</strong>——它在真实对局里聊天与投票。<br />
+        <strong>B · 一套能持续把 A 变更强的离线优化机制</strong>——自动迭代它的提示词。</p>
+      </div>
+      <div class="scrolly-step" data-target="online">
+        <span class="step-tag tag-online">在线层 · 生产</span>
+        <p>AI 玩家就是当前的 <code>champion</code> 提示词 + 一张人设卡 + 投票逻辑。它在真实房间里和真人聊天、盲投，唯一目标是<strong>别被识破、撑过 4 轮</strong>。</p>
+      </div>
+      <div class="scrolly-step" data-target="up">
+        <span class="step-tag tag-online">champion 上线 ↑</span>
+        <p>离线沙盒每迭代出更强的一版提示词，就<strong>上线</strong>成为新的在线 AI 玩家。这是离线对在线的喂养方向。</p>
+      </div>
+      <div class="scrolly-step" data-target="offline">
+        <span class="step-tag tag-offline">离线层 · 优化沙盒</span>
+        <p>用 LLM 自对弈：<code>对局引擎 → 裁判评分 → 评分聚合 → 优化器 → 编排器</code>，自动改提示词，代代复利地变强。</p>
+      </div>
+      <div class="scrolly-step" data-target="down">
+        <span class="step-tag tag-offline">真值 + 失败回灌 ↓</span>
+        <p>在线真人对局产出两种养料：<strong>真值</strong>（校准沙盒的代理指标）和<strong>真实失败</strong>（回灌沙盒的场景库）。这是在线对离线的喂养方向。</p>
+      </div>
+      <div class="scrolly-step" data-target="all">
+        <span class="step-tag tag-loop">闭环 · 棘轮</span>
+        <p><strong>真人对局永远是最终裁决</strong>，沙盒只是放大真人信号、快速预筛的离线加速器。两条喂养方向合起来，就是一个只进不退的优化闭环。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== Section B · 三层架构 ===================== -->
+<section class="scrolly alt" id="layers">
+  <div class="section-head">
+    <span class="kicker">L1 · 三层架构</span>
+    <h2>三层 + 连接它们的<strong>契约</strong></h2>
+    <p class="section-sub">把闭环拆开看：每一层各司其职，靠稳定的 schema 解耦，可独立替换。</p>
+  </div>
+
+  <div class="scrolly-inner">
+    <div class="scrolly-graphic">
+      <svg viewBox="0 0 720 520" class="diagram diagram-layers" role="img" aria-label="三层架构与参与方">
+        <!-- 在线层 -->
+        <g class="node node-box box-online" data-node="online">
+          <rect x="60" y="40" width="600" height="84" rx="16"/>
+          <text class="box-title" x="84" y="76" text-anchor="start">在线层</text>
+          <text class="box-sub" x="84" y="102" text-anchor="start">AI 玩家提示词 + 人设卡 + 投票逻辑 · 生产环境真正在玩</text>
+        </g>
+
+        <!-- 离线优化层 -->
+        <g class="node node-box box-offline" data-node="offline">
+          <rect x="60" y="146" width="600" height="150" rx="16"/>
+          <text class="box-title" x="84" y="182" text-anchor="start">离线优化层</text>
+          <g class="mini-chips">
+            <g class="mini-chip"><rect x="84"  y="210" width="86"  height="62" rx="11"/><text x="127" y="238">对局</text><text x="127" y="256">引擎</text></g>
+            <g class="mini-chip"><rect x="182" y="210" width="86"  height="62" rx="11"/><text x="225" y="238">裁判</text><text x="225" y="256">评分</text></g>
+            <g class="mini-chip core"><rect x="280" y="210" width="86"  height="62" rx="11"/><text x="323" y="238">★评分</text><text x="323" y="256">聚合</text></g>
+            <g class="mini-chip"><rect x="378" y="210" width="86"  height="62" rx="11"/><text x="421" y="238">优化器</text></g>
+            <g class="mini-chip"><rect x="476" y="210" width="78"  height="62" rx="11"/><text x="515" y="238">编排器</text></g>
+            <g class="mini-chip"><rect x="566" y="210" width="78"  height="62" rx="11"/><text x="605" y="238">场景库</text></g>
+          </g>
+        </g>
+
+        <!-- 契约层 -->
+        <g class="node node-box box-contract" data-node="contract">
+          <rect x="60" y="318" width="600" height="80" rx="16"/>
+          <text class="box-title" x="84" y="352" text-anchor="start">契约层</text>
+          <g class="contract-pills">
+            <g class="pill"><rect x="330" y="338" width="150" height="42" rx="21"/><text x="405" y="364">输入契约 · 场景/探测</text></g>
+            <g class="pill"><rect x="492" y="338" width="150" height="42" rx="21"/><text x="567" y="364">输出契约 · 对局记录</text></g>
+          </g>
+        </g>
+
+        <!-- 参与方 -->
+        <g class="node node-box box-actor" data-node="actors">
+          <rect x="60" y="420" width="600" height="80" rx="16"/>
+          <text class="box-title" x="84" y="454" text-anchor="start">参与方</text>
+          <g class="actor-pills">
+            <g class="pill"><rect x="330" y="440" width="92" height="42" rx="21"/><text x="376" y="466">侦探</text></g>
+            <g class="pill"><rect x="434" y="440" width="92" height="42" rx="21"/><text x="480" y="466">填充</text></g>
+            <g class="pill"><rect x="538" y="440" width="104" height="42" rx="21"/><text x="590" y="466">裁判</text></g>
+          </g>
+        </g>
+      </svg>
+    </div>
+
+    <div class="scrolly-steps">
+      <div class="scrolly-step" data-target="online">
+        <span class="step-tag tag-online">在线层</span>
+        <p>AI 玩家提示词 + 人设卡 + 投票逻辑。这是<strong>被优化的对象</strong>，也是唯一真正在生产环境里玩的东西。</p>
+      </div>
+      <div class="scrolly-step" data-target="offline">
+        <span class="step-tag tag-offline">离线优化层</span>
+        <p>六个模块组成自对弈流水线：<strong>对局引擎 · 裁判评分 · ★评分聚合 · 优化器 · 编排器 · 场景库</strong>，把 AI 玩家迭代出更强的 champion。</p>
+      </div>
+      <div class="scrolly-step" data-target="contract">
+        <span class="step-tag tag-contract">契约层</span>
+        <p>拆成两份单一事实来源：<strong>输入契约</strong>（场景/探测的 schema）与<strong>输出契约</strong>（对局记录的 schema）。让模块只对接口编程、可独立替换，防字段被单方需求带偏。</p>
+      </div>
+      <div class="scrolly-step" data-target="actors">
+        <span class="step-tag tag-actor">参与方</span>
+        <p><strong>侦探 / 填充 / 裁判</strong>三套提示词在沙盒里扮演对手与评委，构成一个可控、像真人的对局环境——既要够像真人，又要守住「反指纹」纪律不失真。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== Section C · 离线流水线 ===================== -->
+<section class="scrolly" id="pipeline">
+  <div class="section-head">
+    <span class="kicker">L2 · 离线流水线</span>
+    <h2>一局对局的<strong>旅程</strong></h2>
+    <p class="section-sub">跟着一局对局从场景库出发，看它如何一站站被加工成「让 AI 变强」的信号。滚动驱动小车前进。</p>
+  </div>
+
+  <div class="scrolly-inner pipeline-inner">
+    <div class="scrolly-graphic">
+      <svg viewBox="0 0 1100 720" class="diagram diagram-pipe" role="img" aria-label="离线优化流水线（蛇形两行）">
+        <defs>
+          <marker id="ah-pipe" markerWidth="11" markerHeight="11" refX="7" refY="5.5" orient="auto">
+            <path d="M1,1 L9,5.5 L1,10" fill="none" stroke="var(--line-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+
+        <!-- 连接线（蛇形：上行右进 → 右侧下行 → 下行左进）+ 产物 -->
+        <g class="pipe-links">
+          <line x1="340" y1="190" x2="410" y2="190" marker-end="url(#ah-pipe)"/>
+          <line x1="690" y1="190" x2="760" y2="190" marker-end="url(#ah-pipe)"/>
+          <line x1="900" y1="265" x2="900" y2="485" marker-end="url(#ah-pipe)"/>
+          <line x1="760" y1="560" x2="690" y2="560" marker-end="url(#ah-pipe)"/>
+          <line x1="410" y1="560" x2="340" y2="560" marker-end="url(#ah-pipe)"/>
+          <g class="artifact"><text x="375" y="92">Scenario</text></g>
+          <g class="artifact"><text x="725" y="92">MatchRecord</text></g>
+          <g class="artifact"><text x="924" y="382" text-anchor="start">ScoreRecord</text></g>
+          <g class="artifact"><text x="725" y="676">优化信号</text></g>
+          <g class="artifact"><text x="375" y="676">k 个子版本</text></g>
+        </g>
+
+        <!-- 站点：上行 s0 s1 s2，下行 s3 s4 s5 -->
+        <g class="station" data-node="s0">
+          <rect x="60" y="115" width="280" height="150" rx="18"/>
+          <text class="st-idx" x="200" y="158">0</text>
+          <text class="st-name" x="200" y="206">场景库</text>
+          <text class="st-tag" x="200" y="240">分层抽样 + 回灌</text>
+        </g>
+        <g class="station" data-node="s1">
+          <rect x="410" y="115" width="280" height="150" rx="18"/>
+          <text class="st-idx" x="550" y="158">1</text>
+          <text class="st-name" x="550" y="206">对局引擎</text>
+          <text class="st-tag" x="550" y="240">只跑不评分</text>
+        </g>
+        <g class="station" data-node="s2">
+          <rect x="760" y="115" width="280" height="150" rx="18"/>
+          <text class="st-idx" x="900" y="158">2</text>
+          <text class="st-name" x="900" y="206">裁判评分</text>
+          <text class="st-tag" x="900" y="240">盲测两遍法</text>
+        </g>
+        <g class="station core" data-node="s3">
+          <rect x="760" y="485" width="280" height="150" rx="18"/>
+          <text class="st-idx" x="900" y="528">3 ★</text>
+          <text class="st-name" x="900" y="576">评分聚合</text>
+          <text class="st-tag" x="900" y="610">命门 · 消方差</text>
+        </g>
+        <g class="station" data-node="s4">
+          <rect x="410" y="485" width="280" height="150" rx="18"/>
+          <text class="st-idx" x="550" y="528">4</text>
+          <text class="st-name" x="550" y="576">优化器</text>
+          <text class="st-tag" x="550" y="610">智能变异算子</text>
+        </g>
+        <g class="station" data-node="s5">
+          <rect x="60" y="485" width="280" height="150" rx="18"/>
+          <text class="st-idx" x="200" y="528">5</text>
+          <text class="st-name" x="200" y="576">编排器</text>
+          <text class="st-tag" x="200" y="610">总控 + 三道闸</text>
+        </g>
+
+        <!-- 当前产物（居中于两行之间） -->
+        <text class="pipe-output-label" id="pipeOutLabel" x="550" y="380" text-anchor="middle"></text>
+
+        <!-- 行进中的「局」：停在当前激活站点 -->
+        <g class="token" id="pipeToken" transform="translate(94,149)">
+          <circle r="15"/>
+          <text x="0" y="6" text-anchor="middle">局</text>
+        </g>
+
+        <!-- 编排器回到在线（晋升 champion） -->
+        <g class="promote">
+          <path d="M200,485 C150,452 110,448 86,430" fill="none" stroke="var(--c-online)" stroke-width="2.4" stroke-dasharray="6 5" marker-end="url(#ah-pipe)"/>
+          <text x="120" y="452" text-anchor="start" class="promote-label">晋升 champion → 上线</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="scrolly-steps">
+      <div class="scrolly-step" data-target="s0">
+        <span class="step-tag tag-offline">站 0 · 场景库</span>
+        <p><strong>不穷举</strong>：状态空间无穷，穷举不可达且仍会漏真人的骚操作。改用七维<strong>分层抽样</strong>，主要靠<strong>真人失败回灌</strong>生长，分 <code>optimize</code> / <code>holdout</code> 两 split。</p>
+        <p class="step-out">产物 → <b>Scenario</b>（输入契约）</p>
+      </div>
+      <div class="scrolly-step" data-target="s1">
+        <span class="step-tag tag-offline">站 1 · 对局引擎</span>
+        <p>按场景把一局从头跑到尾，<strong>只跑不评分</strong>。关键：<code>scripted_intent</code>/<code>free</code> 两模式、<code>full_match</code>/<code>spotlight</code> 两形态、探测 = 触发器 + 意图、<code>vote_policy</code> 三档（默认 <code>live</code>）、同种子配对降方差。</p>
+        <p class="step-out">产物 → <b>MatchRecord</b>（可复现：转录 + 投票 + probe_events）</p>
+      </div>
+      <div class="scrolly-step" data-target="s2">
+        <span class="step-tag tag-offline">站 2 · 裁判评分</span>
+        <p>把一局变成 <code>ScoreRecord</code>。两类信号：<strong>客观结果指标</strong>（真值）+ 裁判 LLM <strong>两遍法</strong>——① 匿名<strong>盲测可疑度</strong>（像玩家不像法医）② 已知 AI 的<strong>八维诊断 + 失败定位</strong>。</p>
+        <p class="step-out">产物 → <b>ScoreRecord</b></p>
+      </div>
+      <div class="scrolly-step" data-target="s3">
+        <span class="step-tag tag-core">站 3 ★ · 评分聚合（命门）</span>
+        <p>整套沙盒最核心的一环。成百上千条单局分要被压成几个<strong>明确信号</strong>。四层严格自底向上：<br />
+        <code>run 取均 → (scenario,seed) 配对做差 → scenario 收敛(N=场景数) → bootstrap 估 CI → 卡 verdict</code>。</p>
+        <p class="aha">纲领：<strong>平均压随机噪声，做差消共模干扰。</strong> 聚错一步（尤其 N 与顺序），整套迭代就很努力地朝噪声跑。</p>
+        <p class="step-out">产物 → <b>验证信号 / 瞄准信号 / 失败案例</b></p>
+      </div>
+      <div class="scrolly-step" data-target="s4">
+        <span class="step-tag tag-offline">站 4 · 优化器</span>
+        <p>进化的<strong>智能变异算子</strong>：吃瞄准信号 + 失败案例 + 失败记忆，<strong>单候选</strong>产 1 个带可证伪假设的子版本；K 个子版本靠外层<strong>分配 K 个靶子</strong>（破绽 × 算子）跑 K 次。原则：一次一破绽、小步不重写、<strong>降被识破不刷分</strong>。</p>
+        <p class="step-out">产物 → <b>k 个子版本提示词</b></p>
+      </div>
+      <div class="scrolly-step" data-target="s5">
+        <span class="step-tag tag-offline">站 5 · 编排器</span>
+        <p><strong>总控与三道闸的执行处</strong>。代际循环：采样父代 → 外层派靶 → 优化器提案 → 配对评测（子 vs 父，同种子）→ <strong>接受闸门</strong>（可疑度显著降 + 不否决 + 不回退）→ 留出复核 → 晋升 champion / 进种群 → 周期真人校准 + 回灌。</p>
+        <p class="step-out">产物 → <b>新 champion</b> → 回到在线层上线</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== Section D · 三道闸门 ===================== -->
+<section class="gates-section" id="gates">
+  <div class="section-head">
+    <span class="kicker">贯穿全局 · 防自欺</span>
+    <h2>三道闸门：只进不退的<strong>棘轮</strong></h2>
+    <p class="section-sub">为什么这套环不会「越迭代越自欺」？因为每一代都必须同时通过三道闸。噪声驱动的假进步过不了重复确认，只有真实增益代代复利。</p>
+  </div>
+
+  <div class="ratchet-wrap">
+    <svg viewBox="0 0 140 140" class="ratchet" id="ratchet" aria-hidden="true">
+      <g class="ratchet-wheel">
+        <circle cx="70" cy="70" r="46" />
+        <g class="teeth"></g>
+      </g>
+      <path class="pawl" d="M70,8 L82,30 L58,30 Z"/>
+    </svg>
+    <p class="ratchet-cap">每过一道闸 = 棘轮转一齿，<b>退不回去</b></p>
+  </div>
+
+  <div class="gates-grid">
+    <article class="gate-card reveal">
+      <div class="gate-no">闸 1</div>
+      <h3>配对 + 显著性</h3>
+      <p class="gate-guard">防 · 噪声假信号</p>
+      <p>子 / 父<strong>同场景同种子</strong>，只让 AI 提示词当变量；同种子<strong>做差</strong>消掉共模噪声；统计样本单元用<strong>场景数</strong>不是对局数；差异超噪声带且够大（MDE）才算赢，否则保留旧版。</p>
+    </article>
+    <article class="gate-card reveal">
+      <div class="gate-no">闸 2</div>
+      <h3>留出集 + 探测轮换</h3>
+      <p class="gate-guard">防 · 过拟合（背题）</p>
+      <p>验收用的场景与探测实例<strong>永不进优化器</strong>；偏好提示词的<strong>通用回避反射</strong>而非死记答案；盯住 <code>recurring</code>——库里有还犯 = 在背答案。验的是「会回避」，不是「背题」。</p>
+    </article>
+    <article class="gate-card reveal">
+      <div class="gate-no">闸 3</div>
+      <h3>真人校准</h3>
+      <p class="gate-guard">防 · Goodhart（优化代理而非真人）</p>
+      <p>每 M 代用<strong>真人对局</strong>做相关性体检：沙盒分涨，真人是否也更难识破？<strong>真人永远是最终裁决</strong>，沙盒只是快预筛器；一旦翻车立即回滚。</p>
+    </article>
+  </div>
+</section>
+
+<!-- ===================== Section E · 九条洞察 ===================== -->
+<section class="insights-section" id="insights">
+  <div class="section-head">
+    <span class="kicker">设计依据 · 总纲</span>
+    <h2>九条<strong>反直觉</strong>核心洞察</h2>
+    <p class="section-sub">整套系统建立在九条贯穿始终的判断上。每条 = 一个反直觉的判断 + 它如何决定了下游设计。点开看「所以呢」。</p>
+  </div>
+
+  <div class="insight-grid" id="insightGrid">
+    <!-- 卡片由 app.js 注入 -->
+  </div>
+</section>
+
+<!-- ===================== Section F · 模块深潜 ===================== -->
+<section class="modules-section" id="modules">
+  <div class="section-head">
+    <span class="kicker">L3 · 模块深潜</span>
+    <h2>每个模块：是什么 · 关键契约 · <strong>为什么这么设计</strong></h2>
+    <p class="section-sub">点开任意模块，看它在闭环里的位置，以及背后那条「选了什么 / 备选 / 为什么 / 代价」的设计依据。</p>
+  </div>
+
+  <div class="module-list" id="moduleList">
+    <!-- 折叠卡由 app.js 注入 -->
+  </div>
+</section>
+
+<!-- ===================== Footer · 文档地图 ===================== -->
+<footer class="map-section" id="map">
+  <div class="section-head">
+    <span class="kicker">想读原文</span>
+    <h2>文档地图 & 推荐阅读路径</h2>
+    <p class="section-sub">这页是导览，每块内容都对应一篇权威设计文档。建议新读者按下面的顺序读。</p>
+  </div>
+
+  <ol class="read-path">
+    <li><span class="rp-no">1</span><div><b>总体设计 · 架构与设计依据</b><span>懂全局与依据</span><a href="../docs/design/总体设计文档%20架构与设计依据.md">打开 →</a></div></li>
+    <li><span class="rp-no">2</span><div><b>AI玩家 · prompt 模板与人设卡</b><span>懂被优化对象</span><a href="../docs/design/产品运行时/ai玩家%20prompt模板与人设卡.md">打开 →</a></div></li>
+    <li><span class="rp-no">3</span><div><b>离线自对弈沙盒 · 总纲与文档地图</b><span>懂优化系统</span><a href="../docs/design/离线优化沙盒/离线自对弈沙盒%20·%20总纲与文档地图.md">打开 →</a></div></li>
+    <li><span class="rp-no">4</span><div><b>各模块详细设计</b><span>按需深入专文</span><a href="../docs/design/离线优化沙盒/模块详细设计/">打开目录 →</a></div></li>
+  </ol>
+
+  <div class="map-links">
+    <a class="map-link" href="../docs/README.md"><b>📚 文档总览</b><span>docs/ 全部正式文档索引与交叉引用地图</span></a>
+    <a class="map-link" href="../docs/design/离线优化沙盒/模块详细设计/2.5.评分聚合%20→%20优化器信号%20·%20核心机制设计.md"><b>★ 评分聚合核心机制</b><span>整套沙盒的命门，务必精读</span></a>
+    <a class="map-link" href="../docs/design/离线优化沙盒/端到端一代闭环%20·%20流程说明.md"><b>🔁 端到端一代闭环</b><span>父版本 → 子版本 → 配对做差 → 晋升的完整叙事</span></a>
+    <a class="map-link" href="../README.md"><b>🛠 项目 README</b><span>技术栈、本地启动、Docker 部署</span></a>
+  </div>
+
+  <p class="foot-note">一句话：这套系统的全部设计，可归结为<strong>一个目标</strong>（让 AI 融入真人、别被识破）和<strong>一条信念</strong>（只让经得起真人检验的真实改进沉淀下来）。其余一切都是为这两点服务的工程。</p>
+</footer>
+
+<button class="to-top" id="toTop" aria-label="回到顶部">↑</button>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
