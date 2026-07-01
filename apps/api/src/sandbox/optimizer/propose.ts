@@ -105,7 +105,10 @@ export class OptimizerService {
             system,
             user,
           },
-          () => this.ai.callModel(system, user, modelConfig, connection),
+          () => this.ai.callModel(system, user, modelConfig, connection, {
+            source: "optimizer",
+            stage: "optimizer_propose",
+          }),
         );
         parsed = parseChild(content);
         if (!parsed) lastError = "parse_failed";
@@ -172,7 +175,10 @@ export class OptimizerService {
             system,
             user,
           },
-          () => this.ai.callModel(system, user, modelConfig, connection),
+          () => this.ai.callModel(system, user, modelConfig, connection, {
+            source: "optimizer",
+            stage: "optimizer_crossover",
+          }),
         );
         parsed = parseChild(content);
         if (!parsed) lastError = "parse_failed";

@@ -5,6 +5,7 @@ import {
   AiCallRecord,
   AiCallRecorder,
   AiConfig,
+  LlmCallMeta,
   AiModelCallConfig,
   AiModelEntry,
   AiModelFormat,
@@ -15,9 +16,11 @@ import {
   PersonaCard,
   RoundVoteSummary,
 } from "./ai.types";
+import { normalizeLlmUsage, type ModelUsageLike } from "./llm-usage";
 import { loadPrompt, renderTemplate } from "./prompt-loader";
 import { PostgresService } from "../data/postgres.service";
 import { formatPersonaCard } from "./ai.personas";
+import { LlmStatsService } from "./llm-stats.service";
 
 type SpeechRole = "ai_under_test" | "detective" | "filler";
 
@@ -26,14 +29,7 @@ const DEFAULT_AI_NEXT_CHECK_MS = 10_000;
 const MAX_SPEECH_LENGTH = 120;
 const DEFAULT_CLAUDE_MAX_TOKENS = 1024;
 
-type ModelUsage = {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  total_tokens?: number;
-  prompt_tokens_details?: { cached_tokens?: number };
-  cache_read_input_tokens?: number;
-  cache_creation_input_tokens?: number;
-};
+type ModelUsage = ModelUsageLike;
 
 type ModelConnectionOptions = {
   baseURL?: string;
@@ -89,7 +85,10 @@ export class AiService {
     return list;
   }
 
-  constructor(private readonly postgres: PostgresService) {
+  constructor(
+    private readonly postgres: PostgresService,
+    private readonly llmStats: LlmStatsService,
+  ) {
     this.loadModels();
 
     const defaultModel = this.getDefaultModel();
@@ -279,6 +278,12 @@ export class AiService {
         userPrompt,
         modelConfig,
         callOptions,
+        {
+          source: "ai_player",
+          stage: "discussion",
+          roomId: context.roomId,
+          roundNo: context.roundNo,
+        },
       );
       this.logModelResponse("DISCUSSION", context, modelConfig, raw, reasoning);
       this.logUsage(modelConfig.model, usage);
@@ -357,7 +362,18 @@ export class AiService {
       const userPrompt = this.buildVoteUserPrompt(context);
       this.logModelRequest("VOTE", context, modelConfig, systemPrompt, userPrompt);
       const voteStartedAt = new Date().toISOString();
-      const { content: raw, usage, reasoning } = await this.callModel(systemPrompt, userPrompt, modelConfig, callOptions);
+      const { content: raw, usage, reasoning } = await this.callModel(
+        systemPrompt,
+        userPrompt,
+        modelConfig,
+        callOptions,
+        {
+          source: "ai_player",
+          stage: "vote",
+          roomId: context.roomId,
+          roundNo: context.roundNo,
+        },
+      );
       this.logModelResponse("VOTE", context, modelConfig, raw, reasoning);
       this.logUsage(modelConfig.model, usage);
       this.recorder?.record({
@@ -533,27 +549,20 @@ export class AiService {
 
   private logUsage(model: string, usage?: ModelUsage): void {
     if (!usage) return;
-
-    const isClaudeFormat = usage.cache_read_input_tokens != null
-      || usage.cache_creation_input_tokens != null;
-
-    const cachedTokens = usage.prompt_tokens_details?.cached_tokens
-      ?? usage.cache_read_input_tokens;
-    const cacheWrite = usage.cache_creation_input_tokens;
-
-    // Claude input_tokens excludes cached/written tokens; OpenAI prompt_tokens includes cached
-    const totalInputTokens = isClaudeFormat
-      ? (usage.prompt_tokens ?? 0)
-        + (cachedTokens ?? 0)
-        + (cacheWrite ?? 0)
-      : (usage.prompt_tokens ?? 0);
-
-    const parts = [`model=${model}`, `prompt=${usage.prompt_tokens ?? "-"}`, `completion=${usage.completion_tokens ?? "-"}`];
-    if (cachedTokens != null && cachedTokens > 0) {
-      parts.push(`cached=${cachedTokens}`, `hit=${totalInputTokens > 0 ? ((cachedTokens / totalInputTokens) * 100).toFixed(1) + "%" : "?"}`);
+    const normalized = normalizeLlmUsage(usage);
+    const parts = [
+      `model=${model}`,
+      `prompt=${normalized.promptTokens || "-"}`,
+      `completion=${normalized.completionTokens || "-"}`,
+    ];
+    if (normalized.cachedTokens > 0) {
+      parts.push(
+        `cached=${normalized.cachedTokens}`,
+        `hit=${(normalized.cacheHitRate * 100).toFixed(1)}%`,
+      );
     }
-    if (cacheWrite != null && cacheWrite > 0) {
-      parts.push(`cache_write=${cacheWrite}`);
+    if (normalized.cacheWriteTokens > 0) {
+      parts.push(`cache_write=${normalized.cacheWriteTokens}`);
     }
     const sep = "-".repeat(72);
     this.logger.log(`\n${sep}\n[Cache Hit] ${parts.join(", ")}\n${sep}\n`);
@@ -630,6 +639,7 @@ export class AiService {
     userPrompt: string,
     modelConfig: AiModelCallConfig,
     options?: ModelConnectionOptions,
+    meta?: LlmCallMeta,
   ): Promise<{ content: string; usage?: ModelUsage; reasoning?: string }> {
     const baseURL = options?.baseURL ?? this.config.baseURL;
     const apiKey = options?.apiKey ?? this.config.apiKey;
@@ -640,6 +650,7 @@ export class AiService {
       : this.buildOpenAiRequest(baseURL, apiKey, systemPrompt, userPrompt, modelConfig);
 
     const controller = new AbortController();
+    const startedAt = Date.now();
     const timeout = setTimeout(
       () => controller.abort(),
       timeoutMs,
@@ -661,9 +672,28 @@ export class AiService {
       }
 
       const data = await response.json();
-      return format === "claude"
+      const parsed = format === "claude"
         ? this.parseClaudeResponse(data)
         : this.parseOpenAiResponse(data);
+      await this.llmStats.recordCall({
+        model: modelConfig.model,
+        providerFormat: format,
+        durationMs: Date.now() - startedAt,
+        ok: true,
+        usage: parsed.usage,
+        meta,
+      });
+      return parsed;
+    } catch (error) {
+      await this.llmStats.recordCall({
+        model: modelConfig.model,
+        providerFormat: format,
+        durationMs: Date.now() - startedAt,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        meta,
+      });
+      throw error;
     } finally {
       clearTimeout(timeout);
     }

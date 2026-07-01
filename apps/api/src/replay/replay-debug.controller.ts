@@ -40,6 +40,11 @@ export class ReplayDebugController {
           temperature: body.temperature ?? 0.7,
           reasoningEffort: body.reasoningEffort ?? "high",
         },
+        undefined,
+        {
+          source: "replay_debug",
+          stage: "debug_call",
+        },
       );
       return { ok: true, rawResponse };
     } catch (error) {

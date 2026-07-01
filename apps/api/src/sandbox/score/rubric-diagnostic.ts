@@ -78,7 +78,12 @@ export class RubricDiagnosticScorer {
             system,
             user,
           },
-          () => this.ai.callModel(system, user, modelConfig, connection),
+          () => this.ai.callModel(system, user, modelConfig, connection, {
+            source: "judge",
+            stage: "rubric_diagnostic",
+            matchId: match.match_id,
+            roundNo: focusRound ?? undefined,
+          }),
         );
         parsed = parseDiagnostic(content, validIds);
         if (!parsed) lastError = "parse_failed";

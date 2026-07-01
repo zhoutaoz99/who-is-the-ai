@@ -297,6 +297,37 @@ p {
   color: #ffffff;
 }
 
+.action-pill--entry {
+  align-items: center;
+  background: linear-gradient(135deg, #ffffff 0%, #edf7f5 100%);
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(15, 118, 110, 0.08);
+  display: inline-flex;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px 0 10px;
+}
+
+.action-pill--entry:hover:not(:disabled) {
+  background: linear-gradient(135deg, #f7fffd 0%, #dff4ef 100%);
+  border-color: rgba(15, 118, 110, 0.36);
+  box-shadow: 0 10px 22px rgba(15, 118, 110, 0.14);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.action-pill-entry-icon {
+  align-items: center;
+  background: rgba(15, 118, 110, 0.12);
+  border-radius: 999px;
+  color: var(--accent);
+  display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
 .connection-pill {
   align-items: center;
   border: 1px solid var(--line);
@@ -807,4 +838,3 @@ p {
   min-height: 360px;
   align-content: center;
 }
-

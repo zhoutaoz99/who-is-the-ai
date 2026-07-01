@@ -71,6 +71,28 @@ function IconRefresh(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function IconChart(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M4 19V9" />
+      <path d="M10 19V5" />
+      <path d="M16 19v-7" />
+      <path d="M22 19v-3" />
+      <path d="M3 19h19" />
+    </svg>
+  );
+}
+
 function IconUsers(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -443,6 +465,17 @@ export default function Home() {
             />
             {connected ? "已连接" : "未连接"}
           </div>
+          <button
+            className="action-pill action-pill--entry"
+            onClick={() => router.push("/llm-stats")}
+            title="查看真人对局、离线沙盒和优化链路的统一 LLM 调用统计"
+          >
+            <span className="action-pill-entry-icon" aria-hidden="true">
+              <IconChart />
+            </span>
+            <span>LLM 统计</span>
+            <IconArrowRight width="14" height="14" aria-hidden="true" />
+          </button>
           <div className="user-actions-group">
             {user ? (
               <div className="user-dropdown" ref={userMenuRef}>

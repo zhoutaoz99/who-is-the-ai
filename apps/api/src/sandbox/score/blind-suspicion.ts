@@ -64,7 +64,12 @@ export class BlindSuspicionScorer {
             system,
             user,
           },
-          () => this.ai.callModel(system, user, modelConfig, connection),
+          () => this.ai.callModel(system, user, modelConfig, connection, {
+            source: "judge",
+            stage: "blind_suspicion",
+            matchId: match.match_id,
+            roundNo: view.scoringRound,
+          }),
         );
         assessments = this.parseAssessments(content, view.aliveLabels);
         if (!assessments) lastError = "parse_failed";

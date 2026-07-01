@@ -38,6 +38,14 @@ export interface AiConfig extends AiModelCallConfig {
   timeoutMs: number;
 }
 
+export interface LlmCallMeta {
+  source?: string;
+  stage?: string;
+  roomId?: string;
+  matchId?: string;
+  roundNo?: number;
+}
+
 export type AiSpeechAction =
   | {
       type: "speak";

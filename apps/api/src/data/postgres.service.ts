@@ -335,5 +335,44 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
         created_at timestamptz NOT NULL DEFAULT NOW()
       )
     `);
+
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS llm_usage_logs (
+        id bigserial PRIMARY KEY,
+        provider_format text NOT NULL,
+        model_name text NOT NULL,
+        source text NOT NULL,
+        stage text,
+        room_id text,
+        match_id text,
+        round_no integer,
+        ok boolean NOT NULL,
+        prompt_tokens integer NOT NULL DEFAULT 0,
+        completion_tokens integer NOT NULL DEFAULT 0,
+        total_tokens integer NOT NULL DEFAULT 0,
+        total_input_tokens integer NOT NULL DEFAULT 0,
+        cached_tokens integer NOT NULL DEFAULT 0,
+        cache_write_tokens integer NOT NULL DEFAULT 0,
+        cache_hit_rate double precision NOT NULL DEFAULT 0,
+        duration_ms integer NOT NULL DEFAULT 0,
+        error text,
+        created_at timestamptz NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS llm_usage_logs_created_at_idx
+      ON llm_usage_logs (created_at DESC)
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS llm_usage_logs_model_idx
+      ON llm_usage_logs (model_name, created_at DESC)
+    `);
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS llm_usage_logs_source_idx
+      ON llm_usage_logs (source, created_at DESC)
+    `);
   }
 }

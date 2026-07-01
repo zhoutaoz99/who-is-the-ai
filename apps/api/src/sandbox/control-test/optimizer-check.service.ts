@@ -246,7 +246,10 @@ export class OptimizerCheckService {
           system,
           user,
         },
-        () => this.ai.callModel(system, user, modelConfig, connection),
+        () => this.ai.callModel(system, user, modelConfig, connection, {
+          source: "optimizer_check",
+          stage: "optimizer_check_coverage",
+        }),
       );
       const obj = parseJsonObject<{ covered?: boolean; quote?: string }>(content);
       if (obj && typeof obj.covered === "boolean") {
