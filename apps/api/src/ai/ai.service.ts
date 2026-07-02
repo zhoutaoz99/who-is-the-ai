@@ -513,6 +513,9 @@ export class AiService {
       currentRoundCount: String(context.recentMessages.length),
       voteHistory: formatVoteHistory(context.voteHistory),
       conversation: formatConversation(context),
+      // 本轮讨论剩余时间的粗粒度提示(时间感知,GAP-TIMING 第一步):
+      // 前端给真人展示同款倒计时,这里只喂约数、不给毫秒,避免精确到 ms 的机器味。
+      roundTimeLeft: formatRoundTimeLeft(context.remainingTimeMs),
     });
   }
 
@@ -905,6 +908,19 @@ function parseSeatNo(value: string | null | undefined): number | null {
 /** 单层发言不再由模型给反应时间，按发言长度估一个“打字耗时”，模型驱动玩家不秒回。 */
 function typingDelayForContent(content: string): number {
   return Math.min(8_000, 1_500 + content.length * 120);
+}
+
+/**
+ * 本轮讨论剩余时间的“瞥一眼倒计时”式粗粒度描述：像真人扫一眼计时器那样给约数，
+ * 不暴露毫秒精度(精确到 ms 的时间推理本身就是机器味)。快结束时才给到秒级约数。
+ */
+function formatRoundTimeLeft(remainingMs: number): string {
+  const sec = Math.max(0, Math.round(remainingMs / 1000));
+  if (sec <= 5) return "本轮讨论马上就结束了";
+  if (sec <= 20) return "本轮讨论快结束了，就剩二十来秒";
+  if (sec <= 45) return `本轮讨论时间不多了，还剩约 ${Math.round(sec / 10) * 10} 秒`;
+  if (sec <= 120) return "本轮讨论还有一两分钟";
+  return "本轮讨论时间还早";
 }
 
 /**
