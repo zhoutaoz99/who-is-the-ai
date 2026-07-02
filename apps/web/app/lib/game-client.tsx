@@ -237,7 +237,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
       const next = current.filter((room) => room.id !== snapshot.id);
 
       if (!existing) {
-        return [snapshot, ...next].slice(0, 12);
+        return [snapshot, ...next];
       }
 
       const snapshotIds = new Set(snapshot.messages.map((m) => m.id));
@@ -253,7 +253,7 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
             )
           : snapshot.messages;
 
-      return [{ ...snapshot, messages: mergedMessages }, ...next].slice(0, 12);
+      return [{ ...snapshot, messages: mergedMessages }, ...next];
     });
   }, [clearResolvedSpeechGenerating]);
 

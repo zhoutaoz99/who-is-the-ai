@@ -71,6 +71,28 @@ function IconRefresh(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+function IconTrash(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
+    </svg>
+  );
+}
+
 function IconChart(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -299,8 +321,9 @@ export default function Home() {
   } = useGameClient();
   const lobbyDisabled = pending || authPending || !user;
 
-  const ROOMS_PER_PAGE = 5;
+  const ROOMS_PER_PAGE = 10;
   const [roomPage, setRoomPage] = useState(1);
+  const [deletePagePending, setDeletePagePending] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [sandboxPending, setSandboxPending] = useState(false);
   const [sandboxExamples, setSandboxExamples] = useState<
@@ -357,8 +380,8 @@ export default function Home() {
   );
 
   useEffect(() => {
-    setRoomPage(1);
-  }, [rooms.length]);
+    setRoomPage((page) => Math.min(Math.max(1, page), totalPages));
+  }, [totalPages]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -430,6 +453,40 @@ export default function Home() {
     const result = await joinRoom(roomId);
     if (result.ok && result.room) {
       router.push(`/room/${result.room.id}`);
+    }
+  }
+
+  async function handleDeleteCurrentPage() {
+    if (!debug || paginatedRooms.length === 0 || deletePagePending) {
+      return;
+    }
+
+    const roomIds = paginatedRooms.map((room) => room.id);
+    if (
+      !confirm(
+        `确定删除此页 ${roomIds.length} 个房间？此操作会删除本页所有对局。`,
+      )
+    ) {
+      return;
+    }
+
+    setDeletePagePending(true);
+    setError("");
+    const failures: string[] = [];
+    try {
+      for (const roomId of roomIds) {
+        const result = await deleteRoom(roomId);
+        if (!result.ok) {
+          failures.push(`${roomId}: ${result.error ?? "删除失败"}`);
+        }
+      }
+      await refreshRooms(true);
+      if (failures.length > 0) {
+        const suffix = failures.length > 3 ? ` 等 ${failures.length} 个` : "";
+        setError(`部分房间删除失败：${failures.slice(0, 3).join("；")}${suffix}`);
+      }
+    } finally {
+      setDeletePagePending(false);
     }
   }
 
@@ -696,16 +753,26 @@ export default function Home() {
                 <h2>最近房间</h2>
               </div>
             </div>
-            <button
-              className="compact-button refresh-button"
-              disabled={pending}
-              onClick={() => void refreshRooms()}
-            >
-              <IconRefresh
-                style={{ verticalAlign: "middle", marginRight: 4 }}
-              />
-              刷新
-            </button>
+            <div className="room-list-actions">
+              {debug && sortedRooms.length > 0 && (
+                <button
+                  className="compact-button danger-compact-button"
+                  disabled={pending || deletePagePending || paginatedRooms.length === 0}
+                  onClick={() => void handleDeleteCurrentPage()}
+                >
+                  <IconTrash aria-hidden="true" />
+                  {deletePagePending ? "删除中" : "删除此页"}
+                </button>
+              )}
+              <button
+                className="compact-button refresh-button"
+                disabled={pending || deletePagePending}
+                onClick={() => void refreshRooms()}
+              >
+                <IconRefresh aria-hidden="true" />
+                刷新
+              </button>
+            </div>
           </div>
 
           {sortedRooms.length === 0 ? (

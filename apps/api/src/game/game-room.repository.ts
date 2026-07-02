@@ -99,15 +99,23 @@ export class GameRoomRepository {
     await this.cache.del(this.roomKey(roomId));
   }
 
-  async list(limit = 12): Promise<Room[]> {
+  async list(limit?: number): Promise<Room[]> {
+    const normalizedLimit =
+      limit == null ? null : Math.max(1, Math.floor(limit));
     const result = await this.postgres.query<RoomRow>(
-      `
-        SELECT room_data
-        FROM game_rooms
-        ORDER BY updated_at DESC
-        LIMIT $1
-      `,
-      [Math.max(1, Math.floor(limit))],
+      normalizedLimit == null
+        ? `
+          SELECT room_data
+          FROM game_rooms
+          ORDER BY updated_at DESC
+        `
+        : `
+          SELECT room_data
+          FROM game_rooms
+          ORDER BY updated_at DESC
+          LIMIT $1
+        `,
+      normalizedLimit == null ? [] : [normalizedLimit],
     );
 
     const rooms = result.rows.map((row) => row.room_data);

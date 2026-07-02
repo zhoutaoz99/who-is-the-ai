@@ -104,10 +104,29 @@
 }
 
 /* Refresh button */
+.room-list-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .refresh-button {
   align-items: center;
   display: inline-flex;
   gap: 4px;
+}
+
+.danger-compact-button {
+  align-items: center;
+  background: #b91c1c;
+  display: inline-flex;
+  gap: 5px;
+}
+
+.danger-compact-button:hover:not(:disabled) {
+  background: #991b1b;
 }
 
 /* Room row improvements */
@@ -423,6 +442,15 @@
 
   .lobby-header {
     gap: 12px;
+  }
+
+  .section-heading-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .room-list-actions {
+    justify-content: flex-start;
   }
 
   .lobby-brand h1 {
