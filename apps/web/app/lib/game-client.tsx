@@ -94,6 +94,7 @@ type GameClientContextValue = {
     payload: ControlTestStartPayload,
   ) => Promise<{ ok: boolean; error?: string; run_id?: string }>;
   stopControlTest: () => Promise<{ ok: boolean; error?: string }>;
+  continueControlTest: () => Promise<{ ok: boolean; error?: string }>;
   // ===== 优化器自检(零对局)=====
   optimizerCheckRun: OptimizerCheckRun | null;
   refreshOptimizerCheck: () => Promise<void>;
@@ -883,6 +884,8 @@ export function GameClientProvider({ children }: { children: ReactNode }) {
         ) as Promise<{ ok: boolean; error?: string; run_id?: string }>,
       stopControlTest: () =>
         controlTestRest("stop", {}) as Promise<{ ok: boolean; error?: string }>,
+      continueControlTest: () =>
+        controlTestRest("continue", {}) as Promise<{ ok: boolean; error?: string }>,
       optimizerCheckRun,
       refreshOptimizerCheck,
       startOptimizerCheck: (payload: OptCheckStartPayload) =>

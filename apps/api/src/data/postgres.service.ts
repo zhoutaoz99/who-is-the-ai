@@ -337,6 +337,15 @@ export class PostgresService implements OnModuleInit, OnModuleDestroy {
     `);
 
     await this.query(`
+      CREATE TABLE IF NOT EXISTS sandbox_control_test_runs (
+        id integer PRIMARY KEY DEFAULT 1,
+        data jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT NOW(),
+        CONSTRAINT sandbox_control_test_runs_singleton CHECK (id = 1)
+      )
+    `);
+
+    await this.query(`
       CREATE TABLE IF NOT EXISTS llm_usage_logs (
         id bigserial PRIMARY KEY,
         provider_format text NOT NULL,

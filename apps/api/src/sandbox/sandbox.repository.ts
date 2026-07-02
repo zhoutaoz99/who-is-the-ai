@@ -13,6 +13,7 @@ import type { PromptVersion, PromptVersionMeta } from "./orchestrator/prompt-ver
 import type { MatchRecord } from "./match-record/types";
 import type { ScoreRecord } from "./score/types";
 import type { CalibrationRun } from "./orchestrator/calibration-backfill";
+import type { ControlTestRun } from "./control-test/control-test.types";
 
 export interface EvalPromptAssetRow {
   asset_key: string;
@@ -230,6 +231,27 @@ export class SandboxRepository {
        VALUES (1, $1::jsonb, NOW())
        ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
       [JSON.stringify(state)],
+    );
+  }
+
+  // ===== ControlTestRun(单例 id=1;测试工具最近一次 run,供重启后回看;不做续接)=====
+
+  async loadControlTestRun(): Promise<ControlTestRun | null> {
+    await this.ready();
+    const res = await this.postgres.query<{ data: ControlTestRun }>(
+      `SELECT data FROM sandbox_control_test_runs WHERE id = 1`,
+    );
+    return res.rows[0]?.data ?? null;
+  }
+
+  async saveControlTestRun(run: ControlTestRun): Promise<void> {
+    const data = JSON.stringify(run); // 在 await 前定格,避免落库到中途变异的快照
+    await this.ready();
+    await this.postgres.query(
+      `INSERT INTO sandbox_control_test_runs (id, data, updated_at)
+       VALUES (1, $1::jsonb, NOW())
+       ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [data],
     );
   }
 

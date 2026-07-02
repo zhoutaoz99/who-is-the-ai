@@ -3,6 +3,7 @@
 // - GET  /sandbox/control-test/state       当前/最近一次 run 快照(首屏 / 重连兜底)
 // - POST /sandbox/control-test/run         一键 kickoff:后台跑负/正/空三对照,立即返回 run_id(进度走 socket)
 // - POST /sandbox/control-test/stop        停止当前 run
+// - POST /sandbox/control-test/continue    逐对照确认模式下放行下一条对照
 
 import { Body, Controller, Get, Post } from "@nestjs/common";
 import { ALL_CONTROL_KINDS, CONTROL_SPECS, type ControlKind } from "./control-prompts";
@@ -59,6 +60,7 @@ export class ControlTestController {
       runs_per_seed?: number;
       judge_model_id?: string;
       discussion_seconds?: number;
+      pause_between_controls?: boolean;
     },
   ): { ok: boolean; run_id?: string; error?: string } {
     try {
@@ -69,6 +71,7 @@ export class ControlTestController {
         runsPerSeed: body?.runs_per_seed,
         judgeModelId: body?.judge_model_id,
         discussionSeconds: body?.discussion_seconds,
+        pauseBetweenControls: body?.pause_between_controls,
       });
       return { ok: true, run_id };
     } catch (err) {
@@ -79,6 +82,13 @@ export class ControlTestController {
   @Post("stop")
   stop(): { ok: boolean } {
     this.controlTest.stop();
+    return { ok: true };
+  }
+
+  /** 逐对照确认模式:放行下一条对照。 */
+  @Post("continue")
+  continue(): { ok: boolean } {
+    this.controlTest.continue();
     return { ok: true };
   }
 

@@ -39,7 +39,7 @@
     {
       "slot": 4,
       "role": "filler",
-      "persona_id": "F-01",
+      "persona_id": "F-02",
       "model_id": "deepseek",
       "temperature": 1
     }

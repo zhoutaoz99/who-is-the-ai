@@ -6,12 +6,13 @@
 //
 // 后台流式 run:startRun() 立即返回 run_id,execute() 在后台逐局推进并经 EventEmitter
 // 发 status/game/control/done,由 ControlTestGateway 桥接到 socket(过程可视化)。
-// run 态仅存内存(测试工具,重启即丢,不做持久化续接)。
+// run 态在内存驱动;每次状态推进把快照落 sandbox_control_test_runs(单例 id=1),
+// 重启后 onModuleInit 恢复最近一次供回看。只回看不续接:未落定的 run 恢复时判为「已中断」。
 //
 // 复用编排器现成原语:PairedEvalService(配对评测+paired_cache)→ buildValidation → optimizeGate。
 // 无副作用:control 子版本按内容哈希直接落 DB → 评测 → finally 删除,不进版本库/血脉。
 
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
 import { EventEmitter } from "node:events";
 import { buildValidation } from "../aggregate/validation";
 import type { ValidationReport } from "../aggregate/validation";
@@ -48,18 +49,24 @@ export interface ControlTestOptions {
   judgeModelId?: string;
   discussionSeconds?: number;
   kinds?: ControlKind[];
+  /** 逐对照确认:每条对照跑完后暂停,等人工确认再跑下一条(默认 false=连跑)。 */
+  pauseBetweenControls?: boolean;
 }
 
 const DEFAULT_SET_ID = "baseline_smoke_v1";
 
 @Injectable()
-export class ControlTestService {
+export class ControlTestService implements OnModuleInit {
   private readonly logger = new Logger(ControlTestService.name);
   /** 内部事件;ControlTestGateway 订阅后桥接到 socket。 */
   readonly events = new EventEmitter();
 
   private activeRun: ControlTestRun | null = null;
   private stopRequested = false;
+  /** 逐对照确认模式下,后台 execute 在对照之间挂起时的放行回调(继续/停止都调它)。 */
+  private continueSignal: (() => void) | null = null;
+  /** 串行化持久化,保证落库顺序与状态推进一致(最后的 settle 快照必胜出)。 */
+  private persistChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly sandbox: SandboxService,
@@ -67,6 +74,26 @@ export class ControlTestService {
     private readonly pairedEval: PairedEvalService,
     private readonly repo: SandboxRepository,
   ) {}
+
+  /** 重启后恢复最近一次 run 供回看。后台 execute() 已随进程消亡,故未落定的一律判中断(设计:不续接)。 */
+  async onModuleInit(): Promise<void> {
+    try {
+      const persisted = await this.repo.loadControlTestRun();
+      if (!persisted) return;
+      if (persisted.phase !== "settled") {
+        persisted.phase = "settled";
+        persisted.decision = "stopped";
+        persisted.stopping = false;
+        persisted.overall_pass = false;
+        persisted.error = persisted.error ?? "服务重启,run 已中断(测试工具不做续接)";
+        persisted.settled_at = persisted.settled_at ?? new Date().toISOString();
+      }
+      this.activeRun = persisted;
+      this.logger.log(`恢复对照测试 run ${persisted.run_id}(phase=${persisted.phase})`);
+    } catch (err) {
+      this.logger.warn(`恢复对照测试 run 失败: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   /** 当前 run 快照(首屏 / 断线重连 / 落定后回看;settled 的 run 会保留到下次启动)。 */
   getActiveRun(): ControlTestRun | null {
@@ -94,6 +121,7 @@ export class ControlTestService {
       evalSetVersion: set.eval_set_version,
     };
     const kinds = opts.kinds?.length ? opts.kinds : ALL_CONTROL_KINDS;
+    const pauseBetween = !!opts.pauseBetweenControls;
 
     const run_id = `ctl_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     this.activeRun = {
@@ -108,26 +136,59 @@ export class ControlTestService {
         runsPerSeed: plan.runsPerSeed,
       },
       kinds,
+      pause_between_controls: pauseBetween,
       games: [],
       controls: [],
       caveats: [],
       started_at: new Date().toISOString(),
     };
     this.stopRequested = false;
+    this.continueSignal = null;
     this.emitStatus();
-    this.logger.log(`对照测试 kickoff ${run_id} set=${set.set_id} parent=${parent.version_id} kinds=${kinds.join(",")}`);
+    this.logger.log(`对照测试 kickoff ${run_id} set=${set.set_id} parent=${parent.version_id} kinds=${kinds.join(",")} pause=${pauseBetween}`);
 
-    void this.execute(plan, parent, kinds, set.holdout.length).catch((err) => {
+    void this.execute(plan, parent, kinds, set.holdout.length, pauseBetween).catch((err) => {
       this.settle("stopped", err instanceof Error ? err.message : String(err));
     });
     return { run_id };
   }
 
-  /** 请求停止当前 run(局间生效)。 */
+  /** 请求停止当前 run(局间生效)。停止是协作式的:置标志 + 立刻 emit 一次状态,
+   *  让前台当场进入「停止中…」;真正落定要等在跑的对局(最多并发数局)跑完。
+   *  若正卡在逐对照确认,一并放行 execute 让它走到 settle。 */
   stop(): void {
     if (this.activeRun && this.activeRun.phase !== "settled") {
       this.stopRequested = true;
+      this.activeRun.stopping = true;
+      this.activeRun.awaiting_confirmation = false;
+      this.activeRun.next_kind = undefined;
+      this.emitStatus();
+      this.releaseWait();
     }
+  }
+
+  /** 人工确认继续:放行下一条对照(仅在 awaiting_confirmation 时有效)。 */
+  continue(): void {
+    if (!this.activeRun || this.activeRun.phase === "settled") return;
+    if (!this.activeRun.awaiting_confirmation) return;
+    this.activeRun.awaiting_confirmation = false;
+    this.activeRun.next_kind = undefined;
+    this.emitStatus();
+    this.releaseWait();
+  }
+
+  /** 挂起 execute,直到 continue()/stop() 放行。 */
+  private awaitContinue(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.continueSignal = resolve;
+    });
+  }
+
+  /** 放行挂起中的 execute(无挂起则空操作)。 */
+  private releaseWait(): void {
+    const resolve = this.continueSignal;
+    this.continueSignal = null;
+    resolve?.();
   }
 
   // ===== 后台执行 =====
@@ -137,6 +198,7 @@ export class ControlTestService {
     parent: PromptVersion,
     kinds: ControlKind[],
     holdoutCount: number,
+    pauseBetween: boolean,
   ): Promise<void> {
     // 1) 父代评测一次(三对照复用 paired_cache)。
     this.setPhase("evaluating_parent");
@@ -150,8 +212,9 @@ export class ControlTestService {
     this.setPhase("running_controls");
     const created: string[] = [];
     try {
-      for (const kind of kinds) {
+      for (let i = 0; i < kinds.length; i += 1) {
         if (this.stopRequested) break;
+        const kind = kinds[i];
         const spec = CONTROL_SPECS[kind];
         const child = this.buildChild(spec, parent);
         if (this.activeRun) this.activeRun.current_kind = kind;
@@ -183,6 +246,19 @@ export class ControlTestService {
         }
         this.events.emit("control", result);
         this.emitStatus();
+
+        // 逐对照确认:该条已出结果,若还有下一条且未停止,挂起等人工放行。
+        const nextKind = kinds[i + 1];
+        if (pauseBetween && nextKind && !this.stopRequested) {
+          if (this.activeRun) {
+            this.activeRun.awaiting_confirmation = true;
+            this.activeRun.next_kind = nextKind;
+            this.activeRun.current_kind = undefined;
+          }
+          this.emitStatus();
+          await this.awaitContinue();
+          if (this.stopRequested) break;
+        }
       }
     } finally {
       for (const id of created) {
@@ -239,6 +315,9 @@ export class ControlTestService {
       this.activeRun.decision = decision;
       this.activeRun.error = error;
       this.activeRun.current_kind = undefined;
+      this.activeRun.stopping = false;
+      this.activeRun.awaiting_confirmation = false;
+      this.activeRun.next_kind = undefined;
       this.activeRun.overall_pass =
         decision === "done" &&
         this.activeRun.controls.length > 0 &&
@@ -246,6 +325,7 @@ export class ControlTestService {
       this.activeRun.settled_at = new Date().toISOString();
     }
     this.stopRequested = false;
+    this.continueSignal = null;
     this.emitStatus();
     this.events.emit("done", {
       run_id: this.activeRun?.run_id,
@@ -258,6 +338,18 @@ export class ControlTestService {
 
   private emitStatus(): void {
     this.events.emit("status", this.activeRun);
+    this.persist();
+  }
+
+  /** 把当前 run 快照排队落库(重启后回看用)。深拷贝定格当前态,串行化保证顺序;失败不影响主流程。 */
+  private persist(): void {
+    if (!this.activeRun) return;
+    const snapshot: ControlTestRun = JSON.parse(JSON.stringify(this.activeRun));
+    this.persistChain = this.persistChain
+      .then(() => this.repo.saveControlTestRun(snapshot))
+      .catch((err) =>
+        this.logger.warn(`持久化对照测试 run 失败: ${err instanceof Error ? err.message : err}`),
+      );
   }
 
   // ===== 判定 =====

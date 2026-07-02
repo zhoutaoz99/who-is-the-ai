@@ -75,6 +75,14 @@ export interface ControlTestRun {
   kinds: ControlKind[];
   /** 当前正在评测的对照(running_controls 阶段)。 */
   current_kind?: ControlKind;
+  /** 已请求停止、正等在跑的对局跑完后落定(前台据此显示「停止中…」)。 */
+  stopping?: boolean;
+  /** 逐对照确认模式:每条对照跑完后暂停等人工确认再继续。 */
+  pause_between_controls?: boolean;
+  /** 当前正卡在人工确认(某条对照已出结果,等确认是否继续下一条)。 */
+  awaiting_confirmation?: boolean;
+  /** 待确认放行后将要评测的下一条对照(awaiting_confirmation 时非空)。 */
+  next_kind?: ControlKind;
   /** 父 + 各对照的逐局进度(按 side×scenario×seed×run upsert)。 */
   games: ControlGameItem[];
   /** 已完成对照的结果(逐条追加)。 */

@@ -52,6 +52,14 @@ function kindLabel(kind: string): string {
 }
 
 function phaseNarrative(run: ControlTestRun | null): string {
+  // 已请求停止但还没落定:优先提示「停止中」,别再显示常规进度叙述。
+  if (run && run.phase !== "settled" && run.stopping)
+    return "已请求停止,等在跑的对局跑完后落定(不会中断进行中的这局)……";
+  // 逐对照确认:某条已出结果,卡在等人工放行。
+  if (run && run.awaiting_confirmation) {
+    const done = run.controls[run.controls.length - 1];
+    return `已完成【${done ? done.label : "上一条对照"}】,待确认是否继续${run.next_kind ? `【${kindLabel(run.next_kind)}】` : ""}——看下方结果卡片后点「继续」或「停止」。`;
+  }
   switch (run?.phase) {
     case "evaluating_parent":
       return "跑 champion 基线,采集父代评分(三对照复用)……";
@@ -127,6 +135,7 @@ export default function ControlTestPage() {
     controlTestRun,
     startControlTest,
     stopControlTest,
+    continueControlTest,
     refreshControlTest,
     optimizerCheckRun,
     startOptimizerCheck,
@@ -140,6 +149,7 @@ export default function ControlTestPage() {
   const [kinds, setKinds] = useState<ControlKind[]>(ALL_KINDS);
   const [runs, setRuns] = useState(3);
   const [seeds, setSeeds] = useState(1);
+  const [pauseBetween, setPauseBetween] = useState(false);
   const [judgeModel, setJudgeModel] = useState("");
   const [discussionSeconds, setDiscussionSeconds] = useState(30);
   const [busy, setBusy] = useState(false);
@@ -206,6 +216,14 @@ export default function ControlTestPage() {
     void refreshOptimizerCheck();
   }, [fetchEvalSets, fetchPreviews, fetchHoles, refreshControlTest, refreshOptimizerCheck]);
 
+  // 兜底轮询:run 未落定时每 3s 拉一次快照,自愈漏收的 socket 事件
+  // (含断线 / 停止后的落定),避免 UI 永久停在 running。
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => void refreshControlTest(), 3000);
+    return () => clearInterval(id);
+  }, [isRunning, refreshControlTest]);
+
   const handleStart = async () => {
     setPageError("");
     if (!selectedSet) {
@@ -224,6 +242,7 @@ export default function ControlTestPage() {
       runs_per_seed: runs,
       judge_model_id: judgeModel.trim() || undefined,
       discussion_seconds: discussionSeconds,
+      pause_between_controls: pauseBetween,
     });
     setBusy(false);
     if (!res.ok) setPageError(res.error ?? "启动失败");
@@ -234,6 +253,13 @@ export default function ControlTestPage() {
     const res = await stopControlTest();
     setBusy(false);
     if (!res.ok) setPageError(res.error ?? "停止失败");
+  };
+
+  const handleContinue = async () => {
+    setBusy(true);
+    const res = await continueControlTest();
+    setBusy(false);
+    if (!res.ok) setPageError(res.error ?? "继续失败");
   };
 
   const toggleKind = (k: ControlKind) =>
@@ -406,15 +432,36 @@ export default function ControlTestPage() {
             </label>
           </div>
 
+          <label className="ctl-pause-toggle">
+            <input
+              type="checkbox"
+              checked={pauseBetween}
+              onChange={(e) => setPauseBetween(e.target.checked)}
+              disabled={isRunning}
+            />
+            <span>每个对照跑完后暂停,等人工确认再继续</span>
+          </label>
+
           <div className="iteration-actions">
             {!isRunning ? (
               <button className="primary-action" onClick={handleStart} disabled={busy || !connected}>
                 一键跑三对照
               </button>
             ) : (
-              <button className="secondary" onClick={handleStop} disabled={busy}>
-                停止
-              </button>
+              <>
+                {run?.awaiting_confirmation && (
+                  <button className="primary-action" onClick={handleContinue} disabled={busy}>
+                    继续{run.next_kind ? `(${kindLabel(run.next_kind)})` : "下一条"}
+                  </button>
+                )}
+                <button
+                  className="secondary"
+                  onClick={handleStop}
+                  disabled={busy || !!run?.stopping}
+                >
+                  {run?.stopping ? "停止中…" : "停止"}
+                </button>
+              </>
             )}
           </div>
 
@@ -490,19 +537,33 @@ export default function ControlTestPage() {
             </div>
           )}
 
-          {/* 对局列表 */}
+          {/* 对局列表(按对照组分类) */}
           {run && (
             <div className="orch-game-list">
               <p className="muted-text">对局列表({run.games.length})</p>
-              {[...run.games].sort(compareGames).map((g) => (
-                <GameRow
-                  key={`${g.side}-${g.scenario_id}-${g.seed}-${g.run}`}
-                  g={g}
-                  onViewLive={(roomId) =>
-                    window.open(`/game/${roomId}`, "_blank", "noopener,noreferrer")
-                  }
-                />
-              ))}
+              {sides.map((side) => {
+                const sideGames = run.games.filter((g) => g.side === side).sort(compareGames);
+                if (sideGames.length === 0) return null;
+                return (
+                  <div key={side} className="ctl-side-group">
+                    <div className="ctl-side-header">
+                      <span className={`ctl-kind-tag ctl-${side}`}>{kindLabel(side)}</span>
+                      <span className="muted-text">
+                        {sideDone(side)}/{perSideTotal}
+                      </span>
+                    </div>
+                    {sideGames.map((g) => (
+                      <GameRow
+                        key={`${g.side}-${g.scenario_id}-${g.seed}-${g.run}`}
+                        g={g}
+                        onViewLive={(roomId) =>
+                          window.open(`/game/${roomId}`, "_blank", "noopener,noreferrer")
+                        }
+                      />
+                    ))}
+                  </div>
+                );
+              })}
               {run.games.length === 0 && <p className="muted-text">尚未开始。</p>}
             </div>
           )}

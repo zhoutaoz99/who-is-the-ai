@@ -3,9 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerExtraPersonas } from "../ai/ai.personas";
 import { AiService } from "../ai/ai.service";
+import { MAX_ROUNDS, NEXT_ROUND_DELAY_MS, VOTE_DURATION_MS } from "../game/game.config";
 import { GameService } from "../game/game.service";
 import type { SandboxPlayerSpec } from "../game/game.rules";
-import type { RoomSnapshot } from "../game/game.types";
+import type { Room, RoomSnapshot } from "../game/game.types";
 import { buildMatchRecord } from "./match-record/build";
 import type { MatchRecord } from "./match-record/types";
 import { SANDBOX_PERSONAS } from "./personas/detective-personas";
@@ -17,8 +18,23 @@ import type { RunConfig, Scenario } from "./scenario/types";
 import { validateScenario } from "./scenario/validate";
 
 const POLL_INTERVAL_MS = 1_500;
-const MATCH_DEADLINE_MS = 15 * 60_000;
+/** 硬超时的固定缓冲(建房/开局/投票交错/评分前摇/轮询抖动);总超时 = 按房配置动态算 + 此缓冲。 */
+const MATCH_DEADLINE_BUFFER_MS = 3 * 60_000;
 const DEFAULT_DISCUSSION_SECONDS = 45;
+
+/**
+ * 按本局实际配置估算对局硬超时:轮数 ×(讨论时长 + 投票时长 + 轮间延迟)+ 固定缓冲。
+ * 相位全由定时器推进(讨论 discussionDurationMs、投票 VOTE_DURATION_MS 都会到点强制推进),
+ * 故墙钟上界 ≈ 各相位时长之和。固定 15min 对 5min/轮 × 4 轮(≈24min)不够;动态算既容得下长局,
+ * 又让短局(如沙盒 30s/轮)的真卡死尽早暴露。spotlight 只前进 maxRoundsForward 轮。
+ */
+function matchDeadlineMs(room: Room | null): number {
+  const discussionMs = room?.discussionDurationMs ?? DEFAULT_DISCUSSION_SECONDS * 1_000;
+  const rounds =
+    room?.sandboxForm === "spotlight" ? room.sandboxMaxRoundsForward ?? 2 : MAX_ROUNDS;
+  const perRoundMs = discussionMs + VOTE_DURATION_MS + NEXT_ROUND_DELAY_MS;
+  return rounds * perRoundMs + MATCH_DEADLINE_BUFFER_MS;
+}
 
 /** 内置示例场景清单(打包进 dist,前台下拉选择 → 覆盖各增量)。 */
 const EXAMPLE_SCENARIOS = [
@@ -439,7 +455,9 @@ export class SandboxService implements OnModuleInit {
     roomId: string,
     onProgress?: (room: RoomSnapshot) => void,
   ): Promise<void> {
-    const deadline = Date.now() + MATCH_DEADLINE_MS;
+    const configRoom = await this.gameService.getRoomInternal(roomId);
+    const deadlineMs = matchDeadlineMs(configRoom);
+    const deadline = Date.now() + deadlineMs;
     while (Date.now() < deadline) {
       await this.sleep(POLL_INTERVAL_MS);
       const res = await this.gameService.observeRoom({ roomId });
@@ -448,7 +466,9 @@ export class SandboxService implements OnModuleInit {
         return;
       }
     }
-    throw new Error(`对局未在时限内结束 room=${roomId}`);
+    throw new Error(
+      `对局未在时限内结束 room=${roomId}(上限 ${Math.round(deadlineMs / 60_000)} 分钟)`,
+    );
   }
 
   private sleep(ms: number): Promise<void> {

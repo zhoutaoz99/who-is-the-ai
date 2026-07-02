@@ -130,3 +130,43 @@
   background: rgba(180, 35, 24, 0.1);
   border-color: rgba(180, 35, 24, 0.3);
 }
+
+/* 逐对照确认开关 */
+.ctl-pause-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 2px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ctl-pause-toggle input {
+  margin: 0;
+}
+
+/* 对局列表:按对照组(side)分组 */
+.ctl-side-group {
+  margin-top: 10px;
+}
+.ctl-side-group:first-of-type {
+  margin-top: 4px;
+}
+.ctl-side-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 6px;
+  border-bottom: 1px solid var(--border, #d7dbe3);
+  margin-bottom: 6px;
+  position: sticky;
+  top: 0;
+  background: var(--surface, #fff);
+  z-index: 1;
+}
+.ctl-side-header .ctl-kind-tag {
+  font-size: 13px;
+}
+/* 父(champion)基线组的标签色(其余 null/negative/positive 复用已有色) */
+.ctl-kind-tag.ctl-parent {
+  color: var(--text, #1f2733);
+}
