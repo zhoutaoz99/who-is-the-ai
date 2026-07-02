@@ -399,6 +399,8 @@ export type ControlMetric = {
   key: string;
   point: number | null;
   ci95: [number, number] | null;
+  mde?: number;
+  p?: number | null;
   verdict: OrchestratorVerdict;
 };
 
@@ -450,8 +452,14 @@ export type ControlTestRun = {
   plan: { scenarios: string[]; seedsPerScenario: number; runsPerSeed: number };
   kinds: ControlKind[];
   current_kind?: ControlKind;
-  /** 已请求停止、等在跑的对局跑完后落定(前台显示「停止中…」)。 */
-  stopping?: boolean;
+  /** 已请求暂停,等在跑的对局跑完后挂起。 */
+  pausing?: boolean;
+  /** 已挂起,可恢复继续跑剩余对局。 */
+  paused?: boolean;
+  /** 挂起时正跑到哪个 side("parent" | 对照 kind)。 */
+  paused_side?: string;
+  /** 已请求结束本次,等在跑的对局跑完后清理本次数据。 */
+  ending?: boolean;
   /** 逐对照确认模式:每条对照跑完后暂停等人工确认再继续。 */
   pause_between_controls?: boolean;
   /** 当前正卡在人工确认(某条对照已出结果,等确认是否继续)。 */
@@ -462,7 +470,7 @@ export type ControlTestRun = {
   controls: ControlResult[];
   caveats: string[];
   overall_pass?: boolean;
-  decision?: "done" | "stopped";
+  decision?: "done" | "ended" | "stopped";
   error?: string;
   started_at: string;
   settled_at?: string;

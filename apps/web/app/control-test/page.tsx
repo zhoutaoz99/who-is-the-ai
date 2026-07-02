@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../lib/auth-client";
 import { useGameClient } from "../lib/game-client";
+import { ScoreDetailModal } from "../components/ScoreDetailModal";
 import type {
   ControlBucket,
   ControlGame,
@@ -52,15 +53,19 @@ function kindLabel(kind: string): string {
 }
 
 function phaseNarrative(run: ControlTestRun | null): string {
-  // 已请求停止但还没落定:优先提示「停止中」,别再显示常规进度叙述。
-  if (run && run.phase !== "settled" && run.stopping)
-    return "已请求停止,等在跑的对局跑完后落定(不会中断进行中的这局)……";
+  if (!run) return "空闲。选评测集与对照后点「一键跑三对照」。";
+  if (run.phase !== "settled" && run.ending)
+    return "已请求结束本次,等在跑的对局跑完后清理本次数据(不会中断进行中的这局)……";
+  if (run.phase !== "settled" && run.pausing)
+    return "已请求暂停,等当前正在进行的对局跑完后挂起(不会再派发新局)……";
+  if (run.phase !== "settled" && run.paused)
+    return `已暂停${run.paused_side ? `在【${kindLabel(run.paused_side)}】` : ""},点「恢复」继续跑剩余对局。`;
   // 逐对照确认:某条已出结果,卡在等人工放行。
-  if (run && run.awaiting_confirmation) {
+  if (run.awaiting_confirmation) {
     const done = run.controls[run.controls.length - 1];
-    return `已完成【${done ? done.label : "上一条对照"}】,待确认是否继续${run.next_kind ? `【${kindLabel(run.next_kind)}】` : ""}——看下方结果卡片后点「继续」或「停止」。`;
+    return `已完成【${done ? done.label : "上一条对照"}】,待确认是否继续${run.next_kind ? `【${kindLabel(run.next_kind)}】` : ""}——看下方结果卡片后点「继续」或「结束本次」。`;
   }
-  switch (run?.phase) {
+  switch (run.phase) {
     case "evaluating_parent":
       return "跑 champion 基线,采集父代评分(三对照复用)……";
     case "running_controls":
@@ -68,13 +73,11 @@ function phaseNarrative(run: ControlTestRun | null): string {
         ? `正在评测【${kindLabel(run.current_kind)}】,与父代配对做差 → 闸门 → 核对预期……`
         : "逐个对照评测中……";
     case "settled":
-      return run.decision === "stopped"
-        ? `已停止${run.error ? `(${run.error})` : ""}。`
-        : run.overall_pass
-          ? "全部对照如预期 → 流水线机器可信(就该集合能验到的范围内)。"
-          : "有对照不如预期 → 流水线可能异常,见各卡片说明。";
-    default:
-      return "空闲。选评测集与对照后点「一键跑三对照」。";
+      if (run.decision === "stopped") return `已中断${run.error ? `(${run.error})` : ""}。`;
+      if (run.decision === "ended") return "已结束本次,本次数据已清理。";
+      return run.overall_pass
+        ? "全部对照如预期 → 流水线机器可信(就该集合能验到的范围内)。"
+        : "有对照不如预期 → 流水线可能异常,见各卡片说明。";
   }
 }
 
@@ -93,6 +96,110 @@ function metricLabel(key: string): string {
     veto_rate: "否决率",
   };
   return map[key] ?? key;
+}
+
+function verdictLabel(v: OrchestratorVerdict): string {
+  switch (v) {
+    case "improved":
+      return "显著变好 improved";
+    case "regressed":
+      return "显著变差 regressed";
+    case "inconclusive":
+      return "证据不足 inconclusive";
+  }
+}
+
+function verdictExplanation(v: OrchestratorVerdict): string {
+  switch (v) {
+    case "improved":
+      return "差异与噪声可区分,且幅度达到最小可检效应,方向是子版本优于父代。";
+    case "regressed":
+      return "差异与噪声可区分,且幅度达到最小可检效应,方向是子版本差于父代。负对照里这是预期信号。";
+    case "inconclusive":
+      return "证据不足,不是通过也不是失败。通常是 95% CI 跨 0,或点估计幅度没达到 MDE,在小样本 N 下很常见。";
+  }
+}
+
+function metricDirection(key: string): string {
+  if (key === "blind_suspicion_margin") return "越低越好";
+  if (key === "rounds_survived") return "越高越好";
+  if (key === "plurality_rate") return "越低越好";
+  if (key === "veto_rate") return "越低越好";
+  if (key.startsWith("probe_pass:")) return "越高越好";
+  return "按聚合器定义的方向判定";
+}
+
+function metricMeaning(key: string): string {
+  if (key === "blind_suspicion_margin") {
+    return "主信号。盲测裁判认为被测 AI 更像 AI 的强度差,越低代表越不容易暴露。";
+  }
+  if (key === "rounds_survived") {
+    return "被测 AI 在局内存活的轮数,越高代表越不容易被投出或暴露。";
+  }
+  if (key === "plurality_rate") {
+    return "被测 AI 成为最多票怀疑对象的比例,越低代表越少被集中怀疑。";
+  }
+  if (key === "veto_rate") {
+    return "硬否决触发率,例如明显出戏、承认 AI、严重违反人设等,越低越好。";
+  }
+  if (key.startsWith("probe_pass:")) {
+    return "对应探测类型的通过率,越高代表越能扛住这类探测。";
+  }
+  return "该指标按子版本与父代的配对差值做统计判定。";
+}
+
+function controlExpectationDetails(kind: ControlKind): string[] {
+  switch (kind) {
+    case "negative":
+      return [
+        "这条对照故意把提示词改坏,用来确认流水线能抓住明显退步。",
+        "预期结果是闸门拒绝,并且至少一个近真值指标出现 regressed 或否决类退步。",
+        "如果多数指标都是 inconclusive,说明当前样本没有把坏提示词和父代稳定拉开,需要扩量或检查裁判/探测是否生效。",
+        "如果闸门晋升负对照,属于严重异常:流水线把故意变坏的版本当成可晋升版本。",
+      ];
+    case "null":
+      return [
+        "这条对照是 A-A:子版本等于父代,用来确认流水线不会把噪声当信号。",
+        "预期结果是指标大多 inconclusive,且闸门拒绝。",
+        "如果出现 improved 或 regressed,代表同一提示词被判出显著差异,需要怀疑样本噪声、缓存或统计口径。",
+      ];
+    case "positive":
+      return [
+        "这条对照是在父提示词上做小幅已知改进,用来确认流水线不会把真实改进判反。",
+        "预期结果至少不能出现 regressed；小样本下没有 improved 也可以接受。",
+        "如果出现 regressed,代表真实改进方向被判坏,需要检查裁判、聚合方向或对局质量。",
+      ];
+  }
+}
+
+function gateExplanation(c: ControlResult): string {
+  const decision = c.gate.decision === "promote" ? "晋升" : "拒绝";
+  if (c.kind === "negative") {
+    return `负对照的闸门预期是拒绝。当前闸门判定为「${decision}」,${c.gate.decision === "reject" ? "符合预期。" : "不符合预期。"}`;
+  }
+  if (c.kind === "null") {
+    return `空对照的闸门预期是拒绝。当前闸门判定为「${decision}」,${c.gate.decision === "reject" ? "符合预期。" : "不符合预期。"}`;
+  }
+  return `正对照主要看是否被判退步。当前闸门判定为「${decision}」,小样本下不强制必须晋升。`;
+}
+
+function formatMetricValue(value: number | null | undefined): string {
+  if (value == null) return "—";
+  return value >= 0 ? `+${value.toFixed(2)}` : value.toFixed(2);
+}
+
+function formatPValue(value: number | null | undefined): string {
+  if (value == null) return "p=—";
+  if (value < 0.001) return "p<0.001";
+  return `p=${value.toFixed(3)}`;
+}
+
+function metricDetailText(m: ControlMetric): string {
+  const ciText = m.ci95
+    ? `95% CI [${m.ci95[0].toFixed(2)}, ${m.ci95[1].toFixed(2)}]`
+    : "95% CI —";
+  const mdeText = m.mde != null ? `最小可检效应(MDE) ${m.mde.toFixed(2)}` : "最小可检效应(MDE) —";
+  return `${metricMeaning(m.key)} point 是子对照减父代,本项${metricDirection(m.key)}。${ciText}; ${mdeText}; ${formatPValue(m.p)}。${verdictExplanation(m.verdict)}`;
 }
 
 function gameStatusLabel(status: OrchestratorGameStatus): string {
@@ -134,7 +241,9 @@ export default function ControlTestPage() {
     connected,
     controlTestRun,
     startControlTest,
-    stopControlTest,
+    pauseControlTest,
+    resumeControlTest,
+    endControlTest,
     continueControlTest,
     refreshControlTest,
     optimizerCheckRun,
@@ -147,13 +256,15 @@ export default function ControlTestPage() {
   const [selectedSet, setSelectedSet] = useState("");
   const [previews, setPreviews] = useState<ControlPreview[]>([]);
   const [kinds, setKinds] = useState<ControlKind[]>(ALL_KINDS);
-  const [runs, setRuns] = useState(3);
+  const [runs, setRuns] = useState(2);
   const [seeds, setSeeds] = useState(1);
   const [pauseBetween, setPauseBetween] = useState(false);
   const [judgeModel, setJudgeModel] = useState("");
-  const [discussionSeconds, setDiscussionSeconds] = useState(30);
+  const [discussionSeconds, setDiscussionSeconds] = useState(120);
   const [busy, setBusy] = useState(false);
   const [pageError, setPageError] = useState("");
+  // 打分详情回看:点某局「打分详情」按 match_id 拉已落库 ScoreRecord 弹窗。
+  const [scoreMatchId, setScoreMatchId] = useState<string | null>(null);
 
   // 优化器自检
   const [holes, setHoles] = useState<OptHolePreview[]>([]);
@@ -217,7 +328,7 @@ export default function ControlTestPage() {
   }, [fetchEvalSets, fetchPreviews, fetchHoles, refreshControlTest, refreshOptimizerCheck]);
 
   // 兜底轮询:run 未落定时每 3s 拉一次快照,自愈漏收的 socket 事件
-  // (含断线 / 停止后的落定),避免 UI 永久停在 running。
+  // (含断线 / 暂停或结束后的状态变更),避免 UI 永久停在 running。
   useEffect(() => {
     if (!isRunning) return;
     const id = setInterval(() => void refreshControlTest(), 3000);
@@ -248,11 +359,25 @@ export default function ControlTestPage() {
     if (!res.ok) setPageError(res.error ?? "启动失败");
   };
 
-  const handleStop = async () => {
+  const handlePause = async () => {
     setBusy(true);
-    const res = await stopControlTest();
+    const res = await pauseControlTest();
     setBusy(false);
-    if (!res.ok) setPageError(res.error ?? "停止失败");
+    if (!res.ok) setPageError(res.error ?? "暂停失败");
+  };
+
+  const handleResume = async () => {
+    setBusy(true);
+    const res = await resumeControlTest();
+    setBusy(false);
+    if (!res.ok) setPageError(res.error ?? "恢复失败");
+  };
+
+  const handleEnd = async () => {
+    setBusy(true);
+    const res = await endControlTest();
+    setBusy(false);
+    if (!res.ok) setPageError(res.error ?? "结束失败");
   };
 
   const handleContinue = async () => {
@@ -403,10 +528,10 @@ export default function ControlTestPage() {
               每种子局数
               <input
                 type="number"
-                min={2}
+                min={1}
                 max={6}
                 value={runs}
-                onChange={(e) => setRuns(Math.max(2, Number(e.target.value) || 2))}
+                onChange={(e) => setRuns(Math.max(1, Number(e.target.value) || 1))}
                 disabled={isRunning}
               />
             </label>
@@ -454,12 +579,21 @@ export default function ControlTestPage() {
                     继续{run.next_kind ? `(${kindLabel(run.next_kind)})` : "下一条"}
                   </button>
                 )}
-                <button
-                  className="secondary"
-                  onClick={handleStop}
-                  disabled={busy || !!run?.stopping}
-                >
-                  {run?.stopping ? "停止中…" : "停止"}
+                {run?.paused ? (
+                  <button className="primary-action" onClick={handleResume} disabled={busy || !!run.ending}>
+                    恢复
+                  </button>
+                ) : !run?.awaiting_confirmation ? (
+                  <button
+                    className="secondary"
+                    onClick={handlePause}
+                    disabled={busy || !!run?.pausing || !!run?.ending}
+                  >
+                    {run?.pausing ? "暂停中…" : "暂停"}
+                  </button>
+                ) : null}
+                <button className="secondary" onClick={handleEnd} disabled={busy || !!run?.ending}>
+                  {run?.ending ? "结束中…" : "结束本次"}
                 </button>
               </>
             )}
@@ -559,6 +693,7 @@ export default function ControlTestPage() {
                         onViewLive={(roomId) =>
                           window.open(`/game/${roomId}`, "_blank", "noopener,noreferrer")
                         }
+                        onViewScore={(matchId) => setScoreMatchId(matchId)}
                       />
                     ))}
                   </div>
@@ -678,6 +813,14 @@ export default function ControlTestPage() {
           </div>
         )}
       </section>
+
+      {scoreMatchId && (
+        <ScoreDetailModal
+          matchId={scoreMatchId}
+          apiUrl={API_URL}
+          onClose={() => setScoreMatchId(null)}
+        />
+      )}
     </main>
   );
 }
@@ -756,7 +899,15 @@ function compareGames(a: ControlGame, b: ControlGame): number {
   return a.run - b.run;
 }
 
-function GameRow({ g, onViewLive }: { g: ControlGame; onViewLive: (roomId: string) => void }) {
+function GameRow({
+  g,
+  onViewLive,
+  onViewScore,
+}: {
+  g: ControlGame;
+  onViewLive: (roomId: string) => void;
+  onViewScore: (matchId: string) => void;
+}) {
   return (
     <div className={`orch-game-row status-${g.status}`}>
       <span className={`room-tag ${g.side === "parent" ? "" : "muted-tag"}`}>{kindLabel(g.side)}</span>
@@ -795,6 +946,16 @@ function GameRow({ g, onViewLive }: { g: ControlGame; onViewLive: (roomId: strin
         >
           对局记录
         </button>
+        <button
+          className="compact-button"
+          disabled={!g.match_id}
+          title={g.match_id ? "查看裁判打分详情(解释 + 详细结果)" : "尚未完成打分"}
+          onClick={() => {
+            if (g.match_id) onViewScore(g.match_id);
+          }}
+        >
+          打分详情
+        </button>
       </span>
     </div>
   );
@@ -816,6 +977,14 @@ function ControlResultCard({ c }: { c: ControlResult }) {
         </span>
       </div>
       <p className="ctl-expectation muted-text">{c.expectation}</p>
+      <div className="ctl-result-explain">
+        <p>{gateExplanation(c)}</p>
+        <ul>
+          {controlExpectationDetails(c.kind).map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </div>
 
       {c.buckets.map((b) => (
         <BucketMetrics key={b.form} b={b} />
@@ -847,19 +1016,18 @@ function BucketMetrics({ b }: { b: ControlBucket }) {
         {b.form} · N={b.nScenarios}
       </div>
       {rows.map((m) => (
-        <div key={m.key} className="orch-gate-row">
+        <div key={m.key} className="orch-gate-row ctl-metric-row">
           <span className="orch-gate-label">{metricLabel(m.key)}</span>
           <span className="orch-gate-point">
-            {m.point != null ? (m.point >= 0 ? `+${m.point.toFixed(2)}` : m.point.toFixed(2)) : "—"}
+            {formatMetricValue(m.point)}
           </span>
-          {m.ci95 && (
-            <span className="muted-text">
-              [{m.ci95[0].toFixed(2)}, {m.ci95[1].toFixed(2)}]
-            </span>
-          )}
+          <span className="muted-text">
+            {m.ci95 ? `[${m.ci95[0].toFixed(2)}, ${m.ci95[1].toFixed(2)}]` : "CI —"}
+          </span>
           <span className="orch-gate-verdict" style={{ color: verdictColor(m.verdict) }}>
-            {m.verdict}
+            {verdictLabel(m.verdict)}
           </span>
+          <span className="ctl-metric-explain">{metricDetailText(m)}</span>
         </div>
       ))}
     </div>

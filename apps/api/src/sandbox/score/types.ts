@@ -5,7 +5,7 @@
 
 import type { ScenarioForm } from "../scenario/types";
 
-export const SCORE_RECORD_SCHEMA_VERSION = "1.3.0";
+export const SCORE_RECORD_SCHEMA_VERSION = "1.4.0";
 
 /** ok=正常;partial=裁判调用/解析部分失败(缺失字段不参与聚合);degraded=来源对局 degraded。 */
 export type ScoreStatus = "ok" | "partial" | "degraded";
@@ -31,6 +31,13 @@ export interface BlindSuspicion {
   suspicion_rank: number | null;
   /** ai_score − 其余存活玩家中的最高分(>0 表示 AI 是最可疑的那个,危险)。 */
   suspicion_margin: number | null;
+  /**
+   * 评估轮裁判对每个存活玩家的逐条解释(打分详情回看用)。单裁判路径填充;
+   * 多裁判(读数聚合后逐条解释无法保留)/ 诊断路径 → 缺省。
+   */
+  assessments?: BlindAssessment[];
+  /** 被测 AI 的匿名标签(供打分详情标出"哪个是 AI";裁判打分时对其不可见)。 */
+  ai_label?: string | null;
 }
 
 /** 客观结果指标(纯计算,真值)。 */

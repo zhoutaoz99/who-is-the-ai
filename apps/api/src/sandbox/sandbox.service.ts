@@ -357,6 +357,7 @@ export class SandboxService implements OnModuleInit {
     scenario: Scenario,
     runConfig: RunConfig = {},
     onProgress?: (room: RoomSnapshot) => void,
+    shouldStop?: () => boolean,
   ): Promise<MatchRecord> {
     const { roomId } = await this.prepare(scenario, runConfig);
     const waitingRoom = await this.gameService.getRoomInternal(roomId);
@@ -370,7 +371,7 @@ export class SandboxService implements OnModuleInit {
     if (!started.ok) {
       throw new Error(`开局失败: ${started.error ?? "?"}`);
     }
-    return this.finalize(roomId, onProgress);
+    return this.finalize(roomId, onProgress, shouldStop);
   }
 
   /** 取场景静态配置(前台配置页展示用)。 */
@@ -414,8 +415,9 @@ export class SandboxService implements OnModuleInit {
   private async finalize(
     roomId: string,
     onProgress?: (room: RoomSnapshot) => void,
+    shouldStop?: () => boolean,
   ): Promise<MatchRecord> {
-    await this.waitForFinished(roomId, onProgress);
+    await this.waitForFinished(roomId, onProgress, shouldStop);
     const room = await this.gameService.getRoomInternal(roomId);
     if (!room) {
       throw new Error(`房间不存在 room=${roomId}`);
@@ -454,12 +456,20 @@ export class SandboxService implements OnModuleInit {
   private async waitForFinished(
     roomId: string,
     onProgress?: (room: RoomSnapshot) => void,
+    shouldStop?: () => boolean,
   ): Promise<void> {
     const configRoom = await this.gameService.getRoomInternal(roomId);
     const deadlineMs = matchDeadlineMs(configRoom);
     const deadline = Date.now() + deadlineMs;
     while (Date.now() < deadline) {
       await this.sleep(POLL_INTERVAL_MS);
+      if (shouldStop?.()) {
+        const latest = await this.gameService.getRoomInternal(roomId);
+        if (latest?.status === "playing") {
+          await this.gameService.stopGame({ roomId, playerId: latest.ownerPlayerId });
+        }
+        throw new Error(`对局已取消 room=${roomId}`);
+      }
       const res = await this.gameService.observeRoom({ roomId });
       if (res.room) onProgress?.(res.room);
       if (res.room?.status === "finished") {

@@ -7,6 +7,7 @@
 import { Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { PostgresService } from "../data/postgres.service";
+import { RedisCacheService } from "../data/redis-cache.service";
 import type { GenerationEval } from "./orchestrator/generation-eval";
 import type { OrchestratorState } from "./orchestrator/state";
 import type { PromptVersion, PromptVersionMeta } from "./orchestrator/prompt-version";
@@ -38,7 +39,10 @@ export interface EvalPromptGenerationRow {
 
 @Injectable()
 export class SandboxRepository {
-  constructor(private readonly postgres: PostgresService) {}
+  constructor(
+    private readonly postgres: PostgresService,
+    private readonly cache: RedisCacheService,
+  ) {}
 
   private async ready(): Promise<void> {
     await this.postgres.ready;
@@ -176,6 +180,16 @@ export class SandboxRepository {
     );
   }
 
+  async deleteCaches(keys: string[]): Promise<void> {
+    const uniqueKeys = [...new Set(keys.filter(Boolean))];
+    if (uniqueKeys.length === 0) return;
+    await this.ready();
+    await this.postgres.query(
+      `DELETE FROM sandbox_paired_cache WHERE cache_key = ANY($1)`,
+      [uniqueKeys],
+    );
+  }
+
   // ===== GenerationEval =====
 
   async upsertGenerationEval(gen: GenerationEval): Promise<void> {
@@ -253,6 +267,100 @@ export class SandboxRepository {
        ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
       [data],
     );
+  }
+
+  async clearControlTestRun(): Promise<void> {
+    await this.ready();
+    await this.postgres.query(`DELETE FROM sandbox_control_test_runs WHERE id = 1`);
+  }
+
+  /** 清掉一次对照测试 run 留下的可回看数据。只按显式传入的 room/match/cache/run id 删除。 */
+  async deleteControlTestArtifacts(args: {
+    runId?: string;
+    roomIds?: string[];
+    matchIds?: string[];
+    cacheKeys?: string[];
+    promptVersionIds?: string[];
+    deleteControlPromptVersions?: boolean;
+  }): Promise<void> {
+    const roomIds = [...new Set((args.roomIds ?? []).filter(Boolean))];
+    const matchIds = [...new Set((args.matchIds ?? []).filter(Boolean))];
+    const cacheKeys = [...new Set((args.cacheKeys ?? []).filter(Boolean))];
+    const promptVersionIds = [...new Set((args.promptVersionIds ?? []).filter(Boolean))];
+
+    await this.ready();
+
+    if (matchIds.length > 0) {
+      await this.postgres.query(
+        `DELETE FROM sandbox_paired_cache
+         WHERE EXISTS (
+           SELECT 1
+           FROM jsonb_array_elements(data) AS score(item)
+           WHERE score.item->>'match_id' = ANY($1::text[])
+         )`,
+        [matchIds],
+      );
+      await this.postgres.query(
+        `DELETE FROM sandbox_score_records WHERE match_id = ANY($1)`,
+        [matchIds],
+      );
+      await this.postgres.query(
+        `DELETE FROM sandbox_match_records WHERE match_id = ANY($1)`,
+        [matchIds],
+      );
+      await this.postgres.query(
+        `DELETE FROM llm_usage_logs WHERE match_id = ANY($1)`,
+        [matchIds],
+      );
+      await this.postgres.query(
+        `DELETE FROM sandbox_trace_events WHERE match_id = ANY($1)`,
+        [matchIds],
+      );
+    }
+
+    if (roomIds.length > 0) {
+      await this.postgres.query(
+        `DELETE FROM ai_call_logs WHERE room_id = ANY($1)`,
+        [roomIds],
+      );
+      await this.postgres.query(
+        `DELETE FROM replay_exports WHERE room_id = ANY($1)`,
+        [roomIds],
+      );
+      await this.postgres.query(
+        `DELETE FROM llm_usage_logs WHERE room_id = ANY($1)`,
+        [roomIds],
+      );
+      await this.postgres.query(
+        `DELETE FROM game_rooms WHERE id = ANY($1)`,
+        [roomIds],
+      );
+      await Promise.all(roomIds.map((id) => this.cache.del(`game:room:${id}`)));
+    }
+
+    if (args.runId) {
+      await this.postgres.query(
+        `DELETE FROM sandbox_trace_events WHERE run_id = $1`,
+        [args.runId],
+      );
+    }
+
+    await this.deleteCaches(cacheKeys);
+
+    if (promptVersionIds.length > 0) {
+      await this.postgres.query(
+        `DELETE FROM sandbox_prompt_versions WHERE version_id = ANY($1)`,
+        [promptVersionIds],
+      );
+    }
+    if (args.deleteControlPromptVersions) {
+      await this.postgres.query(
+        `DELETE FROM sandbox_prompt_versions
+         WHERE version_id LIKE 'ctl-null-%'
+            OR version_id LIKE 'ctl-negative-%'
+            OR version_id LIKE 'ctl-positive-%'`,
+      );
+    }
   }
 
   // ===== PromptVersion(prompt_text 单列,便于 ai.service 运行时读取;meta 存其余字段)=====

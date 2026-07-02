@@ -90,8 +90,12 @@ export class BlindSuspicionScorer {
       };
     }
 
+    const suspicion = relativize(assessments, view.aiLabel, view.aliveLabels, view.scoringRound);
+    // 逐条解释与 AI 标签随分数落库,供打分详情回看(裁判打分时对 ai_label 不可见)。
+    suspicion.assessments = assessments;
+    suspicion.ai_label = view.aiLabel;
     return {
-      suspicion: relativize(assessments, view.aiLabel, view.aliveLabels, view.scoringRound),
+      suspicion,
       assessments,
       judgeModel: modelConfig.model,
       ok: true,

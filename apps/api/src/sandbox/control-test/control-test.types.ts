@@ -9,6 +9,8 @@ export interface MetricView {
   key: string;
   point: number | null; // 子 − 父
   ci95: [number, number] | null;
+  mde?: number;
+  p?: number | null;
   verdict: Verdict;
 }
 
@@ -62,7 +64,8 @@ export interface ControlGameItem {
 }
 
 export type ControlTestPhase = "evaluating_parent" | "running_controls" | "settled";
-export type ControlTestDecision = "done" | "stopped";
+/** done=三对照跑完;ended=用户「结束本次」清理后回到空闲;stopped=异常中断。 */
+export type ControlTestDecision = "done" | "ended" | "stopped";
 
 /** 对照测试运行态(内存;前台快照 + 流式增量都读它)。 */
 export interface ControlTestRun {
@@ -75,8 +78,14 @@ export interface ControlTestRun {
   kinds: ControlKind[];
   /** 当前正在评测的对照(running_controls 阶段)。 */
   current_kind?: ControlKind;
-  /** 已请求停止、正等在跑的对局跑完后落定(前台据此显示「停止中…」)。 */
-  stopping?: boolean;
+  /** 已请求暂停,正等在跑的对局跑完后挂起(前台显示「暂停中…」)。 */
+  pausing?: boolean;
+  /** 已挂起,等「恢复」续跑或「结束本次」清理。 */
+  paused?: boolean;
+  /** 挂起时正跑到哪个 side("parent" | 对照 kind),供前台提示。 */
+  paused_side?: string;
+  /** 已请求结束本次,正等在跑的对局跑完后清理本次数据。 */
+  ending?: boolean;
   /** 逐对照确认模式:每条对照跑完后暂停等人工确认再继续。 */
   pause_between_controls?: boolean;
   /** 当前正卡在人工确认(某条对照已出结果,等确认是否继续下一条)。 */

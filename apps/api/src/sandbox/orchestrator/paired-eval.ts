@@ -51,12 +51,24 @@ export interface EvalRunOptions {
   onGameStatus?: (patch: GameStatusPatch) => void;
   /** 局间检查;返回 true 则尽早中止,返回部分评分(不缓存)。 */
   shouldStop?: () => boolean;
+  /** 暂停:与 shouldStop 一样让 worker 池停止派发新局(在跑的跑完),配合 resumeFrom 可续跑。 */
+  shouldPause?: () => boolean;
+  /** 续跑:已完成的评分(按 scenario|seed|run 跳过,不重跑),暂停后恢复用。 */
+  resumeFrom?: ScoreRecord[];
+  /** 缓存写入后回调,用于临时 run 回滚时只清理本次新写入的 cache。 */
+  onCacheSaved?: (version: PromptVersion, cacheKey: string) => void;
 }
 
 export interface MultiVersionEvalRunOptions {
   /** 多版本调度时,回调会携带当前版本,由编排器补 side/child_id。 */
   onGameStatus?: (version: PromptVersion, patch: GameStatusPatch) => void;
   shouldStop?: () => boolean;
+  /** 暂停:让 worker 池停止派发新局(在跑的跑完),配合 resumeFrom 可续跑。 */
+  shouldPause?: () => boolean;
+  /** 续跑:按版本索引的已完成评分,跳过对应任务(不重跑)。 */
+  resumeFrom?: Map<string, ScoreRecord[]>;
+  /** 缓存写入后回调,用于临时 run 回滚时只清理本次新写入的 cache。 */
+  onCacheSaved?: (version: PromptVersion, cacheKey: string) => void;
 }
 
 interface VersionEvalTask {
@@ -87,6 +99,11 @@ export class PairedEvalService {
     const results = await this.runVersionsEval([version], plan, {
       onGameStatus: (_version, patch) => opts.onGameStatus?.(patch),
       shouldStop: opts.shouldStop,
+      shouldPause: opts.shouldPause,
+      resumeFrom: opts.resumeFrom
+        ? new Map([[version.version_id, opts.resumeFrom]])
+        : undefined,
+      onCacheSaved: opts.onCacheSaved,
     });
     return results.get(version.version_id) ?? [];
   }
@@ -105,17 +122,29 @@ export class PairedEvalService {
     const tasks = expandEvalTasks(plan);
     const work: VersionEvalTask[] = [];
     for (const version of versions) {
-      const key = cacheKey(version.version_id, plan);
-      const cached = await this.loadCache(key);
-      if (cached) {
-        for (const sc of cached) {
-          opts.onGameStatus?.(version, scoreToFinishedPatch(sc));
+      // 续跑:该版本已完成的评分(暂停前跑好的),据此跳过对应任务并回放 finished。
+      const prior = opts.resumeFrom?.get(version.version_id) ?? [];
+      if (prior.length === 0) {
+        const key = cacheKey(version.version_id, plan);
+        const cached = await this.loadCache(key);
+        if (cached) {
+          for (const sc of cached) {
+            opts.onGameStatus?.(version, scoreToFinishedPatch(sc));
+          }
+          this.logger.log(`paired_cache 命中(回放 ${cached.length} 条): ${version.version_id}`);
+          result.set(version.version_id, cached);
+          continue;
         }
-        this.logger.log(`paired_cache 命中(回放 ${cached.length} 条): ${version.version_id}`);
-        result.set(version.version_id, cached);
-        continue;
       }
+      const priorByTask = new Map(
+        prior.map((s) => [evalTaskKey(s.scenario_id, s.seed, s.run_index), s] as const),
+      );
       for (const task of tasks) {
+        const done = priorByTask.get(evalTaskKey(task.scenario.scenario_id, task.seed, task.run));
+        if (done) {
+          opts.onGameStatus?.(version, scoreToFinishedPatch(done)); // 续跑:已跑完,回放不重跑
+          continue;
+        }
         opts.onGameStatus?.(version, {
           scenario_id: task.scenario.scenario_id,
           seed: task.seed,
@@ -130,15 +159,28 @@ export class PairedEvalService {
     const { results: scored, stopped } = await runWorkerPool<VersionEvalTask, VersionScore>(
       work,
       async ({ version, task }) => {
-        const score = await this.runEvalTask(version, plan, task, (patch) =>
-          opts.onGameStatus?.(version, patch),
+        const score = await this.runEvalTask(
+          version,
+          plan,
+          task,
+          (patch) => opts.onGameStatus?.(version, patch),
+          opts.shouldStop,
         );
         return score ? { versionId: version.version_id, score } : undefined;
       },
-      { concurrency: concurrencyForCostTier(tier), shouldStop: opts.shouldStop },
+      {
+        concurrency: concurrencyForCostTier(tier),
+        // 暂停与停止都让池停派新局(在跑的跑完);paused 靠 resumeFrom 续跑,故也不缓存部分结果。
+        shouldStop: () => (opts.shouldStop?.() ?? false) || (opts.shouldPause?.() ?? false),
+      },
     );
 
+    // 续跑:先垫入已完成的评分,再并入本轮新跑的。
     const byVersion = new Map<string, ScoreRecord[]>();
+    for (const version of versions) {
+      const prior = opts.resumeFrom?.get(version.version_id);
+      if (prior?.length) byVersion.set(version.version_id, [...prior]);
+    }
     for (const item of scored) {
       const arr = byVersion.get(item.versionId) ?? [];
       arr.push(item.score);
@@ -148,7 +190,11 @@ export class PairedEvalService {
       if (result.has(version.version_id)) continue;
       const scores = byVersion.get(version.version_id) ?? [];
       result.set(version.version_id, scores);
-      if (!stopped) await this.saveCache(cacheKey(version.version_id, plan), scores);
+      if (!stopped) {
+        const key = cacheKey(version.version_id, plan);
+        await this.saveCache(key, scores);
+        opts.onCacheSaved?.(version, key);
+      }
     }
     return result;
   }
@@ -166,6 +212,7 @@ export class PairedEvalService {
     plan: EvalPlan,
     task: EvalTask,
     onGameStatus?: (patch: GameStatusPatch) => void,
+    shouldStop?: () => boolean,
   ): Promise<ScoreRecord | undefined> {
     const publish = (patch: GameStatusUpdate) => {
       onGameStatus?.({
@@ -186,6 +233,7 @@ export class PairedEvalService {
           discussion_seconds: plan.discussionSeconds,
         },
         (room) => publish({ status: "running", ...snapshotToGamePatch(room) }),
+        shouldStop,
       );
       publish({ status: "scoring" });
       const scoreRec = await this.score.scoreMatch(match, {
@@ -212,6 +260,11 @@ export class PairedEvalService {
       return undefined;
     }
   }
+}
+
+/** 单任务稳定 key:(scenario, seed, run),用于续跑时跳过已完成的对局。 */
+function evalTaskKey(scenario: string, seed: number, run: number): string {
+  return `${scenario}|${seed}|${run}`;
 }
 
 /** cache key:版本 × 评测集版本 × 种子计划 × 场景指纹(决定缓存是否可复用)。 */

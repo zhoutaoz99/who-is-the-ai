@@ -56,8 +56,11 @@ export class MultiJudgeScorer {
       };
     }
     const agg = aggregateReadings(readings, view.aliveLabels);
+    const suspicion = relativizeFromScores(agg, view.aiLabel, view.aliveLabels, view.scoringRound);
+    // 多裁判聚合后逐条解释无法保留(assessments 缺省);仅标出 AI 标签供打分详情回看。
+    suspicion.ai_label = view.aiLabel;
     return {
-      suspicion: relativizeFromScores(agg, view.aiLabel, view.aliveLabels, view.scoringRound),
+      suspicion,
       judges: readings.map((r) => r.judgeModel),
       judge_agreement: judgeAgreement(readings, view.aiLabel),
       ok: true,

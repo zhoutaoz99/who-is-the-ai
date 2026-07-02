@@ -6,8 +6,8 @@
 //
 // 后台流式 run:startRun() 立即返回 run_id,execute() 在后台逐局推进并经 EventEmitter
 // 发 status/game/control/done,由 ControlTestGateway 桥接到 socket(过程可视化)。
-// run 态在内存驱动;每次状态推进把快照落 sandbox_control_test_runs(单例 id=1),
-// 重启后 onModuleInit 恢复最近一次供回看。只回看不续接:未落定的 run 恢复时判为「已中断」。
+// run 态在内存驱动;每次状态推进把快照落 sandbox_control_test_runs(单例 id=1)。
+// 重启后后台 execute() 已消亡,未完成 run 无法续接;启动时清理其已记录产物并回到空闲。
 //
 // 复用编排器现成原语:PairedEvalService(配对评测+paired_cache)→ buildValidation → optimizeGate。
 // 无副作用:control 子版本按内容哈希直接落 DB → 评测 → finally 删除,不进版本库/血脉。
@@ -16,7 +16,7 @@ import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
 import { EventEmitter } from "node:events";
 import { buildValidation } from "../aggregate/validation";
 import type { ValidationReport } from "../aggregate/validation";
-import type { MetricSummary } from "../aggregate/types";
+import { DEFAULT_AGG_CONFIG, type AggConfig, type MetricSummary } from "../aggregate/types";
 import type { GameStatusPatch } from "../orchestrator/active-run";
 import { optimizeGate } from "../orchestrator/gate";
 import type { GateDecision } from "../orchestrator/gate";
@@ -24,6 +24,7 @@ import type { EvalPlan } from "../orchestrator/paired-eval";
 import { PairedEvalService } from "../orchestrator/paired-eval";
 import { OrchestratorService } from "../orchestrator/orchestrator.service";
 import type { PromptVersion } from "../orchestrator/prompt-version";
+import type { ScoreRecord } from "../score/types";
 import { SandboxRepository } from "../sandbox.repository";
 import { isTraceOn, traceEvent } from "../shared/trace";
 import { SandboxService } from "../sandbox.service";
@@ -38,6 +39,7 @@ import type {
   BucketView,
   ControlGameItem,
   ControlResult,
+  ControlTestDecision,
   ControlTestRun,
   MetricView,
 } from "./control-test.types";
@@ -62,9 +64,18 @@ export class ControlTestService implements OnModuleInit {
   readonly events = new EventEmitter();
 
   private activeRun: ControlTestRun | null = null;
+  /** 结束本次:停止继续派发/等待本次 run。沿用 stopRequested 名以少改动。 */
   private stopRequested = false;
-  /** 逐对照确认模式下,后台 execute 在对照之间挂起时的放行回调(继续/停止都调它)。 */
+  /** 暂停:在跑的对局跑完后挂起,可恢复续跑剩余对局。 */
+  private pauseRequested = false;
+  /** 逐对照确认模式下,后台 execute 在对照之间挂起时的放行回调(继续/结束都调它)。 */
   private continueSignal: (() => void) | null = null;
+  /** 暂停挂起时的放行回调(恢复/结束都调它)。 */
+  private resumeSignal: (() => void) | null = null;
+  /** 已立即结束但后台 worker 尚未完全退出的 run id。 */
+  private endedRunIds = new Set<string>();
+  /** 各 run 新写入的 paired_cache key;结束本次回滚时只删这些,不误删旧缓存。 */
+  private cacheKeysByRun = new Map<string, Set<string>>();
   /** 串行化持久化,保证落库顺序与状态推进一致(最后的 settle 快照必胜出)。 */
   private persistChain: Promise<void> = Promise.resolve();
 
@@ -75,18 +86,29 @@ export class ControlTestService implements OnModuleInit {
     private readonly repo: SandboxRepository,
   ) {}
 
-  /** 重启后恢复最近一次 run 供回看。后台 execute() 已随进程消亡,故未落定的一律判中断(设计:不续接)。 */
+  /** 重启后恢复最近一次 settled run 供回看;未完成 run 已无后台执行流,直接清理并回到空闲。 */
   async onModuleInit(): Promise<void> {
     try {
       const persisted = await this.repo.loadControlTestRun();
       if (!persisted) return;
       if (persisted.phase !== "settled") {
-        persisted.phase = "settled";
-        persisted.decision = "stopped";
-        persisted.stopping = false;
-        persisted.overall_pass = false;
-        persisted.error = persisted.error ?? "服务重启,run 已中断(测试工具不做续接)";
-        persisted.settled_at = persisted.settled_at ?? new Date().toISOString();
+        const roomIds = this.roomIdsOf(persisted);
+        const matchIds = this.matchIdsOf(persisted);
+        const promptVersionIds = this.controlPromptIdsOf(persisted);
+        await this.repo.deleteControlTestArtifacts({
+          runId: persisted.run_id,
+          roomIds,
+          matchIds,
+          promptVersionIds,
+          deleteControlPromptVersions: true,
+        });
+        await this.repo.clearControlTestRun();
+        this.activeRun = null;
+        this.events.emit("status", null);
+        this.logger.log(
+          `清理未完成对照测试 run ${persisted.run_id}: rooms=${roomIds.length} matches=${matchIds.length}`,
+        );
+        return;
       }
       this.activeRun = persisted;
       this.logger.log(`恢复对照测试 run ${persisted.run_id}(phase=${persisted.phase})`);
@@ -103,7 +125,7 @@ export class ControlTestService implements OnModuleInit {
   /** 非阻塞 kickoff:校验 → 建 run → 后台 execute → 立即返回 run_id。进度走 socket。 */
   startRun(opts: ControlTestOptions = {}): { run_id: string } {
     if (this.activeRun && this.activeRun.phase !== "settled") {
-      throw new Error("已有活跃对照测试(先停止或等其完成)");
+      throw new Error("已有活跃对照测试(先结束本次或等其完成)");
     }
     const setId = opts.setId ?? DEFAULT_SET_ID;
     const set = this.sandbox.loadEvalSet(setId);
@@ -143,28 +165,60 @@ export class ControlTestService implements OnModuleInit {
       started_at: new Date().toISOString(),
     };
     this.stopRequested = false;
+    this.pauseRequested = false;
     this.continueSignal = null;
+    this.resumeSignal = null;
+    this.endedRunIds.delete(run_id);
+    this.cacheKeysByRun.set(run_id, new Set());
     this.emitStatus();
     this.logger.log(`对照测试 kickoff ${run_id} set=${set.set_id} parent=${parent.version_id} kinds=${kinds.join(",")} pause=${pauseBetween}`);
 
-    void this.execute(plan, parent, kinds, set.holdout.length, pauseBetween).catch((err) => {
-      this.settle("stopped", err instanceof Error ? err.message : String(err));
+    void this.execute(run_id, this.activeRun, plan, parent, kinds, set.holdout.length, pauseBetween).catch((err) => {
+      if (this.endedRunIds.has(run_id)) return;
+      this.settle(run_id, "stopped", err instanceof Error ? err.message : String(err));
     });
     return { run_id };
   }
 
-  /** 请求停止当前 run(局间生效)。停止是协作式的:置标志 + 立刻 emit 一次状态,
-   *  让前台当场进入「停止中…」;真正落定要等在跑的对局(最多并发数局)跑完。
-   *  若正卡在逐对照确认,一并放行 execute 让它走到 settle。 */
-  stop(): void {
-    if (this.activeRun && this.activeRun.phase !== "settled") {
-      this.stopRequested = true;
-      this.activeRun.stopping = true;
-      this.activeRun.awaiting_confirmation = false;
-      this.activeRun.next_kind = undefined;
-      this.emitStatus();
-      this.releaseWait();
-    }
+  /** 请求暂停:置标志 + emit(前台进入「暂停中…」);在跑的对局(最多并发数局)跑完后挂起。
+   *  挂起态由 runPausableEval 置 paused;恢复只跑剩余对局,不重跑已完成的。 */
+  pause(): void {
+    if (!this.activeRun || this.activeRun.phase === "settled") return;
+    if (this.activeRun.awaiting_confirmation) return;
+    if (this.activeRun.paused || this.activeRun.pausing) return;
+    this.pauseRequested = true;
+    this.activeRun.pausing = true;
+    this.emitStatus();
+  }
+
+  /** 恢复:从挂起处放行 execute,续跑剩余对局。 */
+  resume(): void {
+    if (!this.activeRun || !this.activeRun.paused) return;
+    this.activeRun.paused = false;
+    this.activeRun.paused_side = undefined;
+    this.emitStatus();
+    this.releaseResume();
+  }
+
+  /** 结束本次:立即清空前台 run;后台 worker 收到 run_id 失效后尽快退出并补清理产物。 */
+  end(): void {
+    if (!this.activeRun || this.activeRun.phase === "settled") return;
+    const run = this.activeRun;
+    const runId = run.run_id;
+    this.stopRequested = true;
+    this.pauseRequested = false;
+    this.endedRunIds.add(runId);
+    this.activeRun = null;
+    this.events.emit("status", null);
+    void this.clearPersistedRun();
+    this.events.emit("done", {
+      run_id: runId,
+      decision: "ended",
+      overall_pass: undefined,
+    });
+    this.releaseResume();
+    this.releaseWait();
+    this.logger.log(`对照测试立即结束 ${runId};后台对局将被取消/清理`);
   }
 
   /** 人工确认继续:放行下一条对照(仅在 awaiting_confirmation 时有效)。 */
@@ -177,87 +231,87 @@ export class ControlTestService implements OnModuleInit {
     this.releaseWait();
   }
 
-  /** 挂起 execute,直到 continue()/stop() 放行。 */
+  /** 挂起 execute(逐对照确认),直到 continue()/end() 放行。 */
   private awaitContinue(): Promise<void> {
     return new Promise<void>((resolve) => {
       this.continueSignal = resolve;
     });
   }
 
-  /** 放行挂起中的 execute(无挂起则空操作)。 */
+  /** 放行逐对照确认的挂起(无挂起则空操作)。 */
   private releaseWait(): void {
     const resolve = this.continueSignal;
     this.continueSignal = null;
     resolve?.();
   }
 
+  /** 挂起 execute(暂停),直到 resume()/end() 放行。 */
+  private awaitResume(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.resumeSignal = resolve;
+    });
+  }
+
+  /** 放行暂停的挂起(无挂起则空操作)。 */
+  private releaseResume(): void {
+    const resolve = this.resumeSignal;
+    this.resumeSignal = null;
+    resolve?.();
+  }
+
   // ===== 后台执行 =====
 
   private async execute(
+    runId: string,
+    run: ControlTestRun,
     plan: EvalPlan,
     parent: PromptVersion,
     kinds: ControlKind[],
     holdoutCount: number,
     pauseBetween: boolean,
   ): Promise<void> {
-    // 1) 父代评测一次(三对照复用 paired_cache)。
-    this.setPhase("evaluating_parent");
-    const parentScores = await this.pairedEval.runVersionEval(parent, plan, {
-      onGameStatus: (patch) => this.recordGame("parent", patch),
-      shouldStop: () => this.stopRequested,
-    });
-    if (this.stopRequested) return this.settle("stopped", "用户停止");
+    const expectedTotal =
+      plan.scenarios.length * plan.seedsPerScenario * plan.runsPerSeed;
+    const aggConfig = this.controlAggConfig(plan);
+
+    // 1) 父代评测一次(可暂停/续跑;三对照复用 paired_cache)。
+    this.setPhase(runId, "evaluating_parent");
+    const parentScores = await this.runPausableEval(runId, parent, plan, "parent", expectedTotal);
+    if (this.shouldEndRun(runId)) return this.finishEndedExecution(runId, run);
 
     // 2) 逐个对照:落 DB → 评测 → 配对做差 → 闸门 → 核对。
-    this.setPhase("running_controls");
+    this.setPhase(runId, "running_controls");
     const created: string[] = [];
     try {
       for (let i = 0; i < kinds.length; i += 1) {
-        if (this.stopRequested) break;
+        if (this.shouldEndRun(runId)) break;
         const kind = kinds[i];
         const spec = CONTROL_SPECS[kind];
         const child = this.buildChild(spec, parent);
-        if (this.activeRun) this.activeRun.current_kind = kind;
+        if (this.isActiveRun(runId)) this.activeRun!.current_kind = kind;
         // 关键:await 落 DB 再评测,确保对局运行时 ai.service 能读到 control 正文
         // (否则 loadPromptVersionText 返回 null → 回退默认提示词 → 对照失效)。
         await this.repo.upsertPromptVersion(child);
         created.push(child.version_id);
 
-        const childScores = await this.pairedEval.runVersionEval(child, plan, {
-          onGameStatus: (patch) => this.recordGame(kind, patch),
-          shouldStop: () => this.stopRequested,
-        });
-        if (this.stopRequested) break;
+        const childScores = await this.runPausableEval(runId, child, plan, kind, expectedTotal);
 
-        const validation = buildValidation(parentScores, childScores);
-        if (isTraceOn()) {
-          traceEvent({
-            kind: "aggregate",
-            stage: "control_test_validation",
-            run_id: this.activeRun?.run_id,
-            data: { control_kind: kind, validation },
-          });
-        }
-        const gate = optimizeGate(validation);
-        const result = this.assess(spec, child.version_id, validation, gate);
-        if (this.activeRun) {
-          this.activeRun.controls.push(result);
-          this.activeRun.current_kind = undefined;
-        }
-        this.events.emit("control", result);
-        this.emitStatus();
+        // 结束本次:不再生成/保留结果卡片,后面统一清理本次 run 产物。
+        if (this.shouldEndRun(runId)) break;
 
-        // 逐对照确认:该条已出结果,若还有下一条且未停止,挂起等人工放行。
+        this.pushControlResult(runId, spec, child, parentScores, childScores, aggConfig);
+
+        // 逐对照确认(预设模式):该条已出结果,若还有下一条,挂起等人工放行。
         const nextKind = kinds[i + 1];
-        if (pauseBetween && nextKind && !this.stopRequested) {
-          if (this.activeRun) {
-            this.activeRun.awaiting_confirmation = true;
-            this.activeRun.next_kind = nextKind;
-            this.activeRun.current_kind = undefined;
+        if (pauseBetween && nextKind && !this.shouldEndRun(runId)) {
+          if (this.isActiveRun(runId)) {
+            this.activeRun!.awaiting_confirmation = true;
+            this.activeRun!.next_kind = nextKind;
+            this.activeRun!.current_kind = undefined;
           }
           this.emitStatus();
           await this.awaitContinue();
-          if (this.stopRequested) break;
+          if (this.shouldEndRun(runId)) break;
         }
       }
     } finally {
@@ -268,9 +322,128 @@ export class ControlTestService implements OnModuleInit {
       }
     }
 
-    if (this.stopRequested) return this.settle("stopped", "用户停止");
-    if (this.activeRun) this.activeRun.caveats = this.buildCaveats(holdoutCount, this.activeRun.controls);
-    this.settle("done");
+    if (this.shouldEndRun(runId)) return this.finishEndedExecution(runId, run);
+    if (this.isActiveRun(runId)) this.activeRun!.caveats = this.buildCaveats(holdoutCount, this.activeRun!.controls);
+    this.settle(runId, "done");
+  }
+
+  /** 后台 worker 退出后补清理本 run 的房间、对局记录、评分、日志、trace 与本次新写入 cache。 */
+  private async finishEndedExecution(runId: string, run: ControlTestRun): Promise<void> {
+    await this.cleanupEndedArtifacts(run);
+    this.endedRunIds.delete(runId);
+    this.cacheKeysByRun.delete(runId);
+    if (!this.activeRun || this.activeRun.run_id === runId) {
+      this.stopRequested = false;
+      this.pauseRequested = false;
+    }
+  }
+
+  private async cleanupEndedArtifacts(run: ControlTestRun): Promise<void> {
+    const runId = run?.run_id;
+    const roomIds = this.roomIdsOf(run);
+    const matchIds = this.matchIdsOf(run);
+    const promptVersionIds = this.controlPromptIdsOf(run);
+    const cacheKeys = [...(this.cacheKeysByRun.get(runId) ?? new Set<string>())];
+    let error: string | undefined;
+
+    try {
+      await this.repo.deleteControlTestArtifacts({ runId, roomIds, matchIds, cacheKeys, promptVersionIds });
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`清理对照测试 run ${runId ?? "?"} 产物失败: ${error}`);
+    }
+
+    this.logger.log(
+      `对照测试结束并清理 ${runId ?? "?"}: rooms=${roomIds.length} matches=${matchIds.length} caches=${cacheKeys.length}${error ? ` cleanup_error=${error}` : ""}`,
+    );
+  }
+
+  private roomIdsOf(run: ControlTestRun | null | undefined): string[] {
+    return [...new Set((run?.games ?? []).map((g) => g.room_id).filter(Boolean) as string[])];
+  }
+
+  private matchIdsOf(run: ControlTestRun | null | undefined): string[] {
+    return [...new Set((run?.games ?? []).map((g) => g.match_id).filter(Boolean) as string[])];
+  }
+
+  private controlPromptIdsOf(run: ControlTestRun | null | undefined): string[] {
+    return [
+      ...new Set((run?.controls ?? []).map((c) => c.child_version_id).filter(Boolean)),
+    ];
+  }
+
+  /**
+   * 跑一条(parent 或某 control)可暂停 / 续跑的评测。
+   * 请求暂停时,在跑的对局跑完即挂起;恢复后只跑剩余对局(已完成的按 scenario|seed|run 跳过,不重跑)。
+   * 返回累计评分(可能因「结束本次」而不完整)。
+   */
+  private async runPausableEval(
+    runId: string,
+    version: PromptVersion,
+    plan: EvalPlan,
+    side: string,
+    expectedTotal: number,
+  ): Promise<ScoreRecord[]> {
+    let scores: ScoreRecord[] = [];
+    for (;;) {
+      scores = await this.pairedEval.runVersionEval(version, plan, {
+        onGameStatus: (patch) => this.recordGame(runId, side, patch),
+        shouldStop: () => this.shouldEndRun(runId),
+        shouldPause: () => this.isActiveRun(runId) && this.pauseRequested,
+        resumeFrom: scores,
+        onCacheSaved: (_version, key) => this.recordCacheSaved(runId, key),
+      });
+      if (this.shouldEndRun(runId)) return scores; // 结束本次:返回已跑完的
+      if (!this.pauseRequested) return scores; // 正常跑完
+      // 暂停生效:挂起,等恢复 / 结束本次。
+      this.pauseRequested = false;
+      const incomplete = scores.length < expectedTotal;
+      if (this.isActiveRun(runId)) {
+        this.activeRun!.pausing = false;
+        this.activeRun!.paused = true;
+        this.activeRun!.paused_side = side;
+      }
+      this.emitStatus();
+      await this.awaitResume();
+      if (this.shouldEndRun(runId)) return scores; // 挂起中点了结束本次
+      if (incomplete) continue; // 恢复:跑剩余对局
+      return scores; // 本段其实已跑完,恢复即向下走
+    }
+  }
+
+  /** 配对做差 → 闸门 → 核对 → 追加卡片并广播。 */
+  private pushControlResult(
+    runId: string,
+    spec: ControlSpec,
+    child: PromptVersion,
+    parentScores: ScoreRecord[],
+    childScores: ScoreRecord[],
+    aggConfig: AggConfig,
+  ): void {
+    const validation = buildValidation(parentScores, childScores, aggConfig);
+    if (isTraceOn()) {
+      traceEvent({
+        kind: "aggregate",
+        stage: "control_test_validation",
+        run_id: runId,
+        data: { control_kind: spec.kind, validation },
+      });
+    }
+    const gate = optimizeGate(validation);
+    const result = this.assess(spec, child.version_id, validation, gate);
+    if (this.isActiveRun(runId)) {
+      this.activeRun!.controls.push(result);
+      this.activeRun!.current_kind = undefined;
+    }
+    this.events.emit("control", result);
+    this.emitStatus();
+  }
+
+  private controlAggConfig(plan: EvalPlan): AggConfig {
+    return {
+      ...DEFAULT_AGG_CONFIG,
+      minRuns: Math.min(DEFAULT_AGG_CONFIG.minRuns, Math.max(1, Math.floor(plan.runsPerSeed))),
+    };
   }
 
   private buildChild(spec: ControlSpec, parent: PromptVersion): PromptVersion {
@@ -287,10 +460,14 @@ export class ControlTestService implements OnModuleInit {
   }
 
   /** 逐局状态就地 upsert(side×scenario×seed×run)+ emit game。 */
-  private recordGame(side: string, patch: GameStatusPatch): void {
-    if (!this.activeRun) return;
+  private recordGame(runId: string, side: string, patch: GameStatusPatch): void {
+    if (this.endedRunIds.has(runId)) {
+      this.cleanupLateGameArtifact(runId, patch);
+      return;
+    }
+    if (!this.isActiveRun(runId)) return;
     const item: ControlGameItem = { side, ...patch };
-    const games = this.activeRun.games;
+    const games = this.activeRun!.games;
     const idx = games.findIndex(
       (g) =>
         g.side === side &&
@@ -303,29 +480,65 @@ export class ControlTestService implements OnModuleInit {
     this.events.emit("game", item);
   }
 
-  private setPhase(phase: ControlTestRun["phase"]): void {
-    if (!this.activeRun) return;
-    this.activeRun.phase = phase;
+  private recordCacheSaved(runId: string, key: string): void {
+    if (this.endedRunIds.has(runId) || !this.isActiveRun(runId)) {
+      void this.repo.deleteControlTestArtifacts({ runId, cacheKeys: [key] }).catch((err) => {
+        this.logger.warn(`清理已结束对照测试 cache ${key} 失败: ${err instanceof Error ? err.message : err}`);
+      });
+      return;
+    }
+    const keys = this.cacheKeysByRun.get(runId) ?? new Set<string>();
+    keys.add(key);
+    this.cacheKeysByRun.set(runId, keys);
+  }
+
+  private cleanupLateGameArtifact(runId: string, patch: GameStatusPatch): void {
+    const roomIds = patch.room_id ? [patch.room_id] : [];
+    const matchIds = patch.match_id ? [patch.match_id] : [];
+    if (roomIds.length === 0 && matchIds.length === 0) return;
+    void this.repo.deleteControlTestArtifacts({ runId, roomIds, matchIds }).catch((err) => {
+      this.logger.warn(`清理已结束对照测试迟到产物失败: ${err instanceof Error ? err.message : err}`);
+    });
+  }
+
+  private isActiveRun(runId: string): boolean {
+    return this.activeRun?.run_id === runId;
+  }
+
+  private shouldEndRun(runId: string): boolean {
+    return this.endedRunIds.has(runId) || (this.isActiveRun(runId) && this.stopRequested);
+  }
+
+  private setPhase(runId: string, phase: ControlTestRun["phase"]): void {
+    if (!this.isActiveRun(runId)) return;
+    this.activeRun!.phase = phase;
     this.emitStatus();
   }
 
-  private settle(decision: "done" | "stopped", error?: string): void {
+  private settle(runId: string, decision: ControlTestDecision, error?: string): void {
+    if (!this.isActiveRun(runId)) return;
     if (this.activeRun) {
-      this.activeRun.phase = "settled";
-      this.activeRun.decision = decision;
-      this.activeRun.error = error;
-      this.activeRun.current_kind = undefined;
-      this.activeRun.stopping = false;
-      this.activeRun.awaiting_confirmation = false;
-      this.activeRun.next_kind = undefined;
-      this.activeRun.overall_pass =
+      this.activeRun!.phase = "settled";
+      this.activeRun!.decision = decision;
+      this.activeRun!.error = error;
+      this.activeRun!.current_kind = undefined;
+      this.activeRun!.pausing = false;
+      this.activeRun!.paused = false;
+      this.activeRun!.paused_side = undefined;
+      this.activeRun!.ending = false;
+      this.activeRun!.awaiting_confirmation = false;
+      this.activeRun!.next_kind = undefined;
+      this.activeRun!.overall_pass =
         decision === "done" &&
-        this.activeRun.controls.length > 0 &&
-        this.activeRun.controls.every((c) => c.pass);
-      this.activeRun.settled_at = new Date().toISOString();
+        this.activeRun!.controls.length > 0 &&
+        this.activeRun!.controls.every((c) => c.pass);
+      this.activeRun!.settled_at = new Date().toISOString();
     }
     this.stopRequested = false;
+    this.pauseRequested = false;
     this.continueSignal = null;
+    this.resumeSignal = null;
+    this.cacheKeysByRun.delete(runId);
     this.emitStatus();
     this.events.emit("done", {
       run_id: this.activeRun?.run_id,
@@ -350,6 +563,16 @@ export class ControlTestService implements OnModuleInit {
       .catch((err) =>
         this.logger.warn(`持久化对照测试 run 失败: ${err instanceof Error ? err.message : err}`),
       );
+  }
+
+  /** 删除持久化快照。排在 persistChain 后面,保证旧快照写入不会在清理后反插回来。 */
+  private async clearPersistedRun(): Promise<void> {
+    this.persistChain = this.persistChain
+      .then(() => this.repo.clearControlTestRun())
+      .catch((err) =>
+        this.logger.warn(`清理对照测试 run 快照失败: ${err instanceof Error ? err.message : err}`),
+      );
+    await this.persistChain;
   }
 
   // ===== 判定 =====
@@ -436,7 +659,14 @@ export class ControlTestService implements OnModuleInit {
 
 function toMetricView(s: MetricSummary | undefined): MetricView | null {
   if (!s) return null;
-  return { key: s.key, point: s.point, ci95: s.ci95, verdict: s.verdict };
+  return {
+    key: s.key,
+    point: s.point,
+    ci95: s.ci95,
+    mde: s.mde,
+    p: s.p,
+    verdict: s.verdict,
+  };
 }
 
 function toBucketView(

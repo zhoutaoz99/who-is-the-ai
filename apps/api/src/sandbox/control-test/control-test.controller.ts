@@ -2,7 +2,9 @@
 // - GET  /sandbox/control-test/controls   预览三条对照(不跑)
 // - GET  /sandbox/control-test/state       当前/最近一次 run 快照(首屏 / 重连兜底)
 // - POST /sandbox/control-test/run         一键 kickoff:后台跑负/正/空三对照,立即返回 run_id(进度走 socket)
-// - POST /sandbox/control-test/stop        停止当前 run
+// - POST /sandbox/control-test/pause       暂停当前 run(等在跑对局自然收尾)
+// - POST /sandbox/control-test/resume      恢复已暂停 run
+// - POST /sandbox/control-test/end         结束本次 run(清理本次所有数据)
 // - POST /sandbox/control-test/continue    逐对照确认模式下放行下一条对照
 
 import { Body, Controller, Get, Post } from "@nestjs/common";
@@ -79,9 +81,28 @@ export class ControlTestController {
     }
   }
 
+  @Post("pause")
+  pause(): { ok: boolean } {
+    this.controlTest.pause();
+    return { ok: true };
+  }
+
+  @Post("resume")
+  resume(): { ok: boolean } {
+    this.controlTest.resume();
+    return { ok: true };
+  }
+
+  @Post("end")
+  end(): { ok: boolean } {
+    this.controlTest.end();
+    return { ok: true };
+  }
+
+  /** 兼容旧脚本:旧 stop 语义等同于「结束本次」,前台不再使用。 */
   @Post("stop")
   stop(): { ok: boolean } {
-    this.controlTest.stop();
+    this.controlTest.end();
     return { ok: true };
   }
 

@@ -94,9 +94,50 @@
   line-height: 1.5;
   margin: 8px 0;
 }
+.ctl-result-explain {
+  margin: 8px 0 10px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--border, #d7dbe3);
+  background: rgba(122, 134, 153, 0.06);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text, #1f2733);
+}
+.ctl-result-explain p {
+  margin: 0 0 6px;
+}
+.ctl-result-explain ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.ctl-result-explain li + li {
+  margin-top: 3px;
+}
 .ctl-bucket-form {
   font-size: 12px;
   margin-bottom: 4px;
+}
+.ctl-metric-row {
+  grid-template-columns: minmax(0, 1fr) auto auto minmax(118px, auto);
+  padding: 5px 0;
+  border-top: 1px solid rgba(122, 134, 153, 0.14);
+}
+.ctl-bucket-form + .ctl-metric-row {
+  border-top: 0;
+}
+.ctl-metric-explain {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+@media (max-width: 720px) {
+  .ctl-metric-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .ctl-metric-row .orch-gate-verdict {
+    grid-column: 1 / -1;
+  }
 }
 .ctl-notes {
   margin-top: 8px;
@@ -169,4 +210,43 @@
 /* 父(champion)基线组的标签色(其余 null/negative/positive 复用已有色) */
 .ctl-kind-tag.ctl-parent {
   color: var(--text, #1f2733);
+}
+
+/* 打分详情弹窗:逐玩家解释(打分解释)列表 */
+.score-assess-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.score-assess-row {
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d7dbe3);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+.score-assess-row.is-ai {
+  border-color: #b42318;
+  background: rgba(180, 35, 24, 0.05);
+}
+.score-assess-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.score-assess-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.room-tag.score-ai-tag {
+  background: #b42318;
+}
+.score-assess-reason {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text, #1f2733);
+  white-space: pre-wrap;
 }
