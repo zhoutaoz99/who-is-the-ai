@@ -23,13 +23,6 @@ export interface AiModelEntry {
   timeoutMs?: number;
   thinking?: boolean;
   maxTokens?: number;
-  expression?: {
-    model?: string;
-    temperature?: number;
-    reasoningEffort?: string;
-    thinking?: boolean;
-    maxTokens?: number;
-  };
 }
 
 export interface AiConfig extends AiModelCallConfig {

@@ -8,13 +8,7 @@
     "temperature": 0.6,
     "thinking": true,
     "reasoningEffort": "high",
-    "timeoutMs": 60000,
-    "expression": {
-      "model": "deepseek-v4-flash",
-      "temperature": 0.9,
-      "thinking": true,
-      "reasoningEffort": "medium"
-    }
+    "timeoutMs": 60000
   },
   {
     "id": "mimo",
@@ -24,12 +18,7 @@
     "model": "mimo-v2.5-pro",
     "temperature": 0.6,
     "thinking": true,
-    "timeoutMs": 60000,
-    "expression": {
-      "model": "mimo-v2.5",
-      "temperature": 0.9,
-      "thinking": true
-    }
+    "timeoutMs": 60000
   },
   {
     "id": "claude-sonnet",
@@ -40,11 +29,6 @@
     "model": "claude-sonnet-4-6",
     "temperature": 0.6,
     "maxTokens": 1024,
-    "timeoutMs": 60000,
-    "expression": {
-      "model": "claude-sonnet-4-6",
-      "temperature": 0.9,
-      "maxTokens": 1024
-    }
+    "timeoutMs": 60000
   }
 ]
