@@ -12,7 +12,7 @@
 - **在线产品对局**：真人 + 隐藏 AI 的实时房间，就是玩家实际玩的那局游戏。
 - **离线优化沙盒**：复用同一套产品运行时（`GameService`）跑场景化对局，再用裁判打分 → 聚合 → 优化器 → 编排器代际循环来评测和迭代对局 AI 的提示词；配套对照测试、真人校准、提示词版本库、LLM 用量统计与复盘导出等工具。
 
-系统全景可视化导览见 [`overview/index.html`](overview/index.html)（零构建，浏览器直接打开）。规划与待办统一维护在 [`docs/Roadmap.md`](docs/Roadmap.md)，文档总览见 [`docs/README.md`](docs/README.md)。
+系统全景可视化导览见 [`overview/`](overview/)：GitHub 不会直接渲染仓库里的 HTML，点[**在线预览**](https://raw.githack.com/zhoutaoz99/ai-werewolf/main/overview/index.html)即可查看渲染后的页面（经 raw.githack CDN 提供），或克隆仓库后用浏览器打开 `overview/index.html`（零构建、零依赖）。规划与待办统一维护在 [`docs/Roadmap.md`](docs/Roadmap.md)，文档总览见 [`docs/README.md`](docs/README.md)。
 
 ## 功能范围
 
