@@ -191,16 +191,7 @@
   text-align: center;
 }
 
-.debug-ai-controls {
-  background: #f8fafc;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  display: grid;
-  gap: 10px;
-  padding: 10px;
-}
-
-.debug-room-settings {
+.room-settings {
   background: #f8fafc;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -210,49 +201,12 @@
   padding: 10px;
 }
 
-.debug-room-settings button {
+.room-settings button {
   align-self: end;
   min-height: 40px;
 }
 
-.debug-fast-mode-toggle {
-  align-items: center;
-  align-self: end;
-  color: var(--text);
-  display: inline-flex;
-  font-size: 13px;
-  font-weight: 700;
-  gap: 8px;
-  min-height: 42px;
-}
-
-.debug-fast-mode-toggle input {
-  min-height: 0;
-  width: 16px;
-  height: 16px;
-}
-
-.debug-ai-header {
-  align-items: center;
-  color: var(--muted);
-  display: flex;
-  font-size: 12px;
-  font-weight: 800;
-  justify-content: space-between;
-}
-
-.debug-ai-header strong {
-  color: var(--text);
-  font-size: 12px;
-}
-
-.debug-ai-row {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.debug-ai-select {
+.sandbox-select {
   background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -261,28 +215,6 @@
   min-height: 40px;
   min-width: 0;
   padding: 0 10px;
-}
-
-.debug-ai-add-btn {
-  min-height: 40px;
-  padding: 0 14px;
-}
-
-.debug-ai-remove-btn {
-  align-items: center;
-  background: #fee2e2;
-  color: #b42318;
-  display: inline-flex;
-  flex-shrink: 0;
-  font-size: 12px;
-  gap: 4px;
-  min-height: 32px;
-  padding: 0 10px;
-}
-
-.debug-ai-remove-btn:hover:not(:disabled) {
-  background: #fecaca;
-  color: #991b1b;
 }
 
 /* Waiting hint box */
@@ -451,7 +383,7 @@
   color: #92400e;
 }
 
-.debug-model-inline {
+.sandbox-model-inline {
   min-height: 24px;
   font-size: 11px;
   padding: 0 4px;
@@ -515,16 +447,8 @@
     padding: 10px;
   }
 
-  .debug-ai-row {
+  .room-settings {
     grid-template-columns: 1fr;
-  }
-
-  .debug-room-settings {
-    grid-template-columns: 1fr;
-  }
-
-  .debug-ai-remove-btn {
-    justify-content: center;
   }
 
   .player-avatar {

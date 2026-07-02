@@ -286,7 +286,7 @@ export default function SandboxConfigPage() {
               )}
 
               {room.status === "waiting" && (
-                <div className="debug-room-settings">
+                <div className="room-settings">
                   <label className="field">
                     <span>每轮发言时间（分钟）</span>
                     <input
@@ -362,7 +362,7 @@ export default function SandboxConfigPage() {
                         )}
                         {models.length > 0 && player ? (
                           <select
-                            className="debug-ai-select debug-model-inline"
+                            className="sandbox-select sandbox-model-inline"
                             value={liveModel}
                             disabled={pending}
                             onChange={(e) => {

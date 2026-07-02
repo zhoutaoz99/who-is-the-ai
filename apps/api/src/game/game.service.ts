@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 import { AiService } from "../ai/ai.service";
-import { getActivePersonas, getAiPersonaById } from "../ai/ai.personas";
+import { getAiPersonaById } from "../ai/ai.personas";
 import { GameContext, RoundVoteSummary, VoteRecord } from "../ai/ai.types";
 import { AuthService } from "../auth/auth.service";
 import {
@@ -23,10 +23,6 @@ import {
   MAX_HUMAN_PLAYERS,
   NEXT_ROUND_DELAY_MS,
   REWARD_POOL,
-  SIM_HUMAN_SPEECH_COOLDOWN_MS,
-  SIM_HUMAN_SPEECH_NEXT_CHECK_MAX_MS,
-  SIM_HUMAN_SPEECH_RESPONSE_DELAY_MAX_MS,
-  SIM_HUMAN_SPEECH_SKIP_BACKOFF_MS,
   SPEAK_COOLDOWN_MS,
   VOTE_DURATION_MS,
 } from "./game.config";
@@ -42,7 +38,6 @@ import {
   createHumanPlayer,
   createSandboxPlayers,
   type SandboxPlayerSpec,
-  createSimulatedHumanPlayer,
   createRoomId,
   futureIso,
   getWinner,
@@ -91,7 +86,6 @@ type RoomTimers = {
   phase?: NodeJS.Timeout;
   tick?: NodeJS.Timeout;
   aiSpeech?: NodeJS.Timeout;
-  simulatedHumanSpeech?: NodeJS.Timeout;
 };
 
 type AiSpeechContextMark = {
@@ -99,8 +93,7 @@ type AiSpeechContextMark = {
   voteCount: number;
 };
 
-type SpeechSchedulerKind = "ai" | "simulated-human";
-type SpeechTimerKey = "aiSpeech" | "simulatedHumanSpeech";
+type SpeechSchedulerKind = "ai" | "sandbox";
 type SandboxSpeechPassResult = "continue" | "start-voting" | "stop";
 
 @Injectable()
@@ -108,7 +101,6 @@ export class GameService {
   private readonly logger = new Logger(GameService.name);
   private readonly timers = new Map<string, RoomTimers>();
   private readonly aiSpeaking = new Map<string, boolean>();
-  private readonly simulatedHumanSpeaking = new Map<string, boolean>();
   private readonly speechGeneratings = new Map<string, Map<string, SpeechGeneratingPayload>>();
   private server?: Server;
 
@@ -218,7 +210,7 @@ export class GameService {
     aiPromptVersionId?: string;
   }): Promise<ActionResult> {
     if (!DEBUG) {
-      return this.fail("调试模式未开启(沙盒需 DEBUG=true)");
+      return this.fail("沙盒未开启(DEBUG=true)");
     }
 
     const now = new Date().toISOString();
@@ -572,9 +564,14 @@ export class GameService {
     const roomId = normalizeRoomId(payload.roomId);
     let failure = "房间不存在或操作冲突";
     const room = await this.applyWithLock(roomId, (latest) => {
-      const isSandbox = DEBUG && isSandboxRoom(latest) === true;
+      const isSandbox = isSandboxRoom(latest) === true;
       if (latest.status !== "waiting") {
         failure = "游戏已经开始";
+        return false;
+      }
+
+      if (isSandbox && !DEBUG) {
+        failure = "沙盒未开启(DEBUG=true)";
         return false;
       }
 
@@ -765,7 +762,7 @@ export class GameService {
 
   async stopGame(payload: StopGamePayload): Promise<ActionResult> {
     if (!DEBUG) {
-      return this.fail("调试模式未开启");
+      return this.fail("运维功能未开启(DEBUG=true)");
     }
 
     const roomId = normalizeRoomId(payload.roomId);
@@ -813,13 +810,18 @@ export class GameService {
 
   async updateSandboxPlayerModel(payload: UpdateSandboxPlayerModelPayload): Promise<ActionResult> {
     if (!DEBUG) {
-      return this.fail("调试模式未开启");
+      return this.fail("沙盒未开启(DEBUG=true)");
     }
 
     const roomId = normalizeRoomId(payload.roomId);
     let failure = "房间不存在或操作冲突";
 
     const room = await this.applyWithLock(roomId, (latest) => {
+      if (!isSandboxRoom(latest)) {
+        failure = "只能修改沙盒房玩家模型";
+        return false;
+      }
+
       if (latest.status !== "waiting") {
         failure = "只能在等待房间修改模型";
         return false;
@@ -853,7 +855,7 @@ export class GameService {
     payload: DeleteSandboxRoomPayload,
   ): Promise<ActionResult> {
     if (!DEBUG) {
-      return this.fail("调试模式未开启");
+      return this.fail("沙盒未开启(DEBUG=true)");
     }
 
     const room = await this.getRoom(payload.roomId);
@@ -879,7 +881,7 @@ export class GameService {
 
   async deleteRoom(payload: DeleteRoomPayload): Promise<ActionResult> {
     if (!DEBUG) {
-      return this.fail("调试模式未开启");
+      return this.fail("运维功能未开启(DEBUG=true)");
     }
 
     const room = await this.getRoom(payload.roomId);
@@ -909,7 +911,7 @@ export class GameService {
 
       const isSandbox = isSandboxRoom(latest) === true;
       if (isSandbox && !DEBUG) {
-        failure = "调试模式未开启";
+        failure = "沙盒未开启(DEBUG=true)";
         return false;
       }
 
@@ -991,7 +993,6 @@ export class GameService {
       this.startSandboxSpeechLoop(room);
     } else {
       this.startAiSpeech(room);
-      this.startSimulatedHumanSpeech(room);
     }
 
     this.getTimers(room.id).phase = setTimeout(() => {
@@ -1488,7 +1489,6 @@ export class GameService {
         this.emitSpeechGenerating(roomId, freshPlayer, roundNo);
 
         const contextMark = this.markAiSpeechContext(before);
-        const schedulerKind = this.playerSpeechSchedulerKind(freshPlayer);
         const context = this.buildGameContext(before, freshPlayer);
         const action = await this.aiService.generateSpeech(context);
 
@@ -1503,7 +1503,7 @@ export class GameService {
           this.logDiscardedSpeech(
             roomId,
             freshPlayer,
-            schedulerKind,
+            "sandbox",
             roundNo,
             "沙盒顺序发言返回后对局已离开发言阶段或上下文失效",
             action.type === "speak" ? action.content : undefined,
@@ -1547,7 +1547,7 @@ export class GameService {
           this.logDiscardedSpeech(
             roomId,
             freshPlayer,
-            schedulerKind,
+            "sandbox",
             roundNo,
             "沙盒顺序发言保存失败",
             action.content,
@@ -1788,31 +1788,18 @@ export class GameService {
     });
   }
 
-  private playerSpeechSchedulerKind(
-    player: Player,
-  ): SpeechSchedulerKind {
-    return isSimulatedHuman(player) ? "simulated-human" : "ai";
-  }
-
   private startAiSpeech(room: Room) {
-    this.startModelSpeech(room, "ai", AI_SPEECH_INITIAL_CHECK_MS);
-  }
-
-  private startSimulatedHumanSpeech(room: Room) {
-    this.startModelSpeech(room, "simulated-human", AI_SPEECH_INITIAL_CHECK_MS);
+    this.startModelSpeech(room, AI_SPEECH_INITIAL_CHECK_MS);
   }
 
   private startModelSpeech(
     room: Room,
-    schedulerKind: SpeechSchedulerKind,
     initialDelayMs: number,
   ) {
     const roomId = room.id;
-    const timerKey = this.speechTimerKey(schedulerKind);
-    const speaking = this.speechSpeakingMap(schedulerKind);
 
     const scheduleNext = (delayMs: number) => {
-      this.getTimers(roomId)[timerKey] = setTimeout(async () => {
+      this.getTimers(roomId).aiSpeech = setTimeout(async () => {
         const room = await this.getRoom(roomId);
         if (!room) {
           return;
@@ -1822,32 +1809,25 @@ export class GameService {
           return;
         }
 
-        if (speaking.get(room.id)) {
+        if (this.aiSpeaking.get(room.id)) {
           scheduleNext(AI_SPEECH_NEXT_CHECK_MIN_MS);
           return;
         }
 
-        const aiPlayer = this.selectSpeechPlayer(room, schedulerKind);
+        const aiPlayer = this.selectSpeechPlayer(room);
         if (!aiPlayer) {
           scheduleNext(AI_SPEECH_NEXT_CHECK_MIN_MS);
           return;
         }
 
-        if (isSandboxRoom(room)) {
-          this.emitSpeechGenerating(room.id, aiPlayer, room.currentRound);
-        }
-
         const contextMark = this.markAiSpeechContext(room);
         const decisionStartedAt = Date.now();
         let nextDelayMs: number | null = AI_SPEECH_NEXT_CHECK_MIN_MS;
-        speaking.set(room.id, true);
+        this.aiSpeaking.set(room.id, true);
         try {
           const context = this.buildGameContext(room, aiPlayer);
           const action = await this.aiService.generateSpeech(context);
-          nextDelayMs = this.clampModelNextCheckDelay(
-            action.nextCheckAfterMs,
-            aiPlayer,
-          );
+          nextDelayMs = this.clampAiNextCheckDelay(action.nextCheckAfterMs);
 
           const latestAfterModel = await this.getRoom(room.id);
           if (
@@ -1859,19 +1839,11 @@ export class GameService {
             this.logDiscardedSpeech(
               room.id,
               aiPlayer,
-              schedulerKind,
+              "ai",
               contextMark.roundNo,
               "模型返回后对局已离开发言阶段或轮次已变化",
               action.type === "speak" ? action.content : undefined,
             );
-            if (latestAfterModel && isSandboxRoom(latestAfterModel)) {
-              this.emitSpeechDiscarded(
-                room.id,
-                aiPlayer,
-                "对局已离开发言阶段",
-                contextMark.roundNo,
-              );
-            }
             nextDelayMs = null;
             return;
           }
@@ -1880,19 +1852,11 @@ export class GameService {
             this.logDiscardedSpeech(
               room.id,
               aiPlayer,
-              schedulerKind,
+              "ai",
               contextMark.roundNo,
               "模型返回后上下文已失效",
               action.type === "speak" ? action.content : undefined,
             );
-            if (isSandboxRoom(latestAfterModel)) {
-              this.emitSpeechDiscarded(
-                room.id,
-                aiPlayer,
-                "上下文已失效",
-                contextMark.roundNo,
-              );
-            }
             nextDelayMs = this.randomAiStaleRetryDelay();
             return;
           }
@@ -1902,20 +1866,13 @@ export class GameService {
               room.id,
               aiPlayer.id,
               contextMark.roundNo,
-              schedulerKind,
             );
             this.aiService.recordCalls(action.callRecords);
-            if (isSandboxRoom(room)) {
-              this.emitSpeechDiscarded(room.id, aiPlayer, "skip", contextMark.roundNo);
-            }
           }
 
           if (action.type === "speak") {
             const elapsedMs = Date.now() - decisionStartedAt;
-            const targetDelayMs = this.clampModelResponseDelay(
-              action.targetResponseDelayMs,
-              aiPlayer,
-            );
+            const targetDelayMs = this.clampAiResponseDelay(action.targetResponseDelayMs);
             const remainingDelayMs = Math.max(0, targetDelayMs - elapsedMs);
             if (remainingDelayMs > 0) {
               await this.delay(remainingDelayMs);
@@ -1936,7 +1893,7 @@ export class GameService {
               const freshAiPlayer = latest.players.find(
                 (player) =>
                   player.id === aiPlayer.id &&
-                  this.isSpeechSchedulerPlayer(player, schedulerKind) &&
+                  player.type === "ai" &&
                   player.status === "alive",
               );
               if (!freshAiPlayer) {
@@ -1961,19 +1918,11 @@ export class GameService {
               this.logDiscardedSpeech(
                 room.id,
                 aiPlayer,
-                schedulerKind,
+                "ai",
                 contextMark.roundNo,
                 discardReason ?? "保存发言时上下文已失效",
                 action.content,
               );
-              if (isSandboxRoom(room)) {
-                this.emitSpeechDiscarded(
-                  room.id,
-                  aiPlayer,
-                  discardReason ?? "上下文已失效",
-                  contextMark.roundNo,
-                );
-              }
               nextDelayMs = this.randomAiStaleRetryDelay();
               return;
             }
@@ -1990,23 +1939,15 @@ export class GameService {
               this.logDiscardedSpeech(
                 room.id,
                 aiPlayer,
-                schedulerKind,
+                "ai",
                 contextMark.roundNo,
                 discardReason ?? "保存发言失败",
                 action.content,
               );
-              if (isSandboxRoom(room)) {
-                this.emitSpeechDiscarded(
-                  room.id,
-                  aiPlayer,
-                  discardReason ?? "保存发言失败",
-                  contextMark.roundNo,
-                );
-              }
             }
           }
         } finally {
-          speaking.set(room.id, false);
+          this.aiSpeaking.set(room.id, false);
           if (nextDelayMs != null) {
             const latest = await this.getRoom(room.id);
             if (latest?.status === "playing" && latest.phase === "discussion") {
@@ -2020,16 +1961,13 @@ export class GameService {
     scheduleNext(initialDelayMs);
   }
 
-  private selectSpeechPlayer(
-    room: Room,
-    schedulerKind: SpeechSchedulerKind,
-  ): Player | null {
+  private selectSpeechPlayer(room: Room): Player | null {
     const now = Date.now();
     const candidates = room.players.filter(
       (player) =>
-        this.isSpeechSchedulerPlayer(player, schedulerKind) &&
+        player.type === "ai" &&
         player.status === "alive" &&
-        now - player.lastSpokeAt >= this.modelSpeechCooldownMs(player) &&
+        now - player.lastSpokeAt >= SPEAK_COOLDOWN_MS &&
         (player.aiSkipBackoffUntil ?? 0) <= now,
     );
 
@@ -2038,31 +1976,6 @@ export class GameService {
     }
 
     return this.selectByRoundFreshness(room, candidates);
-  }
-
-  private isSpeechSchedulerPlayer(
-    player: Player,
-    schedulerKind: SpeechSchedulerKind,
-  ): boolean {
-    if (schedulerKind === "ai") {
-      return player.type === "ai";
-    }
-
-    return isSimulatedHuman(player);
-  }
-
-  private speechTimerKey(
-    schedulerKind: SpeechSchedulerKind,
-  ): SpeechTimerKey {
-    return schedulerKind === "ai" ? "aiSpeech" : "simulatedHumanSpeech";
-  }
-
-  private speechSpeakingMap(
-    schedulerKind: SpeechSchedulerKind,
-  ): Map<string, boolean> {
-    return schedulerKind === "ai"
-      ? this.aiSpeaking
-      : this.simulatedHumanSpeaking;
   }
 
   private emitSpeechGenerating(roomId: string, player: Player, roundNo?: number) {
@@ -2238,7 +2151,6 @@ export class GameService {
     roomId: string,
     aiPlayerId: string,
     roundNo: number,
-    schedulerKind: SpeechSchedulerKind,
   ) {
     await this.applyWithLock(roomId, (latest) => {
       if (
@@ -2252,7 +2164,7 @@ export class GameService {
       const player = latest.players.find(
         (candidate) =>
           candidate.id === aiPlayerId &&
-          this.isSpeechSchedulerPlayer(candidate, schedulerKind) &&
+          candidate.type === "ai" &&
           candidate.status === "alive",
       );
       if (!player) {
@@ -2261,8 +2173,7 @@ export class GameService {
 
       player.aiLastConsideredRound = roundNo;
       player.aiLastConsideredAt = Date.now();
-      player.aiSkipBackoffUntil =
-        Date.now() + this.modelSpeechSkipBackoffMs(player);
+      player.aiSkipBackoffUntil = Date.now() + AI_SPEECH_SKIP_BACKOFF_MS;
       touch(latest);
       return true;
     });
@@ -2292,45 +2203,11 @@ export class GameService {
     );
   }
 
-  private clampModelNextCheckDelay(delayMs: number, player: Player): number {
-    if (isSimulatedHuman(player)) {
-      return Math.min(
-        SIM_HUMAN_SPEECH_NEXT_CHECK_MAX_MS,
-        Math.max(AI_SPEECH_NEXT_CHECK_MIN_MS, delayMs),
-      );
-    }
-
-    return this.clampAiNextCheckDelay(delayMs);
-  }
-
   private clampAiResponseDelay(delayMs: number): number {
     return Math.min(
       AI_SPEECH_RESPONSE_DELAY_MAX_MS,
       Math.max(AI_SPEECH_RESPONSE_DELAY_MIN_MS, delayMs),
     );
-  }
-
-  private clampModelResponseDelay(delayMs: number, player: Player): number {
-    if (isSimulatedHuman(player)) {
-      return Math.min(
-        SIM_HUMAN_SPEECH_RESPONSE_DELAY_MAX_MS,
-        Math.max(AI_SPEECH_RESPONSE_DELAY_MIN_MS, delayMs),
-      );
-    }
-
-    return this.clampAiResponseDelay(delayMs);
-  }
-
-  private modelSpeechCooldownMs(player: Player): number {
-    return isSimulatedHuman(player)
-      ? SIM_HUMAN_SPEECH_COOLDOWN_MS
-      : SPEAK_COOLDOWN_MS;
-  }
-
-  private modelSpeechSkipBackoffMs(player: Player): number {
-    return isSimulatedHuman(player)
-      ? SIM_HUMAN_SPEECH_SKIP_BACKOFF_MS
-      : AI_SPEECH_SKIP_BACKOFF_MS;
   }
 
   private randomAiStaleRetryDelay(): number {
@@ -2511,8 +2388,7 @@ export class GameService {
       mySimulated: isSimulatedHuman(aiPlayer),
       myModelId: aiPlayer.aiModelId,
       mySeatNo: aiPlayer.seatNo,
-      // 任何带 personaId 的 model-driven 玩家(含沙盒侦探/填充)都解析人格;
-      // 旧调试模型玩家无 personaId,解析为 null,行为不变。
+      // 任何带 personaId 的 model-driven 玩家(含沙盒侦探/填充)都解析人格。
       myPersona: getAiPersonaById(aiPlayer.aiPersonaId),
       alivePlayers,
       recentMessages,
@@ -2863,13 +2739,9 @@ export class GameService {
     if (timers.aiSpeech) {
       clearTimeout(timers.aiSpeech);
     }
-    if (timers.simulatedHumanSpeech) {
-      clearTimeout(timers.simulatedHumanSpeech);
-    }
 
     this.timers.set(roomId, {});
     this.aiSpeaking.delete(roomId);
-    this.simulatedHumanSpeaking.delete(roomId);
     this.speechGeneratings.delete(roomId);
   }
 

@@ -6,7 +6,7 @@ import { DEBUG } from "../game/game.config";
 import { ReplayService } from "./replay.service";
 
 @Injectable()
-export class DebugAiRecorder implements AiCallRecorder, OnModuleInit {
+export class AiCallLogRecorder implements AiCallRecorder, OnModuleInit {
   constructor(
     private readonly replayService: ReplayService,
     private readonly aiService: AiService,

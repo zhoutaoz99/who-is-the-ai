@@ -571,9 +571,9 @@ export default function Home() {
           </button>
 
           {debug && (
-            <div className="debug-auto-ai-entry">
+            <div className="tool-entry">
               <div className="lobby-card-header">
-                <div className="lobby-icon debug-ai-icon" aria-hidden="true">
+                <div className="lobby-icon tool-icon" aria-hidden="true">
                   <svg
                     viewBox="0 0 24 24"
                     width="20"
@@ -614,9 +614,9 @@ export default function Home() {
           )}
 
           {debug && (
-            <div className="sandbox-entry">
+            <div className="tool-entry sandbox-entry">
               <div className="lobby-card-header">
-                <div className="lobby-icon debug-ai-icon" aria-hidden="true">
+                <div className="lobby-icon tool-icon" aria-hidden="true">
                   <IconBot width="20" height="20" />
                 </div>
                 <div>
@@ -629,7 +629,7 @@ export default function Home() {
               </p>
               {sandboxExamples.length > 0 && (
                 <select
-                  className="debug-ai-select"
+                  className="sandbox-select"
                   value={selectedScenarioId}
                   disabled={sandboxPending}
                   onChange={(e) => setSelectedScenarioId(e.target.value)}
@@ -848,7 +848,7 @@ export default function Home() {
                         {room.status === "finished" && (
                           <div className="replay-room-actions">
                             <span className="replay-link-btn">对局记录 →</span>
-                            {room.debug && (
+                            {debug && (
                               <span
                                 role="button"
                                 tabIndex={0}

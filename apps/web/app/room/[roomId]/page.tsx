@@ -730,7 +730,7 @@ export default function WaitingRoomPage() {
                   </p>
                 )}
                 {canEditDiscussionDuration && (
-                  <div className="debug-room-settings">
+                  <div className="room-settings">
                     <label className="field">
                       <span>每轮发言时间（分钟）</span>
                       <input

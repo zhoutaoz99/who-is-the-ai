@@ -1,13 +1,12 @@
 import {
   AI_PLAYER_COUNT,
-  DEBUG,
   MAX_HUMAN_PLAYERS,
   MAX_ROUNDS,
   REWARD_POOL,
   SPEAK_COOLDOWN_MS,
   VOTE_DURATION_MS,
 } from "./game.config";
-import { getActivePersonas, getAiPersonaById } from "../ai/ai.personas";
+import { getAiPersonaById } from "../ai/ai.personas";
 import {
   canStartSandboxRoom,
   countAi,
@@ -23,9 +22,8 @@ import {
 
 export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string; default?: boolean }>): RoomSnapshot {
   const revealTypes = room.status === "finished";
-  const showDebugWaitingAi = DEBUG && room.status === "waiting";
-  const showSandbox = DEBUG && isSandboxRoom(room);
-  const hideAi = room.status === "waiting" && !showDebugWaitingAi;
+  const showSandbox = isSandboxRoom(room);
+  const hideAi = room.status === "waiting" && !showSandbox;
   const aiPlayerCount = showSandbox ? countAi(room) : AI_PLAYER_COUNT;
 
   return {
@@ -37,10 +35,8 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
       .sort((a, b) => a.seatNo - b.seatNo)
       .filter((player) => !hideAi || player.type !== "ai")
       .map((player) => {
-        const exposeDebugType =
-          showSandbox ||
-          (player.type === "ai" && showDebugWaitingAi);
-        const persona = revealTypes || exposeDebugType
+        const exposeModelDrivenType = showSandbox;
+        const persona = revealTypes || exposeModelDrivenType
           ? getAiPersonaById(player.aiPersonaId)
           : null;
         return {
@@ -52,7 +48,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
           eliminatedRound: player.eliminatedRound,
           revealedType: revealTypes
             ? player.type
-            : exposeDebugType
+            : exposeModelDrivenType
               ? player.type
               : undefined,
           simulated:
@@ -61,7 +57,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
               : undefined,
           aiPersonaId: persona?.id,
           aiPersonaName: persona?.nickname,
-          aiModelId: (revealTypes || exposeDebugType) ? player.aiModelId : undefined,
+          aiModelId: (revealTypes || exposeModelDrivenType) ? player.aiModelId : undefined,
           // 沙盒角色(仅 sandbox 房有;前台据此显示 被测AI/侦探/填充)。
           sandboxRole: player.sandboxRole,
         };
@@ -78,13 +74,7 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
     config: {
       maxHumanPlayers: MAX_HUMAN_PLAYERS,
       aiPlayerCount,
-      aiPersonas: DEBUG
-        ? getActivePersonas().map((persona) => ({
-            id: persona.id,
-            name: persona.nickname,
-          }))
-        : undefined,
-      availableModels: (DEBUG && availableModels?.length) ? availableModels : undefined,
+      availableModels: (showSandbox && availableModels?.length) ? availableModels : undefined,
       maxRounds: MAX_ROUNDS,
       discussionDurationMs: room.discussionDurationMs,
       voteDurationMs: VOTE_DURATION_MS,
@@ -96,7 +86,6 @@ export function toRoomSnapshot(room: Room, availableModels?: Array<{ id: string;
       (showSandbox
         ? canStartSandboxRoom(room)
         : countHumans(room) >= 1),
-    debug: DEBUG || undefined,
     // 沙盒房标识(有则前台按被测AI/侦探/填充渲染)。
     sandboxScenarioId: room.sandboxScenarioId,
     promptGenerationId: room.promptGenerationId,
@@ -114,7 +103,7 @@ export function toPublicMessage(message: ChatMessage, room: Room) {
     content: message.content,
     createdAt: message.createdAt,
     source:
-      room.status === "finished" || (DEBUG && isSandboxRoom(room))
+      room.status === "finished" || isSandboxRoom(room)
         ? message.source
         : undefined,
   };

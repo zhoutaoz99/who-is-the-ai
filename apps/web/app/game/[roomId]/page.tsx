@@ -301,6 +301,7 @@ export default function GamePage() {
   const { refreshMe } = useAuth();
   const {
     connected,
+    debug,
     pending,
     error,
     getRoom,
@@ -604,7 +605,7 @@ export default function GamePage() {
                   ? formatPointAwardSummary(room)
                   : room.winner === "ai"
                     ? "4 轮结束后仍有 AI 玩家在场，本局挑战失败。"
-                    : "游戏被调试模式中止。"}
+                    : "游戏已中止。"}
               </p>
             </div>
           </div>
@@ -934,14 +935,14 @@ export default function GamePage() {
             </div>
           )}
 
-          {room.debug && room.status === "playing" && (
+          {debug && room.status === "playing" && (
             <button
               className="secondary"
               disabled={pending}
               onClick={() => stopGame(room.id)}
               style={{ marginTop: "1rem", width: "100%" }}
             >
-              停止游戏（调试）
+              停止对局
             </button>
           )}
 

@@ -83,7 +83,7 @@
   color: #7c3aed;
 }
 
-.debug-ai-icon {
+.tool-icon {
   background: #fffbeb;
   color: #b54708;
 }
@@ -94,7 +94,7 @@
   margin: 4px 0;
 }
 
-.debug-auto-ai-entry {
+.tool-entry {
   background: #f8fafc;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -442,4 +442,3 @@
     display: none;
   }
 }
-

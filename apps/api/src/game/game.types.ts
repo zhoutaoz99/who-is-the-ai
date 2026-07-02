@@ -209,10 +209,6 @@ export interface RoomSnapshot {
   config: {
     maxHumanPlayers: number;
     aiPlayerCount: number;
-    aiPersonas?: Array<{
-      id: string;
-      name: string;
-    }>;
     availableModels?: Array<{
       id: string;
       default?: boolean;
@@ -224,7 +220,6 @@ export interface RoomSnapshot {
     rewardPool: number;
   };
   canStart: boolean;
-  debug?: boolean;
   /** 沙盒房标识(有则前台按被测AI/侦探/填充渲染)。 */
   sandboxScenarioId?: string;
   promptGenerationId?: string;

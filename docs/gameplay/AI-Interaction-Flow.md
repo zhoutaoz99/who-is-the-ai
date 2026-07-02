@@ -4,10 +4,10 @@
 | --- | --- |
 | 文档类型 | Design |
 | 文档状态 | Active |
-| 适用范围 | 普通对局中的 AI 玩家交互流程，以及同一实现中的模拟真人分支设计 |
+| 适用范围 | 普通对局中的 AI 玩家交互流程，以及离线沙盒复用点 |
 | 目标读者 | 后端开发、评审者 |
 | 责任人 | AI / Gameplay 维护者 |
-| 最近核对日期 | 2026-06-30 |
+| 最近核对日期 | 2026-07-02 |
 | 关联代码 | `apps/api/src/game/game.service.ts`、`apps/api/src/ai/ai.service.ts`、`apps/api/src/ai/ai.types.ts`、`apps/api/src/ai/ai.personas.ts`、`apps/api/src/ai/prompts/` |
 | 关联文档 | [游戏玩法](./Gameplay.md)、[AI 拟人化设计](./AI-Human-Likeness-Design.md)、[AI 拟人化 v4.0 方案](./AI-Human-Likeness-Design-v4.0.md)、[AI 发言调度](./AI-Scheduling.md)、[AI 提示词缓存优化](./AI-Prompt-Cache-Optimization.md) |
 
@@ -18,12 +18,11 @@
 1. 从服务端权威状态中读取公开上下文，在讨论阶段发言、在投票阶段投票。
 2. 尽量表现得像真人玩家，而不是规则引擎或自动脚本。
 
-因此，AI 交互层既要满足玩法规则，也要兼顾调度、公平性、缓存效率、Prompt 可维护性和失败兜底。
+因此，AI 交互层既要满足玩法规则，也要兼顾缓存效率、Prompt 可维护性、模型协议、解析和失败兜底。讨论阶段的候选选择、发言间隔、冷却、退避与上下文失效规则由 [AI 发言调度](./AI-Scheduling.md) 维护。
 
 ## 2. 目标
 
 - 让普通对局中的 AI 玩家按游戏阶段自动发言和投票。
-- 保持房间级行为稳定，避免多个模型同时基于同一上下文抢话。
 - 让讨论阶段采用单次模型调用直接产出最终发言，减少链路长度和失败点。
 - 保证投票阶段符合同时盲投规则。
 - 为复盘、评估闭环和缓存优化提供结构化上下文与调用日志。
@@ -32,7 +31,8 @@
 
 本文不覆盖以下内容：
 
-- 调试自动对抗房的完整编排逻辑
+- 离线沙盒的完整编排、评分和优化闭环
+- AI 发言调度策略、候选选择、公平性、冷却、退避和上下文失效规则，见 [AI 发言调度](./AI-Scheduling.md)
 - 复盘分析与提示词版本评估闭环
 - Prompt 具体文案演化历史
 - `ai.service.ts` 的未来模块拆分方案
@@ -41,7 +41,7 @@
 
 - 服务端是唯一可信状态源；阶段切换、投票写入和胜负判定都在服务端完成。
 - 普通对局中 AI 身份对玩家隐藏，模型只能看到公开聊天、公开历史投票和自身短期记忆。
-- AI 与模拟真人都属于“模型驱动玩家”；普通对局实际使用 AI 分支，模拟真人分支主要服务于调试自动对抗房。
+- 普通产品对局只调度隐藏 AI 玩家；离线沙盒中的侦探/填充玩家同属 model-driven 玩家，但由沙盒顺序发言循环驱动。
 - LLM 输出不可靠，可能超时、非 JSON、结构缺失或使用非法目标，因此必须由工程层做解析和兜底。
 - 普通对局的聊天上下文优先服务于缓存复用，因此采用统一的公共视角，不做“你视角”重写。
 
@@ -63,7 +63,7 @@ flowchart LR
 
 | 组件 | 责任 |
 | --- | --- |
-| `GameService` | 触发阶段切换、选择候选玩家、构建 `GameContext`、写入发言和投票结果 |
+| `GameService` | 触发阶段切换、构建 `GameContext`、写入发言和投票结果；发言候选选择与调度规则见 [AI 发言调度](./AI-Scheduling.md) |
 | `AiService` | 构造 Prompt、调用模型、解析结果、记录调用日志、执行格式兜底 |
 | `prompt-loader.ts` | 读取文件版 Prompt 并渲染模板；沙盒被测 AI 的讨论 system prompt 可被数据库版本覆盖 |
 | `ai.personas.ts` | 维护产品四张人格卡、格式化 persona 文本，并支持沙盒额外人格注册 |
@@ -71,82 +71,16 @@ flowchart LR
 
 ## 6. 详细设计
 
-### 6.1 发言流程
+### 6.1 发言调用边界
 
-讨论阶段开始后，`GameService.afterDiscussionStarted()` 会启动模型驱动玩家的发言调度：
+讨论阶段的“何时调用、调用哪个 AI、多个 AI 如何错开、skip 后多久再问、上下文何时丢弃”统一由 [AI 发言调度](./AI-Scheduling.md) 维护。本文只描述调度器选中某个模型驱动玩家之后，`AiService.generateSpeech(context)` 如何构造 Prompt、调用模型、解析输出并交回动作结果。
 
-- 普通 AI 走 `startAiSpeech(room)`。
-- 模拟真人走 `startSimulatedHumanSpeech(room)`；普通对局通常没有候选玩家，调试自动对抗房会实际使用这一分支。
-- 调试自动对抗房的顺序发言走另一套串行循环，本文不展开。
+房间类型与发言入口的关系：
 
-#### 6.1.1 调度流程
-
-```text
-startModelSpeech(room, schedulerKind, initialDelayMs)
-  -> 等待 delay
-  -> 重新读取房间
-  -> 非 discussion 阶段则停止
-  -> 若同类调度器已有模型调用进行中，则最短延迟后重试
-  -> 选择一个候选玩家
-  -> 构建 GameContext
-  -> 调用 aiService.generateSpeech(context)
-  -> 校验返回时上下文是否失效
-  -> speak: 等待剩余反应时间后落库
-  -> skip: 记录 backoff
-  -> finally: 按 nextCheckAfterMs 再次调度
-```
-
-#### 6.1.2 候选选择与公平性
-
-普通 AI 候选集合满足：
-
-- 玩家属于当前调度器
-- 玩家处于存活状态
-- 已过发言冷却
-- 当前不在 `aiSkipBackoffUntil` 退避期
-
-候选优先级如下：
-
-1. 本轮未发言且本轮未被考虑过
-2. 本轮未发言
-3. 本轮未被考虑过
-4. 所有候选
-
-同一优先级内随机选择。
-
-涉及字段：
-
-| 字段 | 作用 |
-| --- | --- |
-| `aiLastConsideredRound` | 记录本轮是否已进入发言决策 |
-| `aiLastConsideredAt` | 记录最近一次被调度的时间 |
-| `aiSkipBackoffUntil` | skip 后短时间内避免再次选中 |
-
-#### 6.1.3 上下文失效判断
-
-普通模式下，发言上下文标记只包含：
-
-```ts
-{ roundNo, voteCount }
-```
-
-当模型返回后，只要出现以下任一情况就丢弃结果：
-
-- 轮次变化
-- 已离开发言阶段
-- 投票数变化
-
-普通模式下**新增聊天消息本身不会使上下文失效**。这是一个有意取舍：在 AI 与模拟真人分开调度后，如果“任意新聊天都失效”，模型调用会被频繁误杀。
-
-#### 6.1.4 skip 与 backoff
-
-当模型返回 `skip` 时：
-
-- 标记本轮已考虑过该玩家
-- 写入当前时间
-- 设置 `aiSkipBackoffUntil = now + backoff`
-
-普通 AI 的默认 backoff 为 `8_000ms`；模拟真人使用独立的更短退避常量。
+| 房间类型 | 发言驱动 | 交互层职责 |
+| --- | --- | --- |
+| 普通产品对局 | `AI-Scheduling.md` 定义的普通 AI 调度器 | 为被选中的隐藏 AI 构造 `GameContext`，调用 `generateSpeech()` |
+| 离线沙盒对局 | 沙盒顺序发言循环 | 为被测 AI、侦探或填充玩家构造 `GameContext`，复用 `generateSpeech()` |
 
 ### 6.2 发言生成：单层模型调用
 
@@ -382,7 +316,7 @@ API 层面的泛化写法可表示为：
 | --- | --- |
 | `GameContext` | 模型调用的统一输入 |
 | `PersonaCard` | 单层方案的人格卡结构 |
-| `AiSpeechAction` | 发言动作：`speak` 或 `skip` |
+| `AiSpeechAction` | 发言动作：`speak` 或 `skip`；调度字段的消费规则见 [AI 发言调度](./AI-Scheduling.md) |
 | `AiVoteAction` | 投票动作 |
 | `AiCallRecord` | 单次模型调用日志 |
 
@@ -399,17 +333,11 @@ API 层面的泛化写法可表示为：
 
 | 常量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `AI_SPEECH_INITIAL_CHECK_MS` | `10_000` | 讨论开始后的首次观察延迟 |
-| `AI_SPEECH_NEXT_CHECK_MIN_MS` | `1_000` | 发言观察最小间隔 |
-| `AI_SPEECH_NEXT_CHECK_MAX_MS` | `30_000` | 发言观察最大间隔 |
-| `AI_SPEECH_RESPONSE_DELAY_MIN_MS` | `800` | AI 发言最短反应时间 |
-| `AI_SPEECH_RESPONSE_DELAY_MAX_MS` | `20_000` | AI 发言最长反应时间 |
-| `AI_SPEECH_STALE_RETRY_MIN_MS` | `500` | 上下文失效后的最短重试延迟 |
-| `AI_SPEECH_STALE_RETRY_MAX_MS` | `1_500` | 上下文失效后的最长重试延迟 |
-| `AI_SPEECH_SKIP_BACKOFF_MS` | `8_000` | AI 返回 skip 后的退避 |
 | `AI_VOTE_DELAY_MS` | `1_500` | 投票阶段首个模型驱动玩家的投票延迟 |
 | `AI_VOTE_STAGGER_MS` | `1_200` | 多个模型驱动玩家之间的投票错峰 |
 | `MESSAGE_LIMIT` | `240` | 单条发言上限 |
+
+发言调度相关的 `AI_SPEECH_*`、`SPEAK_COOLDOWN_MS` 和 skip 退避配置不在本文维护，见 [AI 发言调度](./AI-Scheduling.md)。
 
 ### 7.4 模型配置文件
 
@@ -435,9 +363,7 @@ API 层面的泛化写法可表示为：
 
 | 决策 ID | 决策 | 备选方案 | 取舍理由 |
 | --- | --- | --- | --- |
-| `DEC-ROOM-SERIAL-SCHEDULING` | 房间级串行发言调度 | 多个 AI 并发生成 | 并发会导致多个 AI 基于同一上下文同时抢话，表现更机械，且更容易互相踩上下文 |
 | `DEC-SINGLE-STAGE-DISCUSSION` | 讨论阶段单次模型直接产出最终发言 | 策略层 + 表达层两次调用 | 当前人格卡 + 单层 system prompt 已足够约束口吻和目标；单次调用链路更短，也便于与沙盒 prompt 版本共用 |
-| `DEC-STALE-CHECK-ROUND-AND-VOTES` | 普通模式下仅用 `roundNo + voteCount` 判定发言上下文失效 | 任意新聊天都视为失效 | 聊天变化过于频繁，会导致普通模式下大量调用被误丢弃 |
 | `DEC-HIDE-LIVE-VOTE-COUNTS` | 投票 Prompt 固定隐藏实时票型 | 直接把 `currentVoteCounts` 暴露给模型 | 游戏规则要求同时盲投，模型不能读取本轮未公开票数 |
 | `DEC-PUBLIC-SEAT-VIEW` | 聊天统一使用“`N号`”公共视角 | 按当前玩家重写成“你/别人”视角 | 公共视角更利于跨玩家缓存复用，也降低上下文分叉 |
 | `DEC-TOLERANT-VOTE-PARSING` | 投票输出先按 JSON 解析，再宽松提取座号 | 严格要求模型必须返回纯 JSON | 宽松解析能显著降低因模型输出夹带说明文字而导致的投票失败 |
@@ -448,28 +374,26 @@ API 层面的泛化写法可表示为：
 | --- | --- | --- | --- |
 | 模型超时 | 上游 API 慢或不可用 | 发言或投票缺失 | 超时后发言转 `skip`，投票走兜底 |
 | 输出非法 | 讨论返回空文本 / 沉默标记，或投票 JSON 损坏、座号非法 | 动作无法执行 | 讨论转 `skip`；投票宽松解析后仍不合法则走 fallback |
-| 上下文过期 | 模型返回前轮次或投票状态变化 | 旧上下文发言污染当前局势 | 保存前再次校验，失效则丢弃并短延迟重试 |
-| 调度偏置 | 少数 AI 连续被选中 | 话语权分布不自然 | 使用“未发言 / 未考虑过”优先级和 skip backoff |
+| Prompt 版本缺失 | 沙盒指定的 `myPromptVersionId` 无法读取 | 被测版本回退默认 Prompt，影响评估解释 | 调用日志记录实际 system prompt，评估前检查版本落库 |
 | 实现集中 | `ai.service.ts` 职责过重 | 后续修改成本高 | 目前通过类型和模板分层控制；模块拆分列入后续工作 |
 
 ## 10. 验证方式
 
 建议用以下方式验证本设计：
 
-1. **普通对局行为验证**  
-   观察讨论阶段是否只有一个同类调度器实例在生成发言，且 AI 发言遵守冷却和阶段约束。
+1. **讨论生成验证**  
+   检查 `generateSpeech()` 是否使用正确的 system/user Prompt，且讨论输出能按文本或沉默标记解析成 `AiSpeechAction`。
 2. **投票规则验证**  
    检查投票阶段模型是否无法看到实时票型，且无自投、重复投票和对已出局玩家投票。
 3. **失败兜底验证**  
    人工制造模型超时、讨论空文本或投票非 JSON 输出，确认发言转 `skip`、投票走 fallback。
 4. **复盘验证**  
-   通过 `ai_call_logs`、Replay 导出和自动对抗房观察 Prompt、原始输出和最终落库行为是否一致。
+   通过 `ai_call_logs`、Replay 导出和离线沙盒观战页观察 Prompt、原始输出和最终落库行为是否一致。
 5. **调用观测验证**  
    查看模型日志、Replay 导出或 usage 中的缓存 token 统计，确认请求参数、Prompt 覆盖与 provider 返回符合预期。
 
 ## 11. 已知限制
 
-- 普通模式下新增聊天消息不会使发言上下文失效；这是缓存与吞吐取舍，不代表绝对最自然。
 - `ai.service.ts` 仍是集中式实现，发言、投票、协议适配和解析逻辑尚未拆分为独立模块。
 - 投票时虽然 `GameContext` 计算了 `currentVoteCounts`，但普通对局模板中强制隐藏该信息；未来若规则改为公开票型，需要同时修改模板和说明文档。
 - 当前日志会记录完整用户 Prompt 和模型原始返回，适合调试，但在更严格的数据治理场景下可能需要脱敏策略。
@@ -477,6 +401,5 @@ API 层面的泛化写法可表示为：
 ## 12. 后续工作
 
 - 将 `AiService` 拆为更清晰的子模块，例如 `PromptBuilder`、`ModelClient`、`SpeechOrchestrator`、`VoteOrchestrator`。
-- 在普通对局中引入更细粒度的上下文失效策略，区分“无信息新消息”和“实质新消息”。
 - 为缓存优化增加前缀哈希、缓存命中率和 token 统计报表。
 - 将关键设计决策逐步沉淀为独立 ADR，减少单篇设计文档过载。

@@ -134,7 +134,7 @@ agent 是具备文件系统访问的编程工具，**读代码靠文件系统即
 | `DELETE /sandbox/orchestrator/generations/:id`、`DELETE tried`、`DELETE tried/:versionId` | 删迭代记录/拒绝记忆 |
 | `POST /sandbox/prompts/assets`、`POST /sandbox/prompts/generations`、`.../activate` | 写/激活提示词版本 |
 | `DELETE /sandbox/llm-calls` | 清观测缓冲 |
-| 网关 `room.delete`、`sandbox.room.delete`、`game.stop`、`sandbox.player.updateModel` | 删房/停局/改模型（隔离房自管除外） |
+| 网关 `room.delete`、`game.stop`、`sandbox.room.delete`、`sandbox.player.updateModel` | 删房 / 停局 / 删沙盒等待房 / 改沙盒模型 |
 
 ### 4.3 跑量限制（按场景组合，每周期）
 

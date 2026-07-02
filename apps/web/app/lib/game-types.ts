@@ -49,11 +49,6 @@ export type PointAward = {
   points: number;
 };
 
-export type AiPersonaOption = {
-  id: string;
-  name: string;
-};
-
 export type AiModelOption = {
   id: string;
   default?: boolean;
@@ -76,7 +71,6 @@ export type RoomSnapshot = {
   config: {
     maxHumanPlayers: number;
     aiPlayerCount: number;
-    aiPersonas?: AiPersonaOption[];
     availableModels?: AiModelOption[];
     maxRounds: number;
     discussionDurationMs: number;
@@ -85,7 +79,6 @@ export type RoomSnapshot = {
     rewardPool: number;
   };
   canStart: boolean;
-  debug?: boolean;
   sandboxScenarioId?: string;
   createdAt: string;
   updatedAt: string;

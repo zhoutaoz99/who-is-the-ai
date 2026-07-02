@@ -167,26 +167,6 @@ export function createHumanPlayer(
   };
 }
 
-export function createSimulatedHumanPlayer(
-  seatNo: number,
-  usedNames: string[] = [],
-  modelId?: string,
-): Player {
-  const names = SIMULATED_HUMAN_NAMES.filter((name) => !usedNames.includes(name));
-
-  return {
-    id: randomUUID(),
-    name: randomItem(names.length > 0 ? names : SIMULATED_HUMAN_NAMES) ?? `玩家${seatNo}`,
-    type: "human" as PlayerType,
-    simulated: true,
-    status: "alive" as const,
-    seatNo,
-    lastSpokeAt: 0,
-    connected: true,
-    aiModelId: modelId,
-  };
-}
-
 export function createAiPlayers(
   startSeatNo: number,
   count = AI_PLAYER_COUNT,
@@ -225,7 +205,7 @@ export interface SandboxPlayerSpec {
 
 /**
  * 按场景 roster 逐槽位建玩家:ai_under_test→type:"ai";detective/filler→
- * type:"human",simulated:true(均 model-driven,复用现有调度)。slot 即座位号,
+ * type:"human",simulated:true(均 model-driven,由沙盒顺序发言循环驱动)。slot 即座位号,
  * 直接落到 seatNo;role 落到 Player 上供提示词分支(侦探/填充的立场由人设卡承载)。
  */
 export function createSandboxPlayers(
