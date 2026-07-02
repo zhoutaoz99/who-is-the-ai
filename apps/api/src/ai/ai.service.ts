@@ -505,6 +505,9 @@ export class AiService {
     return renderTemplate("ai-player/user-discussion-template.txt", {
       selfCode: `${context.mySeatNo}号`,
       roundNo: String(context.roundNo),
+      // 开场签到提示词只在第 1 轮注入(后续轮次本就没有签到环节，模型也会忽略该段);
+      // 省掉的是"会话之后、永不被缓存"的尾部 token，等于第 2~4 轮每次调用少发这段全价 input。
+      firstRound: context.roundNo === 1 ? "1" : "",
       alivePlayers: context.alivePlayers.map((p) => `${p.seatNo}号`).join(" "),
       aliveCount: String(context.alivePlayers.length),
       currentRoundCount: String(context.recentMessages.length),
