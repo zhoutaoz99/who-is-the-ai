@@ -94,6 +94,7 @@ export default function SandboxConfigPage() {
   const [starting, setStarting] = useState(false);
   const [durationMin, setDurationMin] = useState(1);
   const lastSyncedDurationRef = useRef<number | null>(null);
+  const durationSaveTimerRef = useRef<number | null>(null);
 
   const room = getRoom(roomId);
 
@@ -139,12 +140,21 @@ export default function SandboxConfigPage() {
     if (!room || room.status !== "waiting") return;
     const minutes = Math.max(1, Math.floor(durationMin));
     if (lastSyncedDurationRef.current === minutes) return;
-    const timer = window.setTimeout(() => {
+    if (durationSaveTimerRef.current) {
+      window.clearTimeout(durationSaveTimerRef.current);
+    }
+    durationSaveTimerRef.current = window.setTimeout(() => {
+      durationSaveTimerRef.current = null;
       void updateDiscussionDuration(room.id, minutes).then((result) => {
         if (result.ok) lastSyncedDurationRef.current = minutes;
       });
     }, 400);
-    return () => window.clearTimeout(timer);
+    return () => {
+      if (durationSaveTimerRef.current) {
+        window.clearTimeout(durationSaveTimerRef.current);
+        durationSaveTimerRef.current = null;
+      }
+    };
   }, [durationMin, room, updateDiscussionDuration]);
 
   // 对局已开始 → 跳观战页。
@@ -159,6 +169,25 @@ export default function SandboxConfigPage() {
     setStarting(true);
     setError("");
     try {
+      const minutes = Math.max(1, Math.floor(durationMin));
+      if (durationSaveTimerRef.current) {
+        window.clearTimeout(durationSaveTimerRef.current);
+        durationSaveTimerRef.current = null;
+      }
+      const durationMs = minutes * 60_000;
+      if (
+        room.status === "waiting" &&
+        (lastSyncedDurationRef.current !== minutes ||
+          room.config.discussionDurationMs !== durationMs)
+      ) {
+        const durationResult = await updateDiscussionDuration(room.id, minutes);
+        if (!durationResult.ok) {
+          setError(durationResult.error ?? "发言时间保存失败");
+          return;
+        }
+        lastSyncedDurationRef.current = minutes;
+      }
+
       const res = await fetch(`${API_URL}/sandbox/start`, {
         method: "POST",
         headers: { "content-type": "application/json" },
